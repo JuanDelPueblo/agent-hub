@@ -6,6 +6,7 @@ mod websocket;
 
 pub use auth::*;
 pub use handlers::*;
+pub use hub::*;
 pub use static_files::*;
 pub use websocket::*;
 
@@ -91,6 +92,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/projects",
             get(hub::projects).post(hub::create_project),
+        )
+        .route("/api/projects/clone", post(hub::clone_project))
+        .route(
+            "/api/filesystem/directories",
+            get(hub::filesystem_directories),
         )
         .route(
             "/api/projects/:id",

@@ -26,6 +26,8 @@ pub struct Chat {
     pub archived: bool,
     pub permission_policy: crate::acp::callbacks::CallbackPolicy,
     pub config_values: Value,
+    #[serde(default)]
+    pub title_overridden: bool,
 }
 
 pub struct Store(Mutex<Connection>);
@@ -103,20 +105,34 @@ impl Store {
         Ok(serde_json::from_str(&data.context("Chat not found")?)?)
     }
 
-    pub fn create_chat(&self, project_id: String, agent: String, title: String) -> Result<Chat> {
-        validate_name(&title)?;
+    pub fn create_chat(
+        &self,
+        project_id: String,
+        agent: String,
+        title: Option<String>,
+    ) -> Result<Chat> {
+        let (final_title, title_overridden) = match title {
+            Some(t) if !t.trim().is_empty() => {
+                validate_name(&t)?;
+                let trimmed = t.trim().to_string();
+                let overridden = trimmed != "New chat";
+                (trimmed, overridden)
+            }
+            _ => ("New chat".to_string(), false),
+        };
         let now = chrono::Utc::now().to_rfc3339();
         let c = Chat {
             id: uuid::Uuid::new_v4().to_string(),
             project_id,
             agent,
-            title,
+            title: final_title,
             acp_session_id: None,
             created_at: now.clone(),
             updated_at: now,
             archived: false,
             permission_policy: Default::default(),
             config_values: serde_json::json!({}),
+            title_overridden,
         };
         self.0.lock().unwrap().execute(
             "INSERT INTO chats VALUES (?1,?2,?3)",
@@ -208,10 +224,10 @@ mod tests {
             .create_project("project".into(), tmp.path().display().to_string())
             .unwrap();
         let a = db
-            .create_chat(p.id.clone(), "codex".into(), "one".into())
+            .create_chat(p.id.clone(), "codex".into(), Some("one".into()))
             .unwrap();
         let b = db
-            .create_chat(p.id.clone(), "codex".into(), "two".into())
+            .create_chat(p.id.clone(), "codex".into(), Some("two".into()))
             .unwrap();
         assert_ne!(a.id, b.id);
         db.update_chat(&a.id, |c| c.acp_session_id = Some("remote-one".into()))

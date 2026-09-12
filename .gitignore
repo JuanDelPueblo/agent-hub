@@ -1,2 +1,6 @@
 .ace-tool/
 target
+frontend/node_modules/
+frontend/dist/
+result
+result-*

@@ -63,6 +63,7 @@ impl AcpClient {
         session_id: String,
         agent_name: String,
         event_log: Arc<EventLog>,
+        store: Option<Arc<crate::store::Store>>,
     ) -> anyhow::Result<Self> {
         let proc = AcpProcess::spawn(command, args, env_vars, cwd)?;
 
@@ -107,6 +108,7 @@ impl AcpClient {
             agent_name,
             config_options.clone(),
             replaying.clone(),
+            store,
         ));
 
         let wait_handle = tokio::spawn(wait_task(child.clone(), child_root_pid, connected.clone()));
@@ -489,6 +491,7 @@ async fn reader_task(
     agent_name: String,
     config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
     replaying: Arc<AtomicBool>,
+    store: Option<Arc<crate::store::Store>>,
 ) {
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(16));
     let mut line = String::new();
@@ -555,6 +558,7 @@ async fn reader_task(
                             {
                                 handle_session_update(
                                     &event_log,
+                                    &store,
                                     &session_id,
                                     &agent_name,
                                     &notif.update,
@@ -717,11 +721,36 @@ async fn handle_agent_request(
 
 async fn handle_session_update(
     event_log: &EventLog,
+    store: &Option<Arc<crate::store::Store>>,
     session_id: &str,
     agent_name: &str,
     update: &SessionUpdate,
 ) {
     let payload = match update {
+        SessionUpdate::SessionInfoUpdate(info) => {
+            if let agent_client_protocol_schema::MaybeUndefined::Value(title) = &info.title {
+                let trimmed = title.trim();
+                if !trimmed.is_empty() && trimmed.len() <= 200 {
+                    if let Some(st) = store {
+                        if let Ok(chat) = st.chat(session_id) {
+                            if !chat.title_overridden {
+                                let _ = st.update_chat(session_id, |c| {
+                                    if !c.title_overridden {
+                                        c.title = trimmed.to_string();
+                                    }
+                                });
+                                event_log.append(
+                                    session_id,
+                                    agent_name,
+                                    EventPayload::MetadataChanged {},
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
         SessionUpdate::AgentMessageChunk(chunk) => {
             let text = match &chunk.content {
                 ContentBlock::Text(t) => t.text.as_str(),

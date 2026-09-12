@@ -1,0 +1,22 @@
+{
+  "name": "agent-hub-frontend",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@material/web": "2.5.0",
+    "lit": "^3.2.1",
+    "material-symbols": "^0.47.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}

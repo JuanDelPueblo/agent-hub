@@ -148,6 +148,7 @@ impl AcpSession {
             self.id.clone(),
             self.key.agent.clone(),
             self.event_log.clone(),
+            self.store.clone(),
         )
         .await
         {
@@ -288,6 +289,7 @@ impl AcpSession {
                     .await;
                 self.touch().await;
                 self.finalize_turn_response(&resp).await;
+                self.try_sync_acp_title(&client).await;
                 Ok(self.collect_message_text(start_seq).await)
             }
             PromptAttempt::Completed(Err(err)) => {
@@ -398,6 +400,7 @@ impl AcpSession {
         let c = store.update_chat(&self.id, |c| {
             if let Some(title) = title {
                 c.title = title;
+                c.title_overridden = true;
             }
             if let Some(archived) = archived {
                 c.archived = archived;
@@ -517,6 +520,53 @@ impl AcpSession {
             client.list_sessions(&self.key.cwd, cursor),
         )
         .await?
+    }
+
+    async fn try_sync_acp_title(&self, client: &Arc<AcpClient>) {
+        if let Some(store) = &self.store {
+            if let Ok(chat) = store.chat(&self.id) {
+                if !chat.title_overridden && chat.title == "New chat" {
+                    if let Ok(Ok(sessions_val)) = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        client.list_sessions(&self.key.cwd, None),
+                    )
+                    .await
+                    {
+                        if let Some(sessions) =
+                            sessions_val.get("sessions").and_then(|s| s.as_array())
+                        {
+                            if let Some(active_sid) = self.acp_session_id.read().await.as_ref() {
+                                let active_str = active_sid.to_string();
+                                for s_entry in sessions {
+                                    if s_entry.get("sessionId").and_then(|v| v.as_str())
+                                        == Some(&active_str)
+                                    {
+                                        if let Some(title) =
+                                            s_entry.get("title").and_then(|v| v.as_str())
+                                        {
+                                            let trimmed = title.trim();
+                                            if !trimmed.is_empty() && trimmed.len() <= 200 {
+                                                let _ = store.update_chat(&self.id, |c| {
+                                                    if !c.title_overridden {
+                                                        c.title = trimmed.to_string();
+                                                    }
+                                                });
+                                                self.event_log.append(
+                                                    &self.id,
+                                                    &self.key.agent,
+                                                    EventPayload::MetadataChanged {},
+                                                );
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

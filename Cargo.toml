@@ -1,12 +1,12 @@
 [package]
-name = "ccgonext"
+name = "agent-hub"
 version = "0.2.0"
 edition = "2021"
-authors = ["missdeer"]
-description = "MCP server orchestrating AI coding agents (Codex, Gemini, OpenCode, Claude) for parallel multi-agent queries over stdio"
-license = "GPL-3.0-only OR LicenseRef-Commercial"
-repository = "https://github.com/missdeer/ccgonext"
-keywords = ["mcp", "agent", "orchestrator", "claude", "codex"]
+authors = ["JuanDelPueblo"]
+description = "Persistent single-owner ACP project and chat supervisor"
+license = "GPL-3.0-only"
+repository = "https://github.com/JuanDelPueblo/agent-hub"
+keywords = ["acp", "agent", "supervisor", "claude", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
@@ -58,7 +58,7 @@ tokio-test = "0.4"
 tempfile = "3.14"
 
 [[bin]]
-name = "ccgonext"
+name = "agent-hub"
 path = "src/main.rs"
 
 [profile.release]

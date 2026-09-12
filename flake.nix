@@ -1,5 +1,5 @@
 {
-  description = "Agent Hub: persistent CCGONEXT ACP supervisor";
+  description = "Agent Hub: persistent ACP project and chat supervisor";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   outputs = { self, nixpkgs }:
     let
@@ -7,14 +7,30 @@
       eachSystem = nixpkgs.lib.genAttrs systems;
     in {
       packages = eachSystem (system:
-        let pkgs = import nixpkgs { inherit system; };
+        let
+          pkgs = import nixpkgs { inherit system; };
+          frontend = pkgs.buildNpmPackage {
+            pname = "agent-hub-frontend";
+            version = "0.2.0";
+            src = ./frontend;
+            npmDepsHash = "sha256-exIUfYc/RppwNfsh15XqgwH5C2OHe02Wjlx9Rci9/jg=";
+            installPhase = ''
+              mkdir -p $out
+              cp -r dist/* $out/
+            '';
+          };
         in rec {
+          inherit frontend;
           agent-hub = pkgs.rustPlatform.buildRustPackage {
             pname = "agent-hub";
-            version = "0.1.0";
+            version = "0.2.0";
             src = pkgs.lib.cleanSource self;
             cargoLock.lockFile = ./Cargo.lock;
-            nativeCheckInputs = [ pkgs.python3 ];
+            preBuild = ''
+              rm -rf static/*
+              cp -r ${frontend}/* static/
+            '';
+            nativeCheckInputs = [ pkgs.python3 pkgs.git ];
             meta = {
               description = "Persistent single-owner ACP project and chat supervisor";
               license = pkgs.lib.licenses.gpl3Only;

@@ -17,6 +17,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-hub"
+version = "0.2.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "anyhow",
+ "axum 0.7.9",
+ "axum-extra",
+ "chrono",
+ "clap",
+ "futures",
+ "futures-util",
+ "mime_guess",
+ "process-wrap",
+ "rusqlite",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -288,37 +319,6 @@ checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
 dependencies = [
  "find-msvc-tools",
  "shlex",
-]
-
-[[package]]
-name = "ccgonext"
-version = "0.2.0"
-dependencies = [
- "agent-client-protocol-schema",
- "anyhow",
- "axum 0.7.9",
- "axum-extra",
- "chrono",
- "clap",
- "futures",
- "futures-util",
- "mime_guess",
- "process-wrap",
- "rusqlite",
- "rust-embed",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tower",
- "tower-http",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

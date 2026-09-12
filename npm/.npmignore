@@ -1,8 +1,0 @@
-# Don't include the bin directory in the npm package
-# The binary will be downloaded during postinstall
-bin/
-
-# Development files
-*.log
-.DS_Store
-node_modules/

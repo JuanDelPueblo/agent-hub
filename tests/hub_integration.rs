@@ -1,13 +1,13 @@
-use axum::{
-    body::{to_bytes, Body},
-    http::Request,
-};
-use ccgonext::{
+use agent_hub::{
     config::{parse_agents, AgentConfig, Config},
     events::{EventLog, EventPayload},
     session::SessionManager,
     store::Store,
     web::{router, AppState},
+};
+use axum::{
+    body::{to_bytes, Body},
+    http::Request,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
@@ -42,10 +42,10 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
         .create_project("test".into(), tmp.path().display().to_string())
         .unwrap();
     let a = db
-        .create_chat(project.id.clone(), "codex".into(), "one".into())
+        .create_chat(project.id.clone(), "codex".into(), Some("one".into()))
         .unwrap();
     let b = db
-        .create_chat(project.id, "codex".into(), "two".into())
+        .create_chat(project.id, "codex".into(), Some("two".into()))
         .unwrap();
     let one = mgr.get_by_id(&a.id).await.unwrap();
     let two = mgr.get_by_id(&b.id).await.unwrap();
@@ -81,7 +81,7 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     assert_eq!(db.chats().unwrap().len(), 2);
     assert_eq!(
         one.process_state().await,
-        ccgonext::state::ProcessState::Stopped
+        agent_hub::state::ProcessState::Stopped
     );
     mgr.shutdown_all().await;
     drop(one);
@@ -92,8 +92,8 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     let result = one.ask("after restart".into(), None).await.unwrap();
     assert_eq!(result, format!("{sid}:4:large"));
     let history = match mgr.event_log().replay_from(0) {
-        ccgonext::events::ReplayResult::Complete(e)
-        | ccgonext::events::ReplayResult::Partial { events: e, .. } => e,
+        agent_hub::events::ReplayResult::Complete(e)
+        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
     };
     assert!(!history
         .iter()
@@ -109,7 +109,9 @@ async fn unsupported_resume_never_creates_another_conversation() {
     let p = db
         .create_project("test".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = db.create_chat(p.id, "codex".into(), "chat".into()).unwrap();
+    let chat = db
+        .create_chat(p.id, "codex".into(), Some("chat".into()))
+        .unwrap();
     let s = mgr.get_by_id(&chat.id).await.unwrap();
     s.ask("hi".into(), None).await.unwrap();
     let saved = db.chat(&chat.id).unwrap().acp_session_id;
@@ -218,7 +220,341 @@ fn generic_configuration_is_validated() {
     assert!(parse_agents(r#"{"bad":{"command":""}}"#).is_err());
     assert!(parse_agents(r#"{"bad":{"command":"acp","unknown":true}}"#).is_err());
     let options = json!([{"id":"model","type":"select","options":[{"group":"provider","options":[{"value":"x"}]}]},{"id":"fast","type":"boolean"}]);
-    assert!(ccgonext::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
-    assert!(ccgonext::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
-    assert!(ccgonext::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
+    assert!(agent_hub::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
+    assert!(agent_hub::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
+    assert!(agent_hub::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
+}
+
+#[tokio::test]
+async fn folder_browsing_and_security() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let child1 = root.join("child1");
+    let child2 = root.join("child2");
+    let subchild = child1.join("subchild");
+    let hidden = root.join(".hidden");
+    std::fs::create_dir_all(&subchild).unwrap();
+    std::fs::create_dir_all(&child2).unwrap();
+    std::fs::create_dir_all(&hidden).unwrap();
+
+    // Symlink escaping root
+    let outside = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let _ = std::os::unix::fs::symlink(outside.path(), root.join("escaping_symlink"));
+
+    let mgr = manager(&root, false);
+    let mut config = Config::default();
+    config.web.project_roots = vec![root.display().to_string()];
+    let app = router(AppState {
+        session_manager: mgr.clone(),
+        config: Arc::new(config),
+        server_port: 8765,
+    });
+
+    async fn get(app: &axum::Router, uri: &str) -> (u16, Value) {
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("host", "127.0.0.1:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let body = to_bytes(r.into_body(), 1_000_000).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    // 1. Browsing at root lists allowed children and excludes hidden/escaping
+    let (status, list) = get(
+        &app,
+        &format!("/api/filesystem/directories?path={}", root.display()),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(list["current"], root.display().to_string());
+    assert_eq!(list["parent"], Value::Null);
+    let dir_names: Vec<&str> = list["directories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    assert!(dir_names.contains(&"child1"));
+    assert!(dir_names.contains(&"child2"));
+    assert!(!dir_names.contains(&".hidden"));
+    assert!(!dir_names.contains(&"escaping_symlink"));
+
+    // 2. Browsing subfolder shows parent as root and breadcrumbs
+    let (status, sub_list) = get(
+        &app,
+        &format!("/api/filesystem/directories?path={}", child1.display()),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(sub_list["parent"], root.display().to_string());
+    let crumbs: Vec<&str> = sub_list["breadcrumbs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|b| b["name"].as_str())
+        .collect();
+    assert!(crumbs.contains(&"child1"));
+
+    // 3. Rejects path outside root
+    let (status, _) = get(&app, "/api/filesystem/directories?path=/").await;
+    assert_ne!(status, 200);
+
+    // 4. Rejects relative path
+    let (status, _) = get(&app, "/api/filesystem/directories?path=relative").await;
+    assert_eq!(status, 400);
+
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn git_clone_validation_and_behavior() {
+    use agent_hub::web::{derive_repo_name, validate_git_url};
+
+    // Validation unit checks
+    assert!(validate_git_url("https://github.com/JuanDelPueblo/agent-hub.git").is_ok());
+    assert!(validate_git_url("git@github.com:JuanDelPueblo/agent-hub.git").is_ok());
+    assert!(validate_git_url("ssh://git@github.com/JuanDelPueblo/agent-hub.git").is_ok());
+    assert!(validate_git_url("file:///etc/passwd").is_err());
+    assert!(validate_git_url("/tmp/repo").is_err());
+    assert!(validate_git_url("./local-repo").is_err());
+    assert!(validate_git_url("ext::sh -c evil").is_err());
+    assert!(validate_git_url("").is_err());
+
+    // Name derivation
+    assert_eq!(
+        derive_repo_name("https://github.com/JuanDelPueblo/agent-hub.git").as_deref(),
+        Some("agent-hub")
+    );
+    assert_eq!(
+        derive_repo_name("git@github.com:JuanDelPueblo/agent-hub.git").as_deref(),
+        Some("agent-hub")
+    );
+    assert_eq!(
+        derive_repo_name("https://github.com/JuanDelPueblo/my-project/").as_deref(),
+        Some("my-project")
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let mgr = manager(&root, false);
+    let mut config = Config::default();
+    config.web.project_roots = vec![root.display().to_string()];
+    let app = router(AppState {
+        session_manager: mgr.clone(),
+        config: Arc::new(config),
+        server_port: 8765,
+    });
+
+    async fn post(app: &axum::Router, uri: &str, body: Value) -> (u16, Value) {
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("host", "127.0.0.1:8765")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let body = to_bytes(r.into_body(), 1_000_000).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    // 1. Rejects unsafe file:// URL
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "file:///tmp/repo",
+            "parent_path": root.display().to_string(),
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // 2. Rejects parent path outside root
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/repo.git",
+            "parent_path": "/tmp",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // 3. Rejects existing destination folder
+    let existing = root.join("existing-dir");
+    std::fs::create_dir_all(&existing).unwrap();
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/existing-dir.git",
+            "parent_path": root.display().to_string(),
+        }),
+    )
+    .await;
+    assert_eq!(status, 409);
+
+    // 4. Failed clone cleans up and does not create Project record
+    let count_before = mgr.store.as_ref().unwrap().projects().unwrap().len();
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://invalid.unresolvable.example/doesnotexist.git",
+            "parent_path": root.display().to_string(),
+            "name": "failed-clone",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(!root.join("failed-clone").exists());
+    let count_after = mgr.store.as_ref().unwrap().projects().unwrap().len();
+    assert_eq!(count_before, count_after);
+
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn acp_titles_and_lifecycle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let mgr = manager(&root, false);
+    let mut config = Config::default();
+    config.web.project_roots = vec![root.display().to_string()];
+    let app = router(AppState {
+        session_manager: mgr.clone(),
+        config: Arc::new(config),
+        server_port: 8765,
+    });
+
+    async fn post(app: &axum::Router, uri: &str, body: Value) -> (u16, Value) {
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("host", "127.0.0.1:8765")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let body = to_bytes(r.into_body(), 1_000_000).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    async fn patch(app: &axum::Router, uri: &str, body: Value) -> (u16, Value) {
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(uri)
+                    .header("host", "127.0.0.1:8765")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let body = to_bytes(r.into_body(), 1_000_000).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    // 1. Create project
+    let (_, p) = post(
+        &app,
+        "/api/projects",
+        json!({"name":"p1","path":root.display().to_string()}),
+    )
+    .await;
+    let pid = p["id"].as_str().unwrap();
+
+    // 2. Create chat requiring only agent (no title supplied)
+    let (status, c) = post(
+        &app,
+        &format!("/api/projects/{}/chats", pid),
+        json!({"agent":"codex"}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let cid = c["id"].as_str().unwrap();
+    assert_eq!(c["title"], "New chat");
+    assert_eq!(c["title_overridden"], false);
+
+    // 3. Connect/Prompt chat with ACP providing title
+    let session = mgr.get_by_id(cid).await.unwrap();
+    let reply = session
+        .ask("title: Great Project Discussion".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(reply, "title-sent");
+
+    // Title updated and persisted in store
+    let updated_chat = mgr.store.as_ref().unwrap().chat(cid).unwrap();
+    assert_eq!(updated_chat.title, "Great Project Discussion");
+    assert!(!updated_chat.title_overridden);
+
+    // 4. Empty title is ignored
+    session.ask("title-empty".into(), None).await.unwrap();
+    let chat_after_empty = mgr.store.as_ref().unwrap().chat(cid).unwrap();
+    assert_eq!(chat_after_empty.title, "Great Project Discussion");
+
+    // 5. Oversized title (>200 chars) is safely ignored
+    session.ask("title-oversized".into(), None).await.unwrap();
+    let chat_after_oversized = mgr.store.as_ref().unwrap().chat(cid).unwrap();
+    assert_eq!(chat_after_oversized.title, "Great Project Discussion");
+
+    // 6. Manual user rename marks title_overridden = true
+    let (patch_status, patched) = patch(
+        &app,
+        &format!("/api/chats/{}", cid),
+        json!({"title": "My Custom Title"}),
+    )
+    .await;
+    assert_eq!(patch_status, 200);
+    assert_eq!(patched["title"], "My Custom Title");
+    assert_eq!(patched["title_overridden"], true);
+
+    // 7. Subsequent ACP title update does NOT overwrite manually overridden title
+    session
+        .ask("title: Attempted ACP Overwrite".into(), None)
+        .await
+        .unwrap();
+    let chat_after_manual = mgr.store.as_ref().unwrap().chat(cid).unwrap();
+    assert_eq!(chat_after_manual.title, "My Custom Title");
+
+    // 8. Verify MetadataChanged was emitted
+    let history = match mgr.event_log().replay_from(0) {
+        agent_hub::events::ReplayResult::Complete(e)
+        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
+    };
+    let meta_events: Vec<_> = history
+        .iter()
+        .filter(|e| matches!(e.payload, EventPayload::MetadataChanged {}))
+        .collect();
+    assert!(!meta_events.is_empty());
+
+    mgr.shutdown_all().await;
 }

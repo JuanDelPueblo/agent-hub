@@ -1,0 +1,54 @@
+/* Adaptive Window Layout Classes */
+
+.adaptive-root {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Compact (< 600px): Phone */
+@media (max-width: 599px) {
+  .adaptive-root {
+    flex-direction: column;
+  }
+
+  .nav-drawer-permanent {
+    display: none !important;
+  }
+
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+/* Medium (600px - 839px): Tablet */
+@media (min-width: 600px) and (max-width: 839px) {
+  .nav-drawer-permanent {
+    width: 260px;
+    flex-shrink: 0;
+  }
+
+  .mobile-top-bar {
+    display: none !important;
+  }
+}
+
+/* Expanded (>= 840px): Desktop */
+@media (min-width: 840px) {
+  .nav-drawer-permanent {
+    width: 300px;
+    flex-shrink: 0;
+  }
+
+  .mobile-top-bar {
+    display: none !important;
+  }
+}

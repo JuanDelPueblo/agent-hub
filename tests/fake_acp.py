@@ -68,6 +68,19 @@ for line in sys.stdin:
                 "sessionId": current, "toolCall": {"toolCallId": "tool-1", "title": "Write file", "kind": "edit"},
                 "options": [{"optionId": "yes", "name": "Approve", "kind": "allow_once"},
                             {"optionId": "no", "name": "Deny", "kind": "reject_once"}]}})
+        elif text.startswith("title:"):
+            new_title = text[6:]
+            update("session_info_update", title=new_title)
+            update("agent_message_chunk", content={"type": "text", "text": "title-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "title-empty":
+            update("session_info_update", title="")
+            update("agent_message_chunk", content={"type": "text", "text": "empty-title-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "title-oversized":
+            update("session_info_update", title="x" * 500)
+            update("agent_message_chunk", content={"type": "text", "text": "oversized-title-sent"})
+            reply(id, {"stopReason": "end_turn"})
         else:
             update("agent_message_chunk", content={"type": "text", "text": f"{current}:{count}:{model}"})
             reply(id, {"stopReason": "end_turn"})
