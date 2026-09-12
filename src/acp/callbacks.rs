@@ -18,12 +18,12 @@ use tokio::sync::{oneshot, Notify, RwLock};
 use crate::events::{EventLog, EventPayload};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum CallbackPolicy {
     DenyAll,
     ReadOnly,
-    Ask,
     #[default]
+    Ask,
     AutoApprove,
 }
 
@@ -60,7 +60,7 @@ impl ManagedTerminal {
 }
 
 pub struct CallbackHandler {
-    policy: CallbackPolicy,
+    policy: std::sync::RwLock<CallbackPolicy>,
     session_id: String,
     agent_name: String,
     event_log: Arc<EventLog>,
@@ -70,6 +70,12 @@ pub struct CallbackHandler {
 }
 
 impl CallbackHandler {
+    fn policy(&self) -> CallbackPolicy {
+        self.policy.read().unwrap().clone()
+    }
+    pub fn set_policy(&self, policy: CallbackPolicy) {
+        *self.policy.write().unwrap() = policy;
+    }
     pub fn new(
         policy: CallbackPolicy,
         session_id: String,
@@ -78,7 +84,7 @@ impl CallbackHandler {
         cwd: PathBuf,
     ) -> Self {
         Self {
-            policy,
+            policy: std::sync::RwLock::new(policy),
             session_id,
             agent_name,
             event_log,
@@ -145,6 +151,12 @@ impl CallbackHandler {
     async fn request_user_permission(&self, method: &str, description: String) -> bool {
         let perm_id = uuid::Uuid::new_v4().to_string();
 
+        let (tx, rx) = oneshot::channel();
+        self.pending_permissions
+            .write()
+            .await
+            .insert(perm_id.clone(), PendingPermission { tx });
+
         self.event_log.append(
             &self.session_id,
             &self.agent_name,
@@ -155,13 +167,7 @@ impl CallbackHandler {
             },
         );
 
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut pending = self.pending_permissions.write().await;
-            pending.insert(perm_id.clone(), PendingPermission { tx });
-        }
-
-        let granted = tokio::time::timeout(std::time::Duration::from_secs(60), rx)
+        let granted = tokio::time::timeout(std::time::Duration::from_secs(600), rx)
             .await
             .ok()
             .and_then(|result| result.ok())
@@ -189,7 +195,7 @@ impl CallbackHandler {
         method: &str,
         description: String,
     ) -> agent_client_protocol_schema::Result<()> {
-        match self.policy {
+        match self.policy() {
             CallbackPolicy::DenyAll | CallbackPolicy::ReadOnly => Err(
                 agent_client_protocol_schema::Error::new(-32001, "Operation denied by policy"),
             ),
@@ -223,6 +229,8 @@ impl CallbackHandler {
         &self,
         req: RequestPermissionRequest,
     ) -> RequestPermissionResponse {
+        // Prefer the *-Once variant so an automated decision never grants the
+        // agent a standing always-allow/always-deny it was never asked for.
         let deny_option = req
             .options
             .iter()
@@ -230,8 +238,15 @@ impl CallbackHandler {
                 matches!(
                     o.kind,
                     agent_client_protocol_schema::PermissionOptionKind::RejectOnce
-                        | agent_client_protocol_schema::PermissionOptionKind::RejectAlways
                 )
+            })
+            .or_else(|| {
+                req.options.iter().find(|o| {
+                    matches!(
+                        o.kind,
+                        agent_client_protocol_schema::PermissionOptionKind::RejectAlways
+                    )
+                })
             })
             .map(|o| o.option_id.clone());
 
@@ -242,8 +257,15 @@ impl CallbackHandler {
                 matches!(
                     o.kind,
                     agent_client_protocol_schema::PermissionOptionKind::AllowOnce
-                        | agent_client_protocol_schema::PermissionOptionKind::AllowAlways
                 )
+            })
+            .or_else(|| {
+                req.options.iter().find(|o| {
+                    matches!(
+                        o.kind,
+                        agent_client_protocol_schema::PermissionOptionKind::AllowAlways
+                    )
+                })
             })
             .map(|o| o.option_id.clone());
 
@@ -253,7 +275,7 @@ impl CallbackHandler {
             ))
         };
 
-        match self.policy {
+        match self.policy() {
             CallbackPolicy::DenyAll => {
                 if let Some(deny_id) = deny_option {
                     make_response(deny_id)
@@ -304,7 +326,7 @@ impl CallbackHandler {
         &self,
         req: ReadTextFileRequest,
     ) -> agent_client_protocol_schema::Result<ReadTextFileResponse> {
-        match self.policy {
+        match self.policy() {
             CallbackPolicy::DenyAll => Err(agent_client_protocol_schema::Error::new(
                 -32001,
                 "File read denied by policy",
@@ -456,11 +478,12 @@ impl CallbackHandler {
         }
     }
 
-    pub async fn respond_permission(&self, perm_id: &str, granted: bool) {
+    pub async fn respond_permission(&self, perm_id: &str, granted: bool) -> bool {
         let mut pending = self.pending_permissions.write().await;
         if let Some(p) = pending.remove(perm_id) {
-            let _ = p.tx.send(granted);
+            return p.tx.send(granted).is_ok();
         }
+        false
     }
 
     pub async fn cancel_all_pending(&self) {
@@ -606,14 +629,14 @@ mod tests {
 
     #[test]
     fn test_callback_policy_default() {
-        assert_eq!(CallbackPolicy::default(), CallbackPolicy::AutoApprove);
+        assert_eq!(CallbackPolicy::default(), CallbackPolicy::Ask);
     }
 
     #[test]
     fn test_callback_policy_serde() {
         let json = serde_json::to_string(&CallbackPolicy::AutoApprove).unwrap();
-        assert_eq!(json, "\"auto_approve\"");
-        let parsed: CallbackPolicy = serde_json::from_str("\"deny_all\"").unwrap();
+        assert_eq!(json, "\"auto-approve\"");
+        let parsed: CallbackPolicy = serde_json::from_str("\"deny-all\"").unwrap();
         assert_eq!(parsed, CallbackPolicy::DenyAll);
     }
 
@@ -672,6 +695,35 @@ mod tests {
         handler.handle_write_file(req).await.unwrap();
 
         assert_eq!(std::fs::read_to_string(target).unwrap(), "created");
+    }
+
+    #[tokio::test]
+    async fn test_auto_approve_prefers_allow_once_over_allow_always() {
+        let handler = make_handler(CallbackPolicy::AutoApprove);
+
+        let request = RequestPermissionRequest::new(
+            SessionId::new("s1"),
+            agent_client_protocol_schema::ToolCallUpdate::new(
+                "tool-1",
+                agent_client_protocol_schema::ToolCallUpdateFields::new(),
+            ),
+            vec![
+                PermissionOption::new(
+                    "allow-always",
+                    "Always allow",
+                    PermissionOptionKind::AllowAlways,
+                ),
+                PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce),
+            ],
+        );
+
+        let response = handler.handle_request_permission(request).await;
+        match response.outcome {
+            RequestPermissionOutcome::Selected(selected) => {
+                assert_eq!(selected.option_id, "allow-once".into());
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
     }
 
     #[tokio::test]

@@ -16,6 +16,7 @@ pub struct SessionKey {
 }
 
 pub struct AcpSession {
+    store: Option<Arc<crate::store::Store>>,
     pub id: String,
     pub key: SessionKey,
     process_state: RwLock<ProcessState>,
@@ -35,6 +36,7 @@ pub struct AcpSession {
 impl AcpSession {
     pub fn new(key: SessionKey, config: AgentConfig, event_log: Arc<EventLog>) -> Self {
         Self {
+            store: None,
             id: uuid::Uuid::new_v4().to_string(),
             key,
             process_state: RwLock::new(ProcessState::Stopped),
@@ -50,7 +52,12 @@ impl AcpSession {
     }
 
     pub async fn process_state(&self) -> ProcessState {
-        *self.process_state.read().await
+        let state = *self.process_state.read().await;
+        if state == ProcessState::Running && self.client_disconnected().await {
+            ProcessState::Dead
+        } else {
+            state
+        }
     }
 
     pub async fn turn_state(&self) -> TurnState {
@@ -84,7 +91,6 @@ impl AcpSession {
 
     async fn mark_dead(&self) {
         let client = self.client.write().await.take();
-        *self.acp_session_id.write().await = None;
         *self.child_root_pid.write().await = None;
         self.set_states(ProcessState::Dead, TurnState::Idle).await;
         if let Some(client) = client {
@@ -105,23 +111,40 @@ impl AcpSession {
     }
 
     async fn ensure_running(&self) -> anyhow::Result<()> {
+        if let Some(store) = &self.store {
+            let chat = store.chat(&self.id)?;
+            anyhow::ensure!(
+                !chat.archived,
+                "Chat is archived; restore it before reconnecting"
+            );
+            let project = store.project(&chat.project_id)?;
+            anyhow::ensure!(
+                Path::new(&project.path).canonicalize()? == self.key.cwd,
+                "Project directory changed; review the project path"
+            );
+        }
         let ps = *self.process_state.read().await;
-        if ps == ProcessState::Running {
+        if ps == ProcessState::Running && !self.client_disconnected().await {
             return Ok(());
         }
-        if !ps.can_start() {
+        if !ps.can_start() && ps != ProcessState::Running {
             anyhow::bail!("Cannot start agent in state {}", ps);
         }
 
         self.set_states(ProcessState::Starting, TurnState::Idle)
             .await;
 
+        let policy = if let Some(store) = &self.store {
+            store.chat(&self.id)?.permission_policy
+        } else {
+            self.config.callback_policy.clone()
+        };
         let client = match AcpClient::spawn(
             &self.config.acp_command,
             &self.config.acp_args,
             &self.config.env_vars,
             &self.key.cwd,
-            self.config.callback_policy.clone(),
+            policy,
             self.id.clone(),
             self.key.agent.clone(),
             self.event_log.clone(),
@@ -140,14 +163,30 @@ impl AcpSession {
         // tree sweep. Cleared on every failure path below.
         *self.child_root_pid.write().await = client.root_pid();
 
-        if let Err(e) = client.initialize(&self.key.cwd).await {
+        if let Err(e) =
+            tokio::time::timeout(Duration::from_secs(60), client.initialize(&self.key.cwd))
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("ACP initialize timed out")))
+        {
             client.shutdown().await;
             *self.child_root_pid.write().await = None;
             self.set_states(ProcessState::Dead, TurnState::Idle).await;
             return Err(e);
         }
 
-        let new_session = match client.new_session(&self.key.cwd).await {
+        let saved = self
+            .acp_session_id
+            .read()
+            .await
+            .as_ref()
+            .map(|s| s.to_string());
+        let new_session = match tokio::time::timeout(
+            Duration::from_secs(60),
+            client.open_session(&self.key.cwd, saved.as_deref()),
+        )
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("ACP session setup timed out")))
+        {
             Ok(s) => s,
             Err(e) => {
                 client.shutdown().await;
@@ -157,7 +196,37 @@ impl AcpSession {
             }
         };
 
-        *self.acp_session_id.write().await = Some(new_session.session_id);
+        *self.acp_session_id.write().await = Some(new_session.clone().into());
+        if let Some(store) = &self.store {
+            // Persist immediately, before config or prompts can fail.
+            if let Err(e) =
+                store.update_chat(&self.id, |c| c.acp_session_id = Some(new_session.clone()))
+            {
+                client.shutdown().await;
+                self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                return Err(e);
+            }
+            let values = store.chat(&self.id)?.config_values;
+            if let Some(values) = values.as_object() {
+                for (id, value) in values {
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(30),
+                        client.set_config(&new_session.clone().into(), id, value.clone()),
+                    )
+                    .await;
+                    if !matches!(result, Ok(Ok(_))) {
+                        self.event_log.append(&self.id, &self.key.agent, EventPayload::Error { message: format!("Saved ACP option {id} could not be reapplied; review the current configuration") });
+                    }
+                }
+            }
+        }
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::ConfigOptions {
+                options: client.config_options.read().await.clone(),
+            },
+        );
         *self.client.write().await = Some(Arc::new(client));
         self.set_states(ProcessState::Running, TurnState::Idle)
             .await;
@@ -177,6 +246,14 @@ impl AcpSession {
 
         self.touch().await;
         self.ensure_running().await?;
+
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::UserMessage {
+                text: message.clone(),
+            },
+        );
 
         self.set_states(ProcessState::Running, TurnState::Prompting)
             .await;
@@ -261,11 +338,14 @@ impl AcpSession {
         );
         let client = self.client.write().await.take();
         if let Some(c) = client {
+            if let Some(sid) = self.acp_session_id.read().await.as_ref() {
+                c.close_session(sid).await;
+            }
             c.shutdown().await;
         }
         *self.child_root_pid.write().await = None;
-        *self.acp_session_id.write().await = None;
-        self.set_states(ProcessState::Dead, TurnState::Idle).await;
+        self.set_states(ProcessState::Stopped, TurnState::Idle)
+            .await;
         tracing::info!(
             agent = %self.key.agent,
             session = %self.id,
@@ -273,13 +353,170 @@ impl AcpSession {
         );
     }
 
-    pub async fn respond_to_permission(&self, perm_id: &str, granted: bool) {
+    pub async fn respond_to_permission(&self, perm_id: &str, granted: bool) -> bool {
         let client = self.client.read().await;
         if let Some(c) = client.as_ref() {
-            c.callback_handler()
+            return c
+                .callback_handler()
                 .respond_permission(perm_id, granted)
                 .await;
         }
+        false
+    }
+
+    pub async fn resume(&self) -> anyhow::Result<()> {
+        let _guard = self
+            .turn_guard
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Chat is busy"))?;
+        self.touch().await;
+        self.ensure_running().await
+    }
+
+    pub async fn stop(&self) -> anyhow::Result<()> {
+        let _guard = self
+            .turn_guard
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Cancel the active turn before stopping"))?;
+        self.shutdown().await;
+        Ok(())
+    }
+
+    pub async fn edit_metadata(
+        &self,
+        title: Option<String>,
+        archived: Option<bool>,
+        policy: Option<crate::acp::callbacks::CallbackPolicy>,
+    ) -> anyhow::Result<crate::store::Chat> {
+        let _guard = self.turn_guard.try_lock().map_err(|_| {
+            anyhow::anyhow!("Wait for or cancel the active turn before editing the chat")
+        })?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?;
+        let c = store.update_chat(&self.id, |c| {
+            if let Some(title) = title {
+                c.title = title;
+            }
+            if let Some(archived) = archived {
+                c.archived = archived;
+            }
+            if let Some(policy) = policy {
+                c.permission_policy = policy;
+            }
+        })?;
+        if c.archived {
+            self.shutdown().await;
+        } else if let Some(client) = self.client.read().await.as_ref() {
+            client
+                .callback_handler()
+                .set_policy(c.permission_policy.clone());
+        }
+        Ok(c)
+    }
+
+    pub async fn delete_metadata(&self) -> anyhow::Result<()> {
+        let _guard = self
+            .turn_guard
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Cancel the active turn before deleting the chat"))?;
+        self.shutdown().await;
+        self.store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?
+            .delete_chat(&self.id)
+    }
+
+    pub async fn cancel(&self) -> anyhow::Result<()> {
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        // Resolve callbacks before cancellation, so the prompt can finish.
+        client
+            .callback_handler()
+            .pending_permissions
+            .write()
+            .await
+            .clear();
+        let sid = self
+            .acp_session_id
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
+        client.cancel(&sid).await
+    }
+
+    pub async fn config_options(&self) -> serde_json::Value {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.config_options.read().await.clone()
+        } else {
+            serde_json::json!([])
+        }
+    }
+
+    pub async fn set_config(
+        &self,
+        id: &str,
+        value: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let _guard = self.turn_guard.try_lock().map_err(|_| {
+            anyhow::anyhow!("Wait for the active turn before changing configuration")
+        })?;
+        self.ensure_running().await?;
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        let sid = self
+            .acp_session_id
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
+        let options = tokio::time::timeout(
+            Duration::from_secs(30),
+            client.set_config(&sid, id, value.clone()),
+        )
+        .await??;
+        if let Some(store) = &self.store {
+            store.update_chat(&self.id, |c| {
+                c.config_values[id] = value;
+            })?;
+        }
+        self.touch().await;
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::ConfigOptions {
+                options: options.clone(),
+            },
+        );
+        Ok(options)
+    }
+
+    pub async fn list_remote_sessions(
+        &self,
+        cursor: Option<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.resume().await?;
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            client.list_sessions(&self.key.cwd, cursor),
+        )
+        .await?
     }
 }
 
@@ -296,15 +533,25 @@ fn stop_reason_to_string(stop_reason: StopReason) -> String {
 }
 
 pub struct SessionManager {
-    sessions: RwLock<HashMap<SessionKey, Arc<AcpSession>>>,
+    sessions: RwLock<HashMap<String, Arc<AcpSession>>>,
     sessions_by_id: RwLock<HashMap<String, Arc<AcpSession>>>,
     configs: HashMap<String, AgentConfig>,
     event_log: Arc<EventLog>,
+    pub store: Option<Arc<crate::store::Store>>,
 }
 
 impl SessionManager {
     pub fn new(configs: HashMap<String, AgentConfig>, event_log: Arc<EventLog>) -> Arc<Self> {
+        Self::with_store(configs, event_log, None)
+    }
+
+    pub fn with_store(
+        configs: HashMap<String, AgentConfig>,
+        event_log: Arc<EventLog>,
+        store: Option<Arc<crate::store::Store>>,
+    ) -> Arc<Self> {
         let mgr = Arc::new(Self {
+            store,
             sessions: RwLock::new(HashMap::new()),
             sessions_by_id: RwLock::new(HashMap::new()),
             configs,
@@ -324,6 +571,10 @@ impl SessionManager {
     }
 
     pub async fn get_or_create(&self, agent: &str, cwd: &Path) -> anyhow::Result<Arc<AcpSession>> {
+        anyhow::ensure!(
+            self.store.is_none(),
+            "Persistent sessions must be looked up by chat ID"
+        );
         let key = SessionKey {
             agent: agent.to_string(),
             cwd: cwd.to_path_buf(),
@@ -331,7 +582,7 @@ impl SessionManager {
 
         {
             let sessions = self.sessions.read().await;
-            if let Some(s) = sessions.get(&key) {
+            if let Some(s) = sessions.values().find(|s| s.key == key) {
                 return Ok(s.clone());
             }
         }
@@ -343,24 +594,45 @@ impl SessionManager {
             .clone();
 
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get(&key) {
+        if let Some(session) = sessions.values().find(|s| s.key == key) {
             return Ok(session.clone());
         }
 
         let session = Arc::new(AcpSession::new(key.clone(), config, self.event_log.clone()));
         let mut by_id = self.sessions_by_id.write().await;
-        sessions.insert(key, session.clone());
+        sessions.insert(session.id.clone(), session.clone());
         by_id.insert(session.id.clone(), session.clone());
 
         Ok(session)
     }
 
     pub async fn get_by_id(&self, session_id: &str) -> Option<Arc<AcpSession>> {
-        self.sessions_by_id.read().await.get(session_id).cloned()
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get(session_id) {
+            return Some(session.clone());
+        }
+        let store = self.store.as_ref()?;
+        let chat = store.chat(session_id).ok()?;
+        let project = store.project(&chat.project_id).ok()?;
+        let config = self.configs.get(&chat.agent)?.clone();
+        let mut session = AcpSession::new(
+            SessionKey {
+                agent: chat.agent,
+                cwd: project.path.into(),
+            },
+            config,
+            self.event_log.clone(),
+        );
+        session.id = chat.id;
+        session.store = Some(store.clone());
+        *session.acp_session_id.get_mut() = chat.acp_session_id.map(Into::into);
+        let session = Arc::new(session);
+        sessions.insert(session.id.clone(), session.clone());
+        Some(session)
     }
 
     pub async fn list_sessions(&self) -> Vec<crate::web::SessionInfo> {
-        let sessions: Vec<(SessionKey, Arc<AcpSession>)> = self
+        let sessions: Vec<(String, Arc<AcpSession>)> = self
             .sessions
             .read()
             .await
@@ -368,13 +640,13 @@ impl SessionManager {
             .map(|(key, session)| (key.clone(), session.clone()))
             .collect();
         let mut result = Vec::new();
-        for (key, session) in sessions {
+        for (_key, session) in sessions {
             let ps = session.process_state().await;
             let ts = session.turn_state().await;
             result.push(crate::web::SessionInfo {
                 id: session.id.clone(),
-                agent: key.agent.clone(),
-                cwd: key.cwd.to_string_lossy().to_string(),
+                agent: session.key.agent.clone(),
+                cwd: session.key.cwd.to_string_lossy().to_string(),
                 process_state: ps.to_string(),
                 turn_state: ts.to_string(),
             });
@@ -383,7 +655,7 @@ impl SessionManager {
     }
 
     pub async fn get_all_status(&self) -> Vec<(String, ProcessState, TurnState)> {
-        let sessions: Vec<(SessionKey, Arc<AcpSession>)> = self
+        let sessions: Vec<(String, Arc<AcpSession>)> = self
             .sessions
             .read()
             .await
@@ -391,10 +663,10 @@ impl SessionManager {
             .map(|(key, session)| (key.clone(), session.clone()))
             .collect();
         let mut result = Vec::new();
-        for (key, session) in sessions {
+        for (_key, session) in sessions {
             let ps = session.process_state().await;
             let ts = session.turn_state().await;
-            result.push((key.agent.clone(), ps, ts));
+            result.push((session.key.agent.clone(), ps, ts));
         }
         result
     }
@@ -415,8 +687,8 @@ impl SessionManager {
         }
     }
 
-    async fn reap_idle(&self) {
-        let sessions: Vec<(SessionKey, Arc<AcpSession>)> = self
+    pub async fn reap_idle(&self) {
+        let sessions: Vec<(String, Arc<AcpSession>)> = self
             .sessions
             .read()
             .await
@@ -441,9 +713,12 @@ impl SessionManager {
         }
 
         for key in to_reap {
-            if let Some(session) = self.remove_session(&key).await {
-                tracing::info!(agent = %key.agent, "Reaping idle session {}", session.id);
-                session.shutdown().await;
+            if let Some(session) = self.get_by_id(&key).await {
+                if let Ok(_guard) = session.turn_guard.try_lock() {
+                    if session.last_activity().await.elapsed() > session.config.idle_timeout {
+                        session.shutdown().await;
+                    }
+                }
             }
         }
     }
@@ -456,7 +731,7 @@ impl SessionManager {
         self.configs.contains_key(name)
     }
 
-    async fn remove_session(&self, key: &SessionKey) -> Option<Arc<AcpSession>> {
+    pub async fn remove_session(&self, key: &str) -> Option<Arc<AcpSession>> {
         let session = self.sessions.write().await.remove(key);
         if let Some(session) = &session {
             self.sessions_by_id.write().await.remove(&session.id);

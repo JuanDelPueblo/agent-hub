@@ -82,8 +82,24 @@ pub async fn auth_middleware(
 ) -> Result<Response, StatusCode> {
     let port = state.server_port;
 
-    // Validate origin for all requests
-    if !validate_origin(&headers, port) {
+    let public = state.config.web.public_origin.as_deref();
+    let origin = headers.get("origin").and_then(|v| v.to_str().ok());
+    let local_origin = format!("http://127.0.0.1:{port}");
+    let localhost_origin = format!("http://localhost:{port}");
+    let origin_allowed =
+        origin.is_none_or(|o| Some(o) == public || o == local_origin || o == localhost_origin);
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let public_host = public.and_then(|o| {
+        o.strip_prefix("https://")
+            .or_else(|| o.strip_prefix("http://"))
+    });
+    let host_allowed = Some(host) == public_host
+        || host == format!("127.0.0.1:{port}")
+        || host == format!("localhost:{port}");
+    if !origin_allowed || !host_allowed {
         return Err(StatusCode::FORBIDDEN);
     }
 

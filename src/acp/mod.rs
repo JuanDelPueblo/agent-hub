@@ -36,6 +36,9 @@ enum WriterMsg {
 }
 
 pub struct AcpClient {
+    replaying: Arc<AtomicBool>,
+    pub capabilities: tokio::sync::RwLock<serde_json::Value>,
+    pub config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
     writer_tx: mpsc::Sender<WriterMsg>,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<ResponseResult>>>>,
     next_id: AtomicI64,
@@ -89,6 +92,8 @@ impl AcpClient {
 
         let stderr_handle = tokio::spawn(drain_stderr(proc.stderr, agent_name.clone()));
 
+        let config_options = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
+        let replaying = Arc::new(AtomicBool::new(false));
         let reader_handle = tokio::spawn(reader_task(
             proc.stdout,
             pending.clone(),
@@ -100,11 +105,16 @@ impl AcpClient {
             event_log.clone(),
             session_id,
             agent_name,
+            config_options.clone(),
+            replaying.clone(),
         ));
 
         let wait_handle = tokio::spawn(wait_task(child.clone(), child_root_pid, connected.clone()));
 
         Ok(Self {
+            replaying,
+            capabilities: tokio::sync::RwLock::new(serde_json::json!({})),
+            config_options,
             writer_tx,
             pending,
             next_id: AtomicI64::new(1),
@@ -119,7 +129,7 @@ impl AcpClient {
         })
     }
 
-    async fn send_request<P: serde::Serialize>(
+    pub(crate) async fn send_request<P: serde::Serialize>(
         &self,
         method: &'static str,
         params: P,
@@ -174,7 +184,11 @@ impl AcpClient {
         let req = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
             agent_client_protocol_schema::Implementation::new("ccgonext", "0.2.0"),
         );
+        let mut req = serde_json::to_value(req)?;
+        req["clientCapabilities"] =
+            serde_json::json!({"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true});
         let result = self.send_request("initialize", req).await?;
+        *self.capabilities.write().await = result["agentCapabilities"].clone();
         Ok(serde_json::from_value(result)?)
     }
 
@@ -182,6 +196,109 @@ impl AcpClient {
         let req = NewSessionRequest::new(cwd.to_path_buf());
         let result = self.send_request("session/new", req).await?;
         Ok(serde_json::from_value(result)?)
+    }
+
+    /// Preserve the agent's identity. Never fall back to session/new on resume failure.
+    pub async fn open_session(&self, cwd: &Path, saved: Option<&str>) -> anyhow::Result<String> {
+        let params = serde_json::json!({"cwd":cwd,"mcpServers":[],"sessionId":saved});
+        let result = if let Some(id) = saved {
+            let caps = self.capabilities.read().await.clone();
+            let method = if caps["loadSession"] == true {
+                "session/load"
+            } else if caps
+                .pointer("/sessionCapabilities/resume")
+                .is_some_and(|v| v.is_object())
+            {
+                "session/resume"
+            } else {
+                anyhow::bail!("This agent cannot resume saved chat {id}. Create a new chat to start another conversation.")
+            };
+            // Our durable event log already contains the displayed history.
+            // Loading still restores agent-owned state; do not append its replay twice.
+            self.replaying.store(true, Ordering::SeqCst);
+            let result = self.send_request(method, params).await;
+            self.replaying.store(false, Ordering::SeqCst);
+            result?
+        } else {
+            self.send_request("session/new", NewSessionRequest::new(cwd.to_path_buf()))
+                .await?
+        };
+        *self.config_options.write().await = result
+            .get("configOptions")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+        if let Some(saved) = saved {
+            if let Some(returned) = result["sessionId"].as_str() {
+                anyhow::ensure!(
+                    returned == saved,
+                    "Agent returned a different session identity on resume"
+                );
+            }
+            Ok(saved.to_owned())
+        } else {
+            Ok(result["sessionId"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Agent omitted sessionId"))?
+                .to_owned())
+        }
+    }
+
+    pub async fn set_config(
+        &self,
+        session_id: &SessionId,
+        id: &str,
+        value: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        validate_config_value(&*self.config_options.read().await, id, &value)?;
+        let result = self
+            .send_request(
+                "session/set_config_option",
+                serde_json::json!({"sessionId":session_id,"configId":id,"value":value}),
+            )
+            .await?;
+        let options = result
+            .get("configOptions")
+            .filter(|v| v.is_array())
+            .ok_or_else(|| anyhow::anyhow!("Agent omitted authoritative configOptions"))?
+            .clone();
+        *self.config_options.write().await = options.clone();
+        Ok(options)
+    }
+
+    pub async fn close_session(&self, session_id: &SessionId) {
+        if self
+            .capabilities
+            .read()
+            .await
+            .pointer("/sessionCapabilities/close")
+            .is_some_and(|v| v.is_object())
+        {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.send_request("session/close", serde_json::json!({"sessionId":session_id})),
+            )
+            .await;
+        }
+    }
+
+    pub async fn list_sessions(
+        &self,
+        cwd: &Path,
+        cursor: Option<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(
+            self.capabilities
+                .read()
+                .await
+                .pointer("/sessionCapabilities/list")
+                .is_some_and(|v| v.is_object()),
+            "Agent does not advertise session/list"
+        );
+        self.send_request(
+            "session/list",
+            serde_json::json!({"cwd":cwd,"cursor":cursor}),
+        )
+        .await
     }
 
     pub async fn prompt(
@@ -370,6 +487,8 @@ async fn reader_task(
     event_log: Arc<EventLog>,
     session_id: String,
     agent_name: String,
+    config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    replaying: Arc<AtomicBool>,
 ) {
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(16));
     let mut line = String::new();
@@ -410,6 +529,28 @@ async fn reader_task(
                     }
                     IncomingKind::Notification { method, params } => {
                         if method == "session/update" {
+                            if params
+                                .pointer("/update/sessionUpdate")
+                                .and_then(|v| v.as_str())
+                                == Some("config_option_update")
+                            {
+                                if let Some(options) = params
+                                    .pointer("/update/configOptions")
+                                    .filter(|v| v.is_array())
+                                {
+                                    *config_options.write().await = options.clone();
+                                    event_log.append(
+                                        &session_id,
+                                        &agent_name,
+                                        EventPayload::ConfigOptions {
+                                            options: options.clone(),
+                                        },
+                                    );
+                                }
+                            }
+                            if replaying.load(Ordering::SeqCst) {
+                                continue;
+                            }
                             if let Ok(notif) = serde_json::from_value::<SessionNotification>(params)
                             {
                                 handle_session_update(
@@ -462,12 +603,44 @@ async fn reader_task(
     }
 
     connected.store(false, Ordering::SeqCst);
+    event_log.append(
+        &session_id,
+        &agent_name,
+        EventPayload::StateChange {
+            process: "DEAD".into(),
+            turn: "IDLE".into(),
+        },
+    );
     kill_child(&child, child_root_pid).await;
     fail_pending_requests(
         &pending,
         format!("ACP agent connection closed for {}", agent_name),
     )
     .await;
+}
+
+pub fn validate_config_value(
+    options: &serde_json::Value,
+    id: &str,
+    value: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let option = options
+        .as_array()
+        .and_then(|a| a.iter().find(|o| o["id"] == id))
+        .ok_or_else(|| anyhow::anyhow!("Unknown ACP config option"))?;
+    fn contains(options: &serde_json::Value, value: &serde_json::Value) -> bool {
+        options.as_array().is_some_and(|a| {
+            a.iter()
+                .any(|o| o.get("value") == Some(value) || contains(&o["options"], value))
+        })
+    }
+    let valid = match option["type"].as_str() {
+        Some("select") => contains(&option["options"], value),
+        Some("boolean") => value.is_boolean(),
+        _ => false,
+    };
+    anyhow::ensure!(valid, "Unsupported ACP config value");
+    Ok(())
 }
 
 async fn handle_agent_request(

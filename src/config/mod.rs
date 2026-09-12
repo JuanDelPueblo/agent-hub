@@ -14,9 +14,12 @@ impl Default for Config {
     fn default() -> Self {
         let mut agents = HashMap::new();
         agents.insert("codex".to_string(), AgentConfig::codex_default());
-        agents.insert("gemini".to_string(), AgentConfig::gemini_default());
+        agents.insert(
+            "antigravity".to_string(),
+            AgentConfig::antigravity_default(),
+        );
         agents.insert("opencode".to_string(), AgentConfig::opencode_default());
-        agents.insert("claudecode".to_string(), AgentConfig::claudecode_default());
+        agents.insert("claude".to_string(), AgentConfig::claudecode_default());
 
         Self {
             server: ServerConfig::default(),
@@ -52,12 +55,15 @@ pub struct AgentConfig {
 }
 
 impl AgentConfig {
+    pub fn antigravity_default() -> Self {
+        Self::codex_default().with_command("agy_acp_server.par".into())
+    }
     pub fn codex_default() -> Self {
         Self {
             acp_command: "codex-acp".to_string(),
             acp_args: vec![],
             env_vars: HashMap::new(),
-            callback_policy: CallbackPolicy::AutoApprove,
+            callback_policy: CallbackPolicy::Ask,
             idle_timeout: Duration::from_secs(900),
         }
     }
@@ -67,7 +73,7 @@ impl AgentConfig {
             acp_command: "gemini".to_string(),
             acp_args: vec!["--acp".to_string()],
             env_vars: HashMap::new(),
-            callback_policy: CallbackPolicy::AutoApprove,
+            callback_policy: CallbackPolicy::Ask,
             idle_timeout: Duration::from_secs(900),
         }
     }
@@ -77,7 +83,7 @@ impl AgentConfig {
             acp_command: "opencode".to_string(),
             acp_args: vec!["acp".to_string()],
             env_vars: HashMap::new(),
-            callback_policy: CallbackPolicy::AutoApprove,
+            callback_policy: CallbackPolicy::Ask,
             idle_timeout: Duration::from_secs(900),
         }
     }
@@ -87,7 +93,7 @@ impl AgentConfig {
             acp_command: "claude-agent-acp".to_string(),
             acp_args: vec![],
             env_vars: HashMap::new(),
-            callback_policy: CallbackPolicy::AutoApprove,
+            callback_policy: CallbackPolicy::Ask,
             idle_timeout: Duration::from_secs(900),
         }
     }
@@ -135,6 +141,52 @@ impl Default for TimeoutConfig {
 pub struct WebConfig {
     pub auth_token: Option<String>,
     pub project_root: String,
+    pub public_origin: Option<String>,
+    pub project_roots: Vec<String>,
+}
+
+/// Server-owned executable definitions; never accepted from HTTP clients.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentDefinition {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default = "default_idle")]
+    idle_timeout: u64,
+}
+fn default_idle() -> u64 {
+    900
+}
+
+pub fn parse_agents(json: &str) -> anyhow::Result<HashMap<String, AgentConfig>> {
+    let definitions: HashMap<String, AgentDefinition> = serde_json::from_str(json)?;
+    anyhow::ensure!(!definitions.is_empty(), "At least one agent is required");
+    definitions
+        .into_iter()
+        .map(|(name, d)| {
+            anyhow::ensure!(
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "Invalid agent name"
+            );
+            anyhow::ensure!(!d.command.trim().is_empty(), "Agent command is empty");
+            Ok((
+                name,
+                AgentConfig {
+                    acp_command: d.command,
+                    acp_args: d.args,
+                    env_vars: d.env,
+                    callback_policy: CallbackPolicy::Ask,
+                    idle_timeout: Duration::from_secs(d.idle_timeout),
+                },
+            ))
+        })
+        .collect()
 }
 
 impl Config {
@@ -151,9 +203,9 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert!(config.agents.contains_key("codex"));
-        assert!(config.agents.contains_key("gemini"));
+        assert!(config.agents.contains_key("antigravity"));
         assert!(config.agents.contains_key("opencode"));
-        assert!(config.agents.contains_key("claudecode"));
+        assert!(config.agents.contains_key("claude"));
         assert_eq!(config.server.port, 8765);
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.timeouts.default, 600);
@@ -174,7 +226,7 @@ mod tests {
         let codex = AgentConfig::codex_default();
         assert_eq!(codex.acp_command, "codex-acp");
         assert!(codex.acp_args.is_empty());
-        assert_eq!(codex.callback_policy, CallbackPolicy::AutoApprove);
+        assert_eq!(codex.callback_policy, CallbackPolicy::Ask);
 
         let gemini = AgentConfig::gemini_default();
         assert_eq!(gemini.acp_command, "gemini");
@@ -230,7 +282,7 @@ mod tests {
     #[test]
     fn test_config_default_contains_all_agents() {
         let config = Config::default();
-        let expected = ["codex", "gemini", "opencode", "claudecode"];
+        let expected = ["codex", "antigravity", "opencode", "claude"];
         for agent in &expected {
             assert!(config.agents.contains_key(*agent));
         }

@@ -263,6 +263,7 @@ fn build_config(cli: &Cli) -> Config {
         web: WebConfig {
             auth_token: cli.auth_token.clone(),
             project_root,
+            ..Default::default()
         },
     }
 }

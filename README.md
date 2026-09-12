@@ -1,310 +1,147 @@
-# CCGONEXT
+# Agent Hub v0.1
 
-[中文文档](README_zh.md)
+A single-owner, persistent web supervisor for local ACP coding agents, forked
+from [CCGONEXT](https://github.com/missdeer/ccgonext). GPL-3.0-only; upstream
+copyright and license files are retained. No proprietary agent binaries are
+included. Historical documentation is in `README.upstream.md`.
 
-CCGONEXT is an MCP server that lets Claude Code orchestrate multiple coding agents through a single MCP tool while exposing a structured ACP activity UI in the browser.
+## Run
 
-## What It Does
-
-- Runs as an MCP server over stdio
-- Talks to agents through ACP (Agent Client Protocol) over stdio, not PTY mirroring
-- Supports `codex`, `gemini`, `opencode`, and `claudecode`
-- Keeps per-agent, per-working-directory sessions
-- Streams structured events to the web UI: messages, thoughts, plans, tool calls, permissions, and state changes
-- Lets the browser send follow-up prompts to existing sessions
-- Supports configurable ACP callback policy per agent
-- Ships as a single binary with embedded static assets
-
-## Supported Agent Commands
-
-Default ACP commands:
-
-- `codex` -> `codex-acp`
-- `gemini` -> `gemini --acp`
-- `opencode` -> `opencode acp`
-- `claudecode` -> `claude-agent-acp`
-
-You can override any of these with CLI flags or environment variables.
-
-## Installation
-
-### From Source
-
-```bash
-cargo build --release
+```sh
+cargo build --bin agent-hub
+target/debug/agent-hub --database /path/to/state/hub.sqlite3 \
+  --project-root /home/tony --agents-file agents.json \
+  --public-origin https://agents.home.edyan.me --port 9123
 ```
 
-Binary output:
+The database's parent directory must exist and be private. The server binds
+only to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing it.
+`--public-origin` authorizes an exact browser Origin and Host, not authentication.
+Juno supplies Traefik basic authentication using a runtime htpasswd file. Local
+loopback clients are trusted. No executable paths are accepted from the browser.
 
-- Linux/macOS: `target/release/ccgonext`
-- Windows: `target/release/ccgonext.exe`
+## Projects and chats
 
-### Prebuilt Binaries
+Create a project pointing to an existing directory under a configured project
+root. Canonical paths reject missing directories and symlink escapes. Create as
+many chats as needed, including several using the same agent in one project.
+Each chat has a stable UUID, independent process, ACP session ID, turn lock,
+permission policy and selected ACP configuration values.
 
-Download from [Releases](https://github.com/missdeer/ccgonext/releases).
+Reconnect initializes an agent and creates or loads its session. Sending a
+prompt also connects automatically. `session/load`, or advertised
+`session/resume`, restores agent-owned conversation state. Failed or unsupported
+resume is an error; Agent Hub never replaces a saved conversation with
+`session/new`. Use a new chat when the agent cannot resume. Agent replay is not
+duplicated into the already persisted UI activity log.
 
-## Quick Start
+Stop process, idle reaping (900 seconds by default), and backend restart preserve
+the chat and ACP session ID. Advertised `session/close` is attempted before
+process-tree cleanup. Cancel turn sends `session/cancel` and resolves pending
+browser permissions. Archive stops an idle process and keeps metadata; Restore
+makes the chat usable again. Delete removes local metadata/activity only, never
+project files or the agent's own session history. Remove projects after deleting
+their chats. A project with chats cannot change directory because its ACP
+sessions belong to the original directory.
 
-### Use with Claude Code
+## Configuration
 
-Add this to your Claude Code MCP config:
+Server-owned JSON definitions are generic:
 
 ```json
 {
-  "mcpServers": {
-    "ccgonext": {
-      "command": "ccgonext",
-      "args": ["serve"]
-    }
-  }
+  "codex": {"command": "codex-acp"},
+  "claude": {"command": "claude-agent-acp"},
+  "opencode": {"command": "opencode", "args": ["acp"]},
+  "antigravity": {"command": "agy_acp_server.par", "args": ["--uid="]}
 }
 ```
 
-### Run the Web UI
+Definitions also accept `env` (object) and `idle_timeout` (seconds). Nix supplies
+absolute store paths. Add another ACP agent by adding an entry here; no session
+manager changes are needed. Removing a definition keeps chats visible, but
+reconnecting requires restoring it.
 
-```bash
-ccgonext web --open-browser
-```
+The UI renders ACP `configOptions` dynamically, including grouped selects and
+advertised boolean options, and listens for `config_option_update`. Changes use
+`session/set_config_option` and its authoritative replacement option list.
+Selected values are saved per chat and reapplied on reconnect. If a saved option
+is no longer accepted, the UI warns and shows the agent's current values.
+Unknown option types remain visible but cannot be edited. Agents that advertise
+no configuration options have no model controls; the hub does not invent options.
 
-### Inspect the Effective Config
+Permission policy is separate from agent configuration. New chats default
+to `ask`. `read-only` allows client file reads but denies write/terminal and agent
+permission requests; `deny-all` denies callbacks; `auto-approve` allows them.
+Ask requests have a ten-minute deadline and explicit Approve/Deny buttons.
+These policies govern ACP callbacks, not OS sandboxing: agents may have native
+tools, sandbox settings, or modes that do not ask the client. This is a trusted,
+powerful service with the owner's project and authentication access.
 
-```bash
-ccgonext config
-```
+## Architecture and state
 
-## Commands
+The Rust module structure is retained: `acp/` owns subprocesses, NDJSON JSON-RPC,
+callbacks and process trees; `session/` owns chat-specific lifecycle and locking;
+`events.rs` owns ordered replay and WebSocket publication; `web/` serves the API
+and embedded lightweight HTML/JavaScript UI. `store.rs` adds SQLite metadata and
+activity persistence. The legacy `ccgonext` MCP executable remains available;
+its ephemeral `(agent, cwd)` convenience API is disabled in the persistent hub.
 
-```text
-ccgonext [OPTIONS] [COMMAND]
+SQLite uses WAL, a busy timeout and foreign keys. Projects and chats are stored
+as application records keyed by ID and project membership. Activity is durable;
+the latest 10,000 events are retained in the WebSocket replay window. The
+database retains older activity until its chat is deleted. Back up using
+SQLite's online backup command or stop the hub and copy the database and WAL
+together. Agent histories and credentials remain in their normal home-directory
+locations; backing up SQLite alone does not back them up.
 
-Commands:
-  serve   Run as MCP server (stdio mode) with web UI
-  web     Run web server only (standalone mode)
-  config  Show current configuration
-```
+The browser subscribes to `/ws` and reconnects with its last event sequence.
+There is no live-activity polling. Slow connections reconnect and replay; the UI
+reports replay-window gaps. Pending approvals from an earlier backend process
+are marked denied on startup. A turn interrupted by restart is marked complete
+with `backend_restarted`; check its remote outcome after reconnecting.
 
-Key options:
+## API
 
-| Option | Env | Default |
-|---|---|---|
-| `--port` | `CCGONEXT_PORT` | `8765` |
-| `--host` | `CCGONEXT_HOST` | `127.0.0.1` |
-| `--port-retry` | `CCGONEXT_PORT_RETRY` | `0` |
-| `--open-browser` | `CCGONEXT_OPEN_BROWSER` | `false` |
-| `--auth-token` | `CCGONEXT_AUTH_TOKEN` | unset |
-| `--timeout` | `CCGONEXT_TIMEOUT` | `600` |
-| `--idle-timeout` | `CCGONEXT_IDLE_TIMEOUT` | `900` |
-| `--agents` | `CCGONEXT_AGENTS` | `codex,gemini,opencode` |
-| `--codex-cmd` | `CCGONEXT_CODEX_CMD` | `codex-acp` |
-| `--gemini-cmd` | `CCGONEXT_GEMINI_CMD` | `gemini` |
-| `--opencode-cmd` | `CCGONEXT_OPENCODE_CMD` | `opencode` |
-| `--claudecode-cmd` | `CCGONEXT_CLAUDECODE_CMD` | `claude-agent-acp` |
-| `--callback-policy` | `CCGONEXT_CALLBACK_POLICY` | `auto-approve` |
-| `--codex-callback-policy` | `CCGONEXT_CODEX_CALLBACK_POLICY` | inherit global |
-| `--gemini-callback-policy` | `CCGONEXT_GEMINI_CALLBACK_POLICY` | inherit global |
-| `--opencode-callback-policy` | `CCGONEXT_OPENCODE_CALLBACK_POLICY` | inherit global |
-| `--claudecode-callback-policy` | `CCGONEXT_CLAUDECODE_CALLBACK_POLICY` | inherit global |
-| `--log-file` | `CCGONEXT_LOG_FILE` | unset |
-| `--log-dir` | `CCGONEXT_LOG_DIR` | unset |
+| Resource | Operations |
+| --- | --- |
+| `/api/projects` | GET, POST `{name,path}` |
+| `/api/projects/:id` | PATCH `{name,path}`, DELETE (empty projects only) |
+| `/api/projects/:id/chats` | GET, POST `{agent,title}` |
+| `/api/chats/:id` | GET, PATCH `{title?,archived?,permission_policy?}`, DELETE |
+| `/api/chats/:id/prompt` | POST `{text}`; 202 accepted, result/error on WebSocket |
+| `/api/chats/:id/resume`, `/stop`, `/cancel` | POST |
+| `/api/chats/:id/permission` | POST `{id,granted}` |
+| `/api/chats/:id/config` | GET, PATCH `{id,value}` |
+| `/api/chats/:id/remote-sessions?cursor=…` | GET; capability-gated ACP session/list |
+| `/api/agents` | GET configured names |
+| `/ws` | WebSocket; send `{ "type":"subscribe", "from_seq":0 }` |
 
-For the full generated help:
+## Official Antigravity on NixOS
 
-```bash
-ccgonext --help
-```
+The accompanying nix-config recipe fetches Google's versioned archive with a
+fixed SHA-256 from `dl.google.com/agy-extensions/releases/linux/`, as published
+in the [ACP registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json).
+It installs and patches `agy_acp_server.par` and `localharness_external` together.
+Linux uses the registry's `--uid=` argument. The package is marked unfree,
+builds locally, and disables substitutes. Do not publish its output to a public
+binary cache without redistribution rights. Authentication data stays outside
+the Nix store.
 
-## Callback Policy
+## Development and checks
 
-ACP agents can request permissions, file access, and terminal execution through callbacks. CCGONEXT supports four policies:
-
-- `deny-all`
-- `read-only`
-- `ask`
-- `auto-approve`
-
-Current default:
-
-- All enabled agents default to `auto-approve`
-
-Examples:
-
-```bash
-# Default behavior
-ccgonext serve
-
-# One policy for all enabled agents
-ccgonext serve --callback-policy read-only
-
-# Override a single agent
-ccgonext serve --callback-policy read-only --codex-callback-policy auto-approve
-```
-
-Environment variable equivalents:
-
-```bash
-export CCGONEXT_CALLBACK_POLICY=read-only
-export CCGONEXT_CODEX_CALLBACK_POLICY=auto-approve
-export CCGONEXT_GEMINI_CALLBACK_POLICY=ask
-```
-
-`auto-approve` is convenient, but it also means the agent can automatically approve ACP actions such as file writes and terminal execution. If that is too permissive for your environment, use `read-only`, `ask`, or `deny-all`.
-
-## MCP Tool
-
-CCGONEXT exposes one MCP tool: `ask_agents`.
-
-### `ask_agents`
-
-Send prompts to 1-4 agents in parallel.
-
-Request:
-
-```json
-{
-  "requests": [
-    { "agent": "codex", "message": "Review this change" },
-    { "agent": "gemini", "message": "Look for edge cases" }
-  ],
-  "timeout": 300,
-  "project_root_path": "/path/to/project"
-}
-```
-
-Rules:
-
-- `requests` must contain 1-4 items
-- agent names must be unique within a single call
-- `timeout` is in seconds
-- max timeout is `1800`
-- `project_root_path` is optional; if omitted, the current process working directory is used
-
-Response:
-
-```json
-{
-  "results": [
-    {
-      "agent": "codex",
-      "success": true,
-      "response": "..."
-    },
-    {
-      "agent": "gemini",
-      "success": false,
-      "error": "Request timed out"
-    }
-  ]
-}
-```
-
-## Web UI
-
-The web UI is a structured activity view, not a terminal mirror.
-
-Current behavior:
-
-- Left sidebar shows active sessions
-- Main pane shows turn cards
-- Message text is expanded
-- Thought blocks are collapsed by default
-- Tool and plan sections are summary-first and expandable
-- Permission requests can be approved or denied from the browser
-- Follow-up prompts can be sent to an existing session
-
-Sessions are keyed by:
-
-- agent name
-- working directory
-
-## Web API
-
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/api/status` | `GET` | Current agent/process summary |
-| `/api/sessions` | `GET` | Active session list |
-| `/api/prompt/{session_id}` | `POST` | Send a follow-up prompt to an existing session |
-| `/api/permission/{session_id}` | `POST` | Respond to a pending permission request |
-| `/ws` | `GET` | WebSocket event stream |
-
-Example prompt request:
-
-```json
-{
-  "text": "Continue and fix the failing tests",
-  "timeout": 120
-}
-```
-
-Example permission response:
-
-```json
-{
-  "id": "permission-id",
-  "granted": true
-}
-```
-
-## Architecture
-
-```text
-Claude Code / MCP Client
-        |
-        | MCP JSON-RPC
-        v
-  CCGONEXT
-    |
-    | ask_agents
-    v
-  SessionManager
-    |
-    +-- AcpSession(agent, cwd)
-            |
-            +-- ACP subprocess over stdio
-            +-- structured event log
-            +-- callback policy enforcement
-            +-- timeout / restart handling
-    |
-    +-- Web server
-            |
-            +-- REST API
-            +-- /ws event stream
-            +-- browser activity UI
-```
-
-Main modules:
-
-- `src/acp/` - ACP process, protocol, and callback handling
-- `src/session/` - session lifecycle and timeout handling
-- `src/events.rs` - replayable event log
-- `src/mcp/` - MCP server and tool handling
-- `src/web/` - browser API and WebSocket streaming
-
-## Development
-
-```bash
-cargo build
-cargo fmt --all
+```sh
+cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo test --all-targets
+nix build .#agent-hub
 ```
 
-## License
+Integration tests require `python3` for a deterministic local ACP peer;
+the Nix package provides it during checks. Tests exercise subprocess transport,
+independent chats, SQLite restart, resume refusal, configuration, permissions,
+idle cleanup, and HTTP path/agent/origin validation. See `docs/AGENT-HUB.md` in
+nix-config for Juno's state and activation gates.
 
-This project is dual-licensed.
-
-### Non-Commercial / Personal Use
-
-GNU General Public License v3.0 (`GPL-3.0`)
-
-### Commercial / Workplace Use
-
-Commercial license required.
-
-For commercial licensing inquiries:
-
-- `missdeer@gmail.com`
-
-See:
-
-- [LICENSE](LICENSE)
-- [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL)
+Quota/cost accounting, Hermes, multi-user access, orchestration and remote ACP
+hosts are outside v0.1.

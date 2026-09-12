@@ -1,5 +1,6 @@
 mod auth;
 mod handlers;
+mod hub;
 mod static_files;
 mod websocket;
 
@@ -17,7 +18,6 @@ use axum::{
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WebServerRunOptions {
@@ -63,38 +63,68 @@ impl WebServer {
             }
         }
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
         let state = AppState {
             session_manager,
             config,
             server_port,
         };
 
-        let app = Router::new()
-            .route("/api/status", get(api_get_status))
-            .route("/api/sessions", get(api_list_sessions))
-            .route("/api/prompt/{session_id}", post(api_prompt_session))
-            .route(
-                "/api/permission/{session_id}",
-                post(api_permission_response),
-            )
-            .route("/ws", get(ws_handler))
-            .fallback(static_handler)
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth_middleware,
-            ))
-            .layer(cors)
-            .with_state(state);
+        let app = router(state);
 
         axum::serve(listener, app).await?;
 
         Ok(())
     }
+}
+
+pub fn router(state: AppState) -> Router {
+    let legacy = if state.session_manager.store.is_none() {
+        Router::new()
+            .route("/api/sessions", get(api_list_sessions))
+            .route("/api/prompt/:session_id", post(api_prompt_session))
+            .route("/api/permission/:session_id", post(api_permission_response))
+    } else {
+        Router::new()
+    };
+    Router::new()
+        .merge(legacy)
+        .route(
+            "/api/projects",
+            get(hub::projects).post(hub::create_project),
+        )
+        .route(
+            "/api/projects/:id",
+            axum::routing::patch(hub::edit_project).delete(hub::delete_project),
+        )
+        .route(
+            "/api/projects/:id/chats",
+            get(hub::chats).post(hub::create_chat),
+        )
+        .route(
+            "/api/chats/:id",
+            get(hub::chat)
+                .patch(hub::edit_chat)
+                .delete(hub::delete_chat),
+        )
+        .route("/api/chats/:id/prompt", post(hub::prompt))
+        .route("/api/chats/:id/cancel", post(hub::cancel))
+        .route("/api/chats/:id/resume", post(hub::resume))
+        .route("/api/chats/:id/stop", post(hub::stop))
+        .route("/api/chats/:id/permission", post(api_permission_response))
+        .route(
+            "/api/chats/:id/config",
+            get(hub::config).patch(hub::set_config),
+        )
+        .route("/api/chats/:id/remote-sessions", get(hub::remote_sessions))
+        .route("/api/agents", get(hub::agents))
+        .route("/api/status", get(api_get_status))
+        .route("/ws", get(ws_handler))
+        .fallback(static_handler)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        .with_state(state)
 }
 
 async fn bind_listener(

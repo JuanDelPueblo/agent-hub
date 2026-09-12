@@ -1,0 +1,78 @@
+"""Deterministic ACP peer for transport/lifecycle tests; no model or network calls."""
+import json
+import pathlib
+import sys
+import uuid
+
+root = pathlib.Path(sys.argv[1])
+can_load = len(sys.argv) < 3 or sys.argv[2] != "no-load"
+current = None
+pending_prompt = None
+model = "small"
+
+
+def send(obj):
+    print(json.dumps({"jsonrpc": "2.0", **obj}), flush=True)
+
+
+def reply(id, result):
+    send({"id": id, "result": result})
+
+
+def options():
+    return [{"id": "model", "name": "Model", "type": "select", "currentValue": model,
+             "options": [{"value": "small", "name": "Small"}, {"value": "large", "name": "Large"}]}]
+
+
+def update(kind, **fields):
+    send({"method": "session/update", "params": {"sessionId": current, "update": {"sessionUpdate": kind, **fields}}})
+
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    method, p, id = msg.get("method"), msg.get("params", {}), msg.get("id")
+    if method == "initialize":
+        reply(id, {"protocolVersion": 1, "agentCapabilities": {"loadSession": can_load,
+                   "sessionCapabilities": {"list": {}, "close": {}}}})
+    elif method == "session/new":
+        current = str(uuid.uuid4())
+        (root / current).write_text("0")
+        reply(id, {"sessionId": current, "configOptions": options()})
+    elif method == "session/load":
+        current = p["sessionId"]
+        if not (root / current).exists():
+            send({"id": id, "error": {"code": -32001, "message": "Missing history"}})
+        else:
+            update("agent_message_chunk", content={"type": "text", "text": "REPLAY"})
+            reply(id, {"configOptions": options()})
+    elif method == "session/set_config_option":
+        model = p["value"]
+        reply(id, {"configOptions": options()})
+    elif method == "session/list":
+        reply(id, {"sessions": [{"sessionId": f.name, "cwd": str(root)} for f in root.iterdir() if f.is_file()]})
+    elif method == "session/close":
+        reply(id, {})
+    elif method == "session/cancel":
+        if pending_prompt is not None:
+            reply(pending_prompt, {"stopReason": "cancelled"})
+            pending_prompt = None
+    elif method == "session/prompt":
+        text = p["prompt"][0]["text"]
+        count = int((root / current).read_text()) + 1
+        (root / current).write_text(str(count))
+        if text == "wait":
+            pending_prompt = id
+        elif text == "permission":
+            pending_prompt = id
+            send({"id": "permission-1", "method": "session/request_permission", "params": {
+                "sessionId": current, "toolCall": {"toolCallId": "tool-1", "title": "Write file", "kind": "edit"},
+                "options": [{"optionId": "yes", "name": "Approve", "kind": "allow_once"},
+                            {"optionId": "no", "name": "Deny", "kind": "reject_once"}]}})
+        else:
+            update("agent_message_chunk", content={"type": "text", "text": f"{current}:{count}:{model}"})
+            reply(id, {"stopReason": "end_turn"})
+    elif id == "permission-1" and pending_prompt is not None:
+        choice = msg.get("result", {}).get("outcome", {}).get("optionId", "cancelled")
+        update("agent_message_chunk", content={"type": "text", "text": choice})
+        reply(pending_prompt, {"stopReason": "end_turn"})
+        pending_prompt = None

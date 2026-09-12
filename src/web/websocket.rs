@@ -57,7 +57,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let replay_ready_send = replay_ready.clone();
     let replay_started_send = replay_started.clone();
     let replay_seq_send = replay_seq.clone();
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         loop {
             let notified = replay_ready_send.notified();
             if replay_started_send.load(Ordering::SeqCst) {
@@ -83,6 +83,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!("WebSocket lagged by {} events", n);
+                    break; // Reconnect and replay rather than silently losing activity.
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -91,7 +92,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     // Recv task: parse client messages
     let action_tx_clone = action_tx.clone();
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Text(text) => {
@@ -113,7 +114,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let replay_ready_action = replay_ready.clone();
     let replay_started_action = replay_started.clone();
     let replay_seq_action = replay_seq.clone();
-    let action_task = tokio::spawn(async move {
+    let mut action_task = tokio::spawn(async move {
         while let Some(cmd) = action_rx.recv().await {
             match cmd {
                 ClientMessage::Subscribe { from_seq } => {
@@ -147,6 +148,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
 
                     replay_seq_action.store(max_replayed_seq, Ordering::SeqCst);
+                    let _ = sender
+                        .send(Message::Text("{\"type\":\"subscribed\"}".into()))
+                        .await;
                     replay_started_action.store(true, Ordering::SeqCst);
                     replay_ready_action.notify_waiters();
                 }
@@ -167,8 +171,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     });
 
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
-        _ = action_task => {},
+        _ = &mut send_task => {},
+        _ = &mut recv_task => {},
+        _ = &mut action_task => {},
     }
+    send_task.abort();
+    recv_task.abort();
+    action_task.abort();
 }

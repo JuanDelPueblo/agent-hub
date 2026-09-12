@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCGONEXT - Activity Console</title>
+    <title>Agent Hub</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -22,7 +22,7 @@
         .main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
         .sidebar {
             width: 220px; background: #161b22; border-right: 1px solid #30363d;
-            overflow: hidden; flex-shrink: 0;
+            overflow-y: auto; flex-shrink: 0;
         }
         .sidebar h2 {
             font-size: 0.7rem; color: #8b949e; padding: 0.8rem 1rem 0.4rem;
@@ -209,28 +209,43 @@
             flex: 1; display: flex; align-items: center; justify-content: center;
             color: #484f58; font-size: 0.9rem;
         }
+        button, select, input, textarea { font: inherit; color: inherit; background: #21262d; border: 1px solid #484f58; border-radius: 4px; padding: .5rem; }
+        button { cursor: pointer; min-height: 40px; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: .4rem; padding: .5rem; }
+        #configOptions { display: flex; flex-wrap: wrap; gap: .6rem; padding: .5rem; }
+        #configOptions label { display: flex; flex-direction: column; font-size: .8rem; }
+        #notice { color: #ffa198; padding: .5rem; white-space: pre-wrap; }
+        textarea { flex: 1; min-width: 0; resize: vertical; }
+        dialog { background: #161b22; color: #c9d1d9; margin: auto; width: min(95vw, 450px); padding: 1rem; border: 1px solid #484f58; }
+        dialog form, dialog label { display: flex; flex-direction: column; gap: .5rem; }
+        .project-heading { padding: .5rem; border-top: 1px solid #30363d; }
+        @media (max-width: 650px) { .main { flex-direction: column; } .sidebar { width: 100%; max-height: 28vh; border-right: none; } .header { padding: .5rem; } .events { padding: .5rem; } .toolbar { font-size: .75rem; } }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>CCGONEXT</h1>
+        <h1>Agent Hub</h1>
         <span class="project-root" id="projectRoot"></span>
     </div>
     <div class="main">
         <div class="sidebar">
-            <h2>Sessions</h2>
+            <div class="toolbar"><button id="newProject">New project</button><label><input id="showArchived" type="checkbox"> Archived</label></div>
             <div id="sessionList"></div>
         </div>
         <div class="content">
+            <div id="chatTools" class="toolbar"></div>
+            <div id="configOptions"></div>
+            <div id="notice" role="status"></div>
             <div class="events" id="events">
                 <div class="empty-state">No events yet. Sessions start on first request.</div>
             </div>
             <div class="prompt-bar" id="promptBar" style="display:none;">
-                <input type="text" id="promptInput" placeholder="Send a message...">
+                <textarea id="promptInput" rows="2" aria-label="Prompt" placeholder="Send a message… (Ctrl+Enter)"></textarea>
                 <button id="promptSend">Send</button>
             </div>
         </div>
     </div>
+<dialog id="editor"><form id="editorForm"><h2 id="editorTitle"></h2><div id="editorFields"></div><div class="toolbar"><button type="submit">Save</button><button type="button" id="editorCancel">Cancel</button></div></form></dialog>
 <script>
 (function() {
     let ws = null;
@@ -239,24 +254,97 @@
     let allEvents = [];
     let sessionViews = {};
     let nextDisplayId = 1;
+    let projects = [], agents = [], lastSeq = 0, optionsByChat = {};
+    const notice = text => { document.getElementById('notice').textContent = text; };
+    async function api(path, method = 'GET', body) {
+        const r = await fetch(path, {method, headers: {'Content-Type':'application/json'}, ...(body === undefined ? {} : {body:JSON.stringify(body)})});
+        const data = await r.json();
+        if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+        return data;
+    }
+    function run(action) { notice(''); Promise.resolve().then(action).catch(e => notice(e.message)); }
+    function button(parent, text, action) { const b = document.createElement('button'); b.textContent = text; b.onclick = () => run(action); parent.appendChild(b); return b; }
+    async function refresh() {
+        projects = await api('/api/projects'); agents = await api('/api/agents');
+        const groups = await Promise.all(projects.map(p => api(`/api/projects/${p.id}/chats`)));
+        sessions = Object.fromEntries(groups.flat().map(c => [c.id,c]));
+        if (activeSessionId && !sessions[activeSessionId]) activeSessionId = null;
+        renderSessions(); renderTools();
+    }
+    function editForm(title, fields, save) {
+        const dialog = document.getElementById('editor');
+        document.getElementById('editorTitle').textContent = title;
+        const area = document.getElementById('editorFields'); area.replaceChildren();
+        const controls = {};
+        for (const [key, labelText, value, choices] of fields) {
+            const label = document.createElement('label'); label.textContent = labelText;
+            const input = document.createElement(choices ? 'select' : 'input'); input.required = true;
+            if (choices) for (const v of choices) { const o = document.createElement('option'); o.value = v; o.textContent = v; input.appendChild(o); }
+            input.value = value; label.appendChild(input); area.appendChild(label); controls[key] = input;
+        }
+        document.getElementById('editorForm').onsubmit = e => { e.preventDefault(); run(async () => { await save(Object.fromEntries(Object.entries(controls).map(([k,v]) => [k,v.value]))); dialog.close(); await refresh(); }); };
+        document.getElementById('editorCancel').onclick = () => dialog.close(); dialog.showModal();
+    }
+    document.getElementById('newProject').onclick = () => editForm('New project', [['name','Name',''],['path','Existing directory','/home/tony/Projects/']], p => api('/api/projects','POST',p));
+    document.getElementById('showArchived').onchange = renderSessions;
+    async function chatAction(action) { await api(`/api/chats/${activeSessionId}/${action}`, 'POST', {}); await refresh(); if (action === 'resume') await loadOptions(activeSessionId); }
+    async function loadOptions(id) { optionsByChat[id] = await api(`/api/chats/${id}/config`); if (id === activeSessionId) renderOptions(); }
+    function renderTools() {
+        const parent = document.getElementById('chatTools'); parent.replaceChildren();
+        const c = sessions[activeSessionId]; if (!c) { renderOptions(); return; }
+        button(parent,'Reconnect', () => chatAction('resume'));
+        button(parent,'Cancel turn', () => chatAction('cancel'));
+        button(parent,'Stop process', () => chatAction('stop'));
+        button(parent,'Rename', () => editForm('Rename chat', [['title','Title',c.title]], v => api(`/api/chats/${c.id}`,'PATCH',v)));
+        button(parent,c.archived ? 'Restore' : 'Archive', async () => { await api(`/api/chats/${c.id}`,'PATCH',{archived:!c.archived}); await refresh(); });
+        button(parent,'Delete', async () => { if (confirm('Delete this chat and its local activity history? Agent-owned history and project files remain.')) { await api(`/api/chats/${c.id}`,'DELETE'); await refresh(); renderActiveSession(); } });
+        const label = document.createElement('label'); label.textContent = 'Permissions ';
+        const select = document.createElement('select');
+        for (const policy of ['ask','read-only','auto-approve','deny-all']) { const o = document.createElement('option'); o.value = policy; o.textContent = policy; select.appendChild(o); }
+        select.value = c.permission_policy;
+        select.onchange = () => run(async () => { await api(`/api/chats/${c.id}`,'PATCH',{permission_policy:select.value}); await refresh(); });
+        label.appendChild(select); parent.appendChild(label); renderOptions();
+    }
+    function renderOptions() {
+        const parent = document.getElementById('configOptions'); parent.replaceChildren();
+        const id = activeSessionId;
+        for (const option of optionsByChat[id] || []) {
+            const label = document.createElement('label'); label.textContent = option.name; label.title = option.description || '';
+            let input;
+            if (option.type === 'select') {
+                input = document.createElement('select');
+                const add = (items, parent) => { for (const item of items || []) { if (item.options) { const group = document.createElement('optgroup'); group.label = item.name || item.group; add(item.options,group); parent.appendChild(group); } else { const o = document.createElement('option'); o.value = item.value; o.textContent = item.name; parent.appendChild(o); } } };
+                add(option.options,input); input.value = option.currentValue;
+            } else if (option.type === 'boolean') { input = document.createElement('input'); input.type = 'checkbox'; input.checked = option.currentValue; }
+            else { const unsupported = document.createElement('span'); unsupported.textContent = 'Unsupported option type: ' + option.type; label.appendChild(unsupported); parent.appendChild(label); continue; }
+            input.onchange = () => run(async () => { optionsByChat[id] = await api(`/api/chats/${id}/config`,'PATCH',{id:option.id,value:option.type === 'boolean' ? input.checked : input.value}); renderOptions(); });
+            label.appendChild(input); parent.appendChild(label);
+        }
+    }
 
     function connectWs() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
         ws = new WebSocket(`${proto}//${location.host}/ws`);
         ws.onopen = () => {
-            ws.send(JSON.stringify({type: 'subscribe', from_seq: 0}));
+            document.getElementById('projectRoot').textContent = 'Connected';
+            ws.send(JSON.stringify({type: 'subscribe', from_seq: lastSeq ? lastSeq + 1 : 0}));
         };
         ws.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
-                if (data.type === 'replay_gap') return;
+                if (data.type === 'replay_gap') { notice('Some older activity is outside the replay window.'); return; }
+                if (data.type === 'subscribed') { run(refresh); return; }
                 if (data.seq) handleEvent(data);
             } catch(ex) {}
         };
-        ws.onclose = () => setTimeout(connectWs, 2000);
+        ws.onclose = () => { document.getElementById('projectRoot').textContent = 'Disconnected — reconnecting'; setTimeout(connectWs, 2000); };
     }
 
     function handleEvent(ev) {
+        if (ev.seq <= lastSeq) return;
+        lastSeq = ev.seq;
+        if (ev.payload.type === 'metadata_changed') { run(refresh); return; }
+        if (ev.payload.type === 'config_options') { optionsByChat[ev.session_id] = ev.payload.options; if (ev.session_id === activeSessionId) renderOptions(); return; }
         allEvents.push(ev);
         if (ev.session_id && !sessions[ev.session_id]) {
             sessions[ev.session_id] = {
@@ -446,6 +534,9 @@
         const p = ev.payload || {};
         const agent = ev.agent || '';
         switch (p.type) {
+            case 'user_message':
+            case 'error':
+                return {id:nextDisplayId++, type:p.type, agent, timestamp:ev.timestamp, text:p.text || p.message};
             case 'state_change':
                 return {
                     id: nextDisplayId++,
@@ -498,6 +589,11 @@
     function updateDisplayItem(el, item) {
         el.className = 'event';
         switch (item.type) {
+            case 'user_message':
+            case 'error':
+                el.style.whiteSpace = 'pre-wrap';
+                el.innerHTML = eventPrefix(item.timestamp, item.type === 'user_message' ? 'You' : 'Error') + escHtml(item.text);
+                break;
             case 'turn':
                 el.className += ' turn';
                 el.innerHTML =
@@ -618,14 +714,22 @@
     function renderSessions() {
         const list = document.getElementById('sessionList');
         list.innerHTML = '';
-        for (const s of Object.values(sessions)) {
+        for (const p of projects) {
+            const header = document.createElement('div'); header.className = 'project-heading';
+            const title = document.createElement('strong'); title.textContent = p.name; title.title = p.path; header.appendChild(title);
+            button(header,'+ Chat', () => editForm('New chat', [['title','Title','New chat'],['agent','Agent',agents[0],agents]], async c => { const created = await api(`/api/projects/${p.id}/chats`,'POST',c); activeSessionId = created.id; renderActiveSession(); }));
+            button(header,'Edit', () => editForm('Edit project', [['name','Name',p.name],['path','Directory',p.path]], v => api(`/api/projects/${p.id}`,'PATCH',v)));
+            button(header,'Remove', async () => { if (confirm('Remove this empty project from Agent Hub? Files remain.')) { await api(`/api/projects/${p.id}`,'DELETE'); await refresh(); } });
+            list.appendChild(header);
+        for (const s of Object.values(sessions).filter(c => c.project_id === p.id && (!c.archived || document.getElementById('showArchived').checked))) {
             const el = document.createElement('div');
             el.className = 'session-item' + (s.id === activeSessionId ? ' active' : '');
             const dotClass = (s.process_state||'').toLowerCase();
-            el.innerHTML = `<div class="agent-name"><span class="dot ${dotClass}"></span>${escHtml(s.agent)}</div>` +
+            el.innerHTML = `<div class="agent-name"><span class="dot ${dotClass}"></span>[${escHtml(s.agent)}] ${escHtml(s.title)}${s.archived ? ' (archived)' : ''}</div>` +
                 `<div class="session-meta">${s.process_state} / ${s.turn_state}</div>`;
             el.onclick = () => selectSession(s.id);
             list.appendChild(el);
+        }
         }
         const bar = document.getElementById('promptBar');
         bar.style.display = activeSessionId ? 'flex' : 'none';
@@ -635,16 +739,11 @@
         activeSessionId = id;
         renderSessions();
         renderActiveSession();
+        renderTools(); run(() => loadOptions(id));
     }
 
     window.respondPerm = function(sessionId, permId, granted) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'permission_response', session_id: sessionId, id: permId, granted
-            }));
-        }
-        const btns = document.querySelectorAll(`[data-perm-id="${permId}"] .permission-btn`);
-        btns.forEach(b => b.remove());
+        run(() => api(`/api/chats/${sessionId}/permission`,'POST',{id:permId,granted}));
     };
 
     function sendPrompt() {
@@ -655,7 +754,7 @@
         input.value = '';
         const btn = document.getElementById('promptSend');
         btn.disabled = true;
-        fetch(`/api/prompt/${activeSessionId}`, {
+        fetch(`/api/chats/${activeSessionId}/prompt`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text})
@@ -669,26 +768,15 @@
 
     document.getElementById('promptSend').onclick = sendPrompt;
     document.getElementById('promptInput').onkeydown = (e) => {
-        if (e.key === 'Enter') sendPrompt();
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendPrompt(); }
     };
 
     function escHtml(s) {
         if (!s) return '';
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
-    fetch('/api/status').then(r=>r.json()).then(data => {
-        document.getElementById('projectRoot').textContent = data.project_root || '';
-    }).catch(()=>{});
-
-    fetch('/api/sessions').then(r=>r.json()).then(data => {
-        for (const s of (data.sessions||[])) {
-            sessions[s.id] = s;
-        }
-        renderSessions();
-    }).catch(()=>{});
-
-    connectWs();
+    run(async () => { await refresh(); connectWs(); });
 })();
 </script>
 </body>

@@ -1,10 +1,10 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use tokio::sync::broadcast;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionEvent {
     pub seq: u64,
     pub timestamp: chrono::DateTime<chrono::Utc>,
@@ -13,9 +13,19 @@ pub struct SessionEvent {
     pub payload: EventPayload,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventPayload {
+    UserMessage {
+        text: String,
+    },
+    Error {
+        message: String,
+    },
+    ConfigOptions {
+        options: serde_json::Value,
+    },
+    MetadataChanged {},
     MessageChunk {
         text: String,
     },
@@ -53,7 +63,7 @@ pub enum EventPayload {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEntry {
     pub content: String,
     pub status: String,
@@ -68,6 +78,7 @@ pub enum ReplayResult {
 }
 
 pub struct EventLog {
+    store: Option<std::sync::Arc<crate::store::Store>>,
     events: RwLock<VecDeque<SessionEvent>>,
     min_seq: AtomicU64,
     next_seq: AtomicU64,
@@ -79,6 +90,7 @@ impl EventLog {
     pub fn new(max_entries: usize) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1024);
         Self {
+            store: None,
             events: RwLock::new(VecDeque::new()),
             min_seq: AtomicU64::new(0),
             next_seq: AtomicU64::new(1),
@@ -91,7 +103,58 @@ impl EventLog {
         self.next_seq.load(Ordering::SeqCst)
     }
 
+    pub fn persistent(store: std::sync::Arc<crate::store::Store>) -> anyhow::Result<Self> {
+        let mut log = Self::new(10_000);
+        let events = store.events()?;
+        log.next_seq
+            .store(events.last().map_or(1, |e| e.seq + 1), Ordering::SeqCst);
+        log.min_seq
+            .store(events.first().map_or(0, |e| e.seq), Ordering::SeqCst);
+        *log.events.write().unwrap() = events.into();
+        log.store = Some(store);
+        // Browser approvals from a previous process can no longer authorize work.
+        let previous = log.events.read().unwrap().clone();
+        let mut pending = std::collections::HashMap::new();
+        let mut active = std::collections::HashMap::new();
+        for e in previous {
+            match &e.payload {
+                EventPayload::PermissionRequest { id, .. } => {
+                    pending.insert(id.clone(), (e.session_id.clone(), e.agent.clone()));
+                }
+                EventPayload::PermissionResponse { id, .. } => {
+                    pending.remove(id);
+                }
+                EventPayload::StateChange { turn, .. } if turn == "PROMPTING" => {
+                    active.insert(e.session_id.clone(), e.agent.clone());
+                }
+                EventPayload::TurnComplete { .. } => {
+                    active.remove(&e.session_id);
+                }
+                _ => {}
+            }
+        }
+        for (id, (chat, agent)) in pending {
+            log.append(
+                &chat,
+                &agent,
+                EventPayload::PermissionResponse { id, granted: false },
+            );
+        }
+        for (chat, agent) in active {
+            log.append(
+                &chat,
+                &agent,
+                EventPayload::TurnComplete {
+                    stop_reason: "backend_restarted".into(),
+                },
+            );
+        }
+        Ok(log)
+    }
+
     pub fn append(&self, session_id: &str, agent: &str, payload: EventPayload) -> u64 {
+        // Sequence allocation, persistence and publication share ordering.
+        let mut events = self.events.write().unwrap();
         let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
         let event = SessionEvent {
             seq,
@@ -101,7 +164,11 @@ impl EventLog {
             payload,
         };
 
-        let mut events = self.events.write().unwrap();
+        if let Some(store) = &self.store {
+            if let Err(error) = store.save_event(&event) {
+                tracing::error!(%error, "Failed to persist activity event");
+            }
+        }
         events.push_back(event.clone());
 
         while events.len() > self.max_entries {
@@ -110,8 +177,6 @@ impl EventLog {
         if let Some(first) = events.front() {
             self.min_seq.store(first.seq, Ordering::SeqCst);
         }
-        drop(events);
-
         let _ = self.broadcast_tx.send(event);
 
         seq
@@ -139,6 +204,10 @@ impl EventLog {
 
     pub fn subscribe(&self) -> broadcast::Receiver<SessionEvent> {
         self.broadcast_tx.subscribe()
+    }
+
+    pub fn forget_chat(&self, id: &str) {
+        self.events.write().unwrap().retain(|e| e.session_id != id);
     }
 }
 

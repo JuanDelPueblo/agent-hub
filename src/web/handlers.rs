@@ -153,11 +153,13 @@ pub async fn api_permission_response(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    session
+    let success = session
         .respond_to_permission(&payload.id, payload.granted)
         .await;
-
-    Ok(Json(PermissionApiResponse { success: true }))
+    if !success {
+        return Err(StatusCode::CONFLICT);
+    }
+    Ok(Json(PermissionApiResponse { success }))
 }
 
 #[cfg(test)]
