@@ -77,8 +77,8 @@ describe('turn entry layout', () => {
 
     for (const element of [plan.nativeElement, permission.nativeElement, tool.nativeElement] as HTMLElement[]) {
       const style = getComputedStyle(element);
-      expect(style.marginTop).toBe('0px');
-      expect(style.marginBottom).toBe('0px');
+      expect(Number.parseFloat(style.marginTop)).toBe(0);
+      expect(Number.parseFloat(style.marginBottom)).toBe(0);
     }
   });
 });
