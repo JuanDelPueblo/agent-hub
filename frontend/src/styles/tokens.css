@@ -1,5 +1,6 @@
 :root {
-  /* Default Light Theme */
+  /* Material 3 expressive light palette. The palette stays restrained so
+     tonal surfaces and hierarchy do most of the visual work. */
   --md-sys-color-primary: #5c53a5;
   --md-sys-color-on-primary: #ffffff;
   --md-sys-color-primary-container: #e4dfff;
@@ -35,21 +36,149 @@
 
   --md-sys-color-outline: #78757f;
   --md-sys-color-outline-variant: #c9c4cf;
-
   --md-sys-color-shadow: #000000;
   --md-sys-color-scrim: #000000;
 
-  /* Typography */
-  --md-sys-typescale-body-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --md-sys-typescale-code-font: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  /* Typography roles. Components use these explicit values in their shadow
+     roots so native controls never fall back to the browser's serif face. */
+  --md-sys-typescale-font-family: system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --md-sys-typescale-body-font: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-code-font: 'SFMono-Regular', Consolas,
+    'Liberation Mono', Menlo, Courier, monospace;
+  --md-sys-typescale-icon-font: 'Material Symbols Outlined';
 
-  /* Shape & Elevation */
+  --md-sys-typescale-display-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-display-font-size: 3.5625rem;
+  --md-sys-typescale-display-font-weight: 400;
+  --md-sys-typescale-display-line-height: 4rem;
+  --md-sys-typescale-display-letter-spacing: -0.015625rem;
+
+  --md-sys-typescale-headline-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-headline-font-size: 2rem;
+  --md-sys-typescale-headline-font-weight: 500;
+  --md-sys-typescale-headline-line-height: 2.5rem;
+  --md-sys-typescale-headline-letter-spacing: 0;
+
+  --md-sys-typescale-title-large-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-title-large-font-size: 1.375rem;
+  --md-sys-typescale-title-large-font-weight: 600;
+  --md-sys-typescale-title-large-line-height: 1.75rem;
+  --md-sys-typescale-title-large-letter-spacing: 0;
+
+  --md-sys-typescale-title-medium-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-title-medium-font-size: 1rem;
+  --md-sys-typescale-title-medium-font-weight: 600;
+  --md-sys-typescale-title-medium-line-height: 1.5rem;
+  --md-sys-typescale-title-medium-letter-spacing: 0.009375rem;
+
+  --md-sys-typescale-body-large-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-body-large-font-size: 1rem;
+  --md-sys-typescale-body-large-font-weight: 400;
+  --md-sys-typescale-body-large-line-height: 1.5rem;
+  --md-sys-typescale-body-large-letter-spacing: 0.03125rem;
+
+  --md-sys-typescale-body-medium-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-body-medium-font-size: 0.875rem;
+  --md-sys-typescale-body-medium-font-weight: 400;
+  --md-sys-typescale-body-medium-line-height: 1.25rem;
+  --md-sys-typescale-body-medium-letter-spacing: 0.015625rem;
+
+  --md-sys-typescale-body-small-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-body-small-font-size: 0.75rem;
+  --md-sys-typescale-body-small-font-weight: 400;
+  --md-sys-typescale-body-small-line-height: 1rem;
+  --md-sys-typescale-body-small-letter-spacing: 0.025rem;
+
+  --md-sys-typescale-label-large-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-label-large-font-size: 0.875rem;
+  --md-sys-typescale-label-large-font-weight: 600;
+  --md-sys-typescale-label-large-line-height: 1.25rem;
+  --md-sys-typescale-label-large-letter-spacing: 0.00625rem;
+
+  --md-sys-typescale-label-medium-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-label-medium-font-size: 0.75rem;
+  --md-sys-typescale-label-medium-font-weight: 600;
+  --md-sys-typescale-label-medium-line-height: 1rem;
+  --md-sys-typescale-label-medium-letter-spacing: 0.03125rem;
+
+  --md-sys-typescale-label-small-font-family: var(--md-sys-typescale-font-family);
+  --md-sys-typescale-label-small-font-size: 0.6875rem;
+  --md-sys-typescale-label-small-font-weight: 600;
+  --md-sys-typescale-label-small-line-height: 1rem;
+  --md-sys-typescale-label-small-letter-spacing: 0.03125rem;
+
+  --md-sys-typescale-code-font-size: 0.8125rem;
+  --md-sys-typescale-code-font-weight: 450;
+  --md-sys-typescale-code-line-height: 1.375rem;
+  --md-sys-typescale-code-letter-spacing: 0;
+
+  /* Shape scale. Use full only for controls that intentionally read as a
+     pill; surfaces and dense rows use the calmer values. */
+  --md-sys-shape-corner-extra-small: 4px;
   --md-sys-shape-corner-small: 8px;
   --md-sys-shape-corner-medium: 12px;
   --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-extra-extra-large: 32px;
   --md-sys-shape-corner-full: 9999px;
 
-  /* Status Colors */
+  /* Spacing rhythm */
+  --hub-space-1: 4px;
+  --hub-space-2: 8px;
+  --hub-space-3: 12px;
+  --hub-space-4: 16px;
+  --hub-space-5: 20px;
+  --hub-space-6: 24px;
+  --hub-space-7: 32px;
+  --hub-space-8: 40px;
+  --hub-space-9: 48px;
+
+  /* Elevation */
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1: 0 1px 2px rgb(27 27 33 / 0.08),
+    0 1px 3px rgb(27 27 33 / 0.06);
+  --md-sys-elevation-level2: 0 2px 6px rgb(27 27 33 / 0.1),
+    0 1px 2px rgb(27 27 33 / 0.08);
+  --md-sys-elevation-level3: 0 8px 20px rgb(27 27 33 / 0.16),
+    0 2px 6px rgb(27 27 33 / 0.1);
+  --md-sys-elevation-level4: 0 12px 28px rgb(27 27 33 / 0.18),
+    0 4px 10px rgb(27 27 33 / 0.12);
+  --md-sys-elevation-level5: 0 18px 42px rgb(27 27 33 / 0.22),
+    0 6px 14px rgb(27 27 33 / 0.14);
+
+  /* Motion */
+  --hub-duration-short1: 50ms;
+  --hub-duration-short2: 100ms;
+  --hub-duration-short3: 150ms;
+  --hub-duration-short4: 200ms;
+  --hub-duration-medium1: 250ms;
+  --hub-duration-medium2: 300ms;
+  --hub-duration-medium3: 350ms;
+  --hub-duration-medium4: 400ms;
+  --hub-duration-long1: 450ms;
+  --hub-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --hub-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --hub-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --hub-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* Interaction state layers */
+  --hub-state-hover-opacity: 0.08;
+  --hub-state-focus-opacity: 0.12;
+  --hub-state-pressed-opacity: 0.12;
+  --hub-state-dragged-opacity: 0.16;
+  --hub-disabled-content-opacity: 0.38;
+  --hub-disabled-container-opacity: 0.12;
+  --hub-focus-ring: 0 0 0 3px color-mix(in srgb, var(--md-sys-color-primary) 28%, transparent);
+
+  /* Layout */
+  --hub-content-max-width: 1080px;
+  --hub-chat-max-width: 900px;
+  --hub-page-gutter: 32px;
+  --hub-page-gutter-compact: 16px;
+  --hub-drawer-width: 304px;
+
+  /* Semantic status colors */
   --status-running: #2e7d32;
   --status-running-container: #e8f5e9;
   --status-stopped: #757575;
@@ -100,11 +229,36 @@
 
     --status-running: #81c784;
     --status-running-container: #1b3a20;
-    --status-stopped: #9e9e9e;
+    --status-stopped: #b7b3bc;
     --status-stopped-container: #303030;
     --status-starting: #ffb74d;
     --status-starting-container: #422800;
     --status-dead: #e57373;
     --status-dead-container: #441313;
+
+    --md-sys-elevation-level1: 0 1px 2px rgb(0 0 0 / 0.24),
+      0 1px 3px rgb(0 0 0 / 0.18);
+    --md-sys-elevation-level2: 0 2px 6px rgb(0 0 0 / 0.32),
+      0 1px 2px rgb(0 0 0 / 0.24);
+    --md-sys-elevation-level3: 0 8px 20px rgb(0 0 0 / 0.4),
+      0 2px 6px rgb(0 0 0 / 0.3);
+    --md-sys-elevation-level4: 0 12px 28px rgb(0 0 0 / 0.46),
+      0 4px 10px rgb(0 0 0 / 0.34);
+    --md-sys-elevation-level5: 0 18px 42px rgb(0 0 0 / 0.52),
+      0 6px 14px rgb(0 0 0 / 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hub-duration-short1: 0ms;
+    --hub-duration-short2: 0ms;
+    --hub-duration-short3: 0ms;
+    --hub-duration-short4: 0ms;
+    --hub-duration-medium1: 0ms;
+    --hub-duration-medium2: 0ms;
+    --hub-duration-medium3: 0ms;
+    --hub-duration-medium4: 0ms;
+    --hub-duration-long1: 0ms;
   }
 }

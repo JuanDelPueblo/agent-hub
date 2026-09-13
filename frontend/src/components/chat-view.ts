@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { store } from '../state/app-state';
 import { Chat, ConfigOption, DisplayItem } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 import './chat-header';
 import './event-stream';
 import './chat-composer';
@@ -21,7 +22,7 @@ export class ChatView extends LitElement {
 
   private unsubscribeStore?: () => void;
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: flex;
       flex-direction: row;
@@ -30,6 +31,7 @@ export class ChatView extends LitElement {
       overflow: hidden;
       position: relative;
       background-color: var(--md-sys-color-background);
+      color: var(--md-sys-color-on-surface);
     }
 
     .main-chat-area {
@@ -55,30 +57,32 @@ export class ChatView extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 32px 16px;
+      padding: var(--hub-space-8) var(--hub-page-gutter);
       text-align: center;
-      gap: 16px;
+      gap: var(--hub-space-4);
       overflow-y: auto;
     }
 
     .connecting-title {
-      font-size: 1.125rem;
-      font-weight: 500;
+      font-family: var(--md-sys-typescale-title-large-font-family);
+      font-size: var(--md-sys-typescale-title-large-font-size);
+      line-height: var(--md-sys-typescale-title-large-line-height);
+      font-weight: var(--md-sys-typescale-title-large-font-weight);
       color: var(--md-sys-color-on-surface);
     }
 
     .connecting-sub {
-      font-size: 0.875rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
       color: var(--md-sys-color-on-surface-variant);
     }
 
     .empty-card {
       max-width: 540px;
       width: 100%;
-      background-color: var(--md-sys-color-surface-container);
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: 16px;
-      padding: 24px;
+      background-color: var(--md-sys-color-surface-container-low);
+      border-radius: var(--md-sys-shape-corner-extra-large);
+      padding: var(--hub-space-7);
       text-align: left;
       box-sizing: border-box;
     }
@@ -86,75 +90,98 @@ export class ChatView extends LitElement {
     .empty-header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: var(--hub-space-3);
+      margin-bottom: var(--hub-space-5);
     }
 
     .empty-avatar {
       width: 40px;
       height: 40px;
-      border-radius: 50%;
+      border-radius: var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-extra-small);
       background-color: var(--md-sys-color-primary-container);
       color: var(--md-sys-color-on-primary-container);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 600;
-      font-size: 1.125rem;
+      font-weight: var(--md-sys-typescale-title-large-font-weight);
+      font-size: var(--md-sys-typescale-title-large-font-size);
+      line-height: var(--md-sys-typescale-title-large-line-height);
       text-transform: uppercase;
     }
 
     .empty-title {
-      font-size: 1.125rem;
-      font-weight: 600;
+      font-family: var(--md-sys-typescale-title-large-font-family);
+      font-size: var(--md-sys-typescale-title-large-font-size);
+      line-height: var(--md-sys-typescale-title-large-line-height);
+      font-weight: var(--md-sys-typescale-title-large-font-weight);
       color: var(--md-sys-color-on-surface);
     }
 
     .empty-desc {
-      font-size: 0.875rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
       color: var(--md-sys-color-on-surface-variant);
       margin-top: 2px;
     }
 
     .side-sheet {
-      width: 340px;
+      width: 360px;
       height: 100%;
-      background-color: var(--md-sys-color-surface-container-low);
-      border-left: 1px solid var(--md-sys-color-outline-variant);
+      background-color: var(--md-sys-color-surface-container-lowest);
+      border-left: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
+      box-shadow: var(--md-sys-elevation-level3);
       display: flex;
       flex-direction: column;
       position: relative;
-      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: width var(--hub-duration-medium2) var(--hub-easing-emphasized),
+        transform var(--hub-duration-medium2) var(--hub-easing-emphasized),
+        opacity var(--hub-duration-short4) var(--hub-easing-standard);
       z-index: 20;
     }
 
     .side-sheet.hidden {
-      display: none;
+      width: 0;
+      transform: translateX(32px);
+      opacity: 0;
+      pointer-events: none;
+      border-left-color: transparent;
+      box-shadow: none;
+      overflow: hidden;
     }
 
     .side-sheet-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--md-sys-color-outline-variant);
-      font-weight: 600;
-      font-size: 0.9375rem;
+      padding: var(--hub-space-4) var(--hub-space-5);
+      border-bottom: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
+      font-family: var(--md-sys-typescale-title-medium-font-family);
+      font-weight: var(--md-sys-typescale-title-medium-font-weight);
+      font-size: var(--md-sys-typescale-title-medium-font-size);
+      line-height: var(--md-sys-typescale-title-medium-line-height);
       color: var(--md-sys-color-on-surface);
     }
 
     .side-sheet-body {
       flex: 1;
       overflow-y: auto;
-      padding: 16px;
+      padding: var(--hub-space-6);
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 20px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
+    .icon { --hub-icon-size: 24px; }
+
+    .state-icon {
+      --hub-icon-size: 48px;
+      color: var(--md-sys-color-outline);
+    }
+
+    .error-icon {
+      --hub-icon-size: 48px;
+      color: var(--md-sys-color-error);
+    }
+
+    .error-title {
+      color: var(--md-sys-color-error);
     }
 
     @media (max-width: 839px) {
@@ -165,10 +192,19 @@ export class ChatView extends LitElement {
         bottom: 0;
         width: 100%;
         max-width: 360px;
-        box-shadow: var(--md-sys-elevation-level3);
+        box-shadow: var(--md-sys-elevation-level4);
+      }
+
+      .side-sheet.hidden {
+        width: min(100%, 360px);
+        transform: translateX(100%);
+      }
+
+      .connecting-state, .error-state, .empty-state {
+        padding: var(--hub-space-7) var(--hub-page-gutter-compact);
       }
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();
@@ -199,7 +235,7 @@ export class ChatView extends LitElement {
     if (!chat) {
       return html`
         <div class="empty-state">
-          <span class="icon" style="font-size: 48px; color: var(--md-sys-color-outline);">chat</span>
+          <span class="icon state-icon">chat</span>
           <p>No chat selected</p>
         </div>
       `;
@@ -234,8 +270,8 @@ export class ChatView extends LitElement {
             : connectError
             ? html`
                 <div class="error-state">
-                  <span class="icon" style="font-size: 48px; color: var(--md-sys-color-error);">error_outline</span>
-                  <div class="connecting-title" style="color: var(--md-sys-color-error);">Connection Failed</div>
+                  <span class="icon error-icon">error_outline</span>
+                  <div class="connecting-title error-title">Connection Failed</div>
                   <div class="connecting-sub">${connectError}</div>
                   <md-filled-button @click=${this.handleRetryConnect}>
                     Retry Connection
@@ -245,7 +281,7 @@ export class ChatView extends LitElement {
             : !configLoaded && items.length === 0
             ? html`
                 <div class="error-state">
-                  <span class="icon" style="font-size: 48px; color: var(--md-sys-color-outline);">tune</span>
+                  <span class="icon state-icon">tune</span>
                   <div class="connecting-title">Agent options not loaded</div>
                   <div class="connecting-sub">
                     Agent Hub cannot read the configuration of ${chat.agent} yet.
@@ -293,7 +329,10 @@ export class ChatView extends LitElement {
       <div class="side-sheet ${this.isConfigOpen ? '' : 'hidden'}">
         <div class="side-sheet-header">
           <span>Chat Configuration</span>
-          <md-icon-button @click=${() => (this.isConfigOpen = false)}>
+          <md-icon-button
+            aria-label="Close chat configuration"
+            @click=${() => (this.isConfigOpen = false)}
+          >
             <span class="icon">close</span>
           </md-icon-button>
         </div>

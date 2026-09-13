@@ -1,15 +1,14 @@
-/* Adaptive Window Layout Classes */
-
+/* Adaptive window layout shared by the shell and its feature surfaces. */
 .adaptive-root {
   display: flex;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: var(--md-sys-color-surface);
+  background-color: var(--md-sys-color-background);
   color: var(--md-sys-color-on-surface);
 }
 
-/* Compact (< 600px): Phone */
+/* Compact: phone */
 @media (max-width: 599px) {
   .adaptive-root {
     flex-direction: column;
@@ -29,10 +28,10 @@
   }
 }
 
-/* Medium (600px - 839px): Tablet */
+/* Medium: tablet */
 @media (min-width: 600px) and (max-width: 839px) {
   .nav-drawer-permanent {
-    width: 260px;
+    width: 280px;
     flex-shrink: 0;
   }
 
@@ -41,10 +40,10 @@
   }
 }
 
-/* Expanded (>= 840px): Desktop */
+/* Expanded: desktop */
 @media (min-width: 840px) {
   .nav-drawer-permanent {
-    width: 300px;
+    width: var(--hub-drawer-width);
     flex-shrink: 0;
   }
 

@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { Chat } from '../api/types';
 import { store } from '../state/app-state';
 import { router } from '../router';
+import { sharedStyles } from '../styles/shared';
 import '@material/web/iconbutton/icon-button.js';
 import '@material/web/dialog/dialog.js';
 import '@material/web/textfield/outlined-text-field.js';
@@ -31,13 +32,13 @@ export class ChatHeader extends LitElement {
   @state()
   private isDeleteDialogOpen = false;
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      background-color: var(--md-sys-color-surface-container);
-      border-bottom: 1px solid var(--md-sys-color-outline-variant);
-      padding: 8px 16px;
-      height: 64px;
+      background-color: var(--md-sys-color-surface);
+      border-bottom: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
+      padding: 10px var(--hub-space-5);
+      height: 72px;
       box-sizing: border-box;
     }
 
@@ -51,13 +52,13 @@ export class ChatHeader extends LitElement {
       align-items: center;
       justify-content: space-between;
       height: 100%;
-      gap: 12px;
+      gap: var(--hub-space-3);
     }
 
     .left-section {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: var(--hub-space-4);
       min-width: 0;
       flex: 1;
     }
@@ -81,17 +82,23 @@ export class ChatHeader extends LitElement {
     .title-row {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--hub-space-2);
     }
 
     .chat-title {
-      font-size: 1.125rem;
-      font-weight: 600;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      font-family: var(--md-sys-typescale-title-large-font-family);
+      font-size: var(--md-sys-typescale-title-large-font-size);
+      line-height: var(--md-sys-typescale-title-large-line-height);
+      font-weight: var(--md-sys-typescale-title-large-font-weight);
       color: var(--md-sys-color-on-surface);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       cursor: pointer;
+      text-align: left;
     }
 
     .chat-title:hover {
@@ -101,20 +108,20 @@ export class ChatHeader extends LitElement {
     .badges {
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin-top: 2px;
+      gap: var(--hub-space-2);
+      margin-top: var(--hub-space-1);
     }
 
     .badge {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      padding: 1px 6px;
-      border-radius: 6px;
-      font-size: 0.6875rem;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
+      gap: var(--hub-space-1);
+      padding: 3px 8px;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      line-height: var(--md-sys-typescale-label-small-line-height);
+      font-weight: var(--md-sys-typescale-label-small-font-weight);
+      letter-spacing: var(--md-sys-typescale-label-small-letter-spacing);
     }
 
     .badge.agent {
@@ -123,24 +130,24 @@ export class ChatHeader extends LitElement {
     }
 
     .badge.running {
-      background-color: #e6f4ea;
-      color: #137333;
+      background-color: var(--status-running-container);
+      color: var(--status-running);
     }
 
     .badge.stopped {
-      background-color: #f1f3f4;
-      color: #5f6368;
+      background-color: var(--status-stopped-container);
+      color: var(--status-stopped);
     }
 
     .badge.dead {
-      background-color: #fce8e6;
-      color: #c5221f;
+      background-color: var(--status-dead-container);
+      color: var(--status-dead);
     }
 
     .badge.prompting {
-      background-color: #e8f0fe;
-      color: #1a73e8;
-      animation: pulse 1.5s infinite;
+      background-color: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      animation: pulse var(--hub-duration-long1) var(--hub-easing-standard) infinite;
     }
 
     @keyframes pulse {
@@ -151,41 +158,62 @@ export class ChatHeader extends LitElement {
     .right-section {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: var(--hub-space-1);
       position: relative;
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 20px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
-    }
+    .icon { --hub-icon-size: 22px; }
 
     .status-dot {
       width: 6px;
       height: 6px;
-      border-radius: 50%;
+      border-radius: var(--md-sys-shape-corner-full);
       display: inline-block;
     }
 
     .status-dot.running {
-      background-color: #34a853;
+      background-color: var(--status-running);
     }
 
     .status-dot.stopped {
-      background-color: #9aa0a6;
+      background-color: var(--status-stopped);
     }
 
     .status-dot.dead {
-      background-color: #ea4335;
+      background-color: var(--status-dead);
     }
 
     .menu-anchor {
       position: relative;
     }
-  `;
+
+    .no-chat-label {
+      color: var(--md-sys-color-on-surface-variant);
+    }
+
+    .danger-action {
+      color: var(--md-sys-color-error);
+    }
+
+    .rename-field {
+      width: 100%;
+    }
+
+    @media (max-width: 599px) {
+      :host {
+        padding-inline: var(--hub-space-2);
+      }
+
+      .chat-title {
+        max-width: 42vw;
+      }
+
+      .right-section md-icon-button[title='Stop Process'],
+      .right-section md-icon-button[title='Reconnect Process'] {
+        display: none;
+      }
+    }
+  `];
 
   private toggleNavDrawer() {
     store.setMobileDrawerOpen(!store.isMobileDrawerOpen);
@@ -250,7 +278,7 @@ export class ChatHeader extends LitElement {
             <md-icon-button class="nav-toggle" @click=${this.toggleNavDrawer}>
               <span class="icon">menu</span>
             </md-icon-button>
-            <span style="color: var(--md-sys-color-outline)">No chat selected</span>
+            <span class="no-chat-label">No chat selected</span>
           </div>
         </div>
       `;
@@ -269,9 +297,9 @@ export class ChatHeader extends LitElement {
 
           <div class="title-area">
             <div class="title-row">
-              <span class="chat-title" @click=${this.openRename} title="Click to rename">
+              <button class="chat-title" type="button" @click=${this.openRename} title="Rename chat">
                 ${title || 'Untitled chat'}
-              </span>
+              </button>
               ${archived
                 ? html`<span class="badge stopped">Archived</span>`
                 : null}
@@ -315,6 +343,7 @@ export class ChatHeader extends LitElement {
 
           <md-icon-button
             title="Chat Configuration"
+            aria-label="Chat Configuration"
             @click=${this.toggleConfig}
           >
             <span class="icon">tune</span>
@@ -323,6 +352,7 @@ export class ChatHeader extends LitElement {
           <div class="menu-anchor">
             <md-icon-button
               id="menu-trigger"
+              aria-label="Chat actions"
               @click=${() => (this.isMenuOpen = !this.isMenuOpen)}
             >
               <span class="icon">more_vert</span>
@@ -354,7 +384,7 @@ export class ChatHeader extends LitElement {
                 </div>
               </md-menu-item>
               <md-menu-item @click=${this.handleDelete}>
-                <div slot="headline" style="color: var(--md-sys-color-error)">
+                <div slot="headline" class="danger-action">
                   Delete Chat
                 </div>
               </md-menu-item>
@@ -374,7 +404,7 @@ export class ChatHeader extends LitElement {
             label="Chat Title"
             .value=${this.renameText}
             @input=${(e: any) => (this.renameText = e.target.value)}
-            style="width: 100%;"
+            class="rename-field"
             autofocus
           ></md-outlined-text-field>
         </form>

@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { store } from '../state/app-state';
 import { router } from '../router';
 import { Project, Chat } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/text-button.js';
 import '@material/web/iconbutton/icon-button.js';
@@ -17,50 +18,59 @@ export class NavigationDrawer extends LitElement {
 
   private unsubscribeStore?: () => void;
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: flex;
       flex-direction: column;
-      width: 280px;
+      width: var(--hub-drawer-width);
       height: 100%;
       background-color: var(--md-sys-color-surface-container-low);
-      border-right: 1px solid var(--md-sys-color-outline-variant);
+      border-right: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
       box-sizing: border-box;
       flex-shrink: 0;
       z-index: 100;
     }
 
     .drawer-header {
-      padding: 16px;
+      padding: 20px 18px 16px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid var(--md-sys-color-outline-variant);
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: var(--hub-space-3);
       cursor: pointer;
       user-select: none;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
     }
 
     .brand-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background-color: var(--md-sys-color-primary);
+      width: 40px;
+      height: 40px;
+      border-radius: var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-extra-small);
+      background: linear-gradient(145deg, var(--md-sys-color-primary) 0%, var(--md-sys-color-tertiary) 120%);
       color: var(--md-sys-color-on-primary);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
+      --hub-icon-size: 22px;
+      --hub-icon-fill: 1;
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .brand-title {
-      font-size: 1.125rem;
-      font-weight: 700;
+      font-family: var(--md-sys-typescale-title-large-font-family);
+      font-size: var(--md-sys-typescale-title-large-font-size);
+      line-height: var(--md-sys-typescale-title-large-line-height);
+      font-weight: var(--md-sys-typescale-title-large-font-weight);
       letter-spacing: -0.2px;
       color: var(--md-sys-color-on-surface);
     }
@@ -78,43 +88,45 @@ export class NavigationDrawer extends LitElement {
     .drawer-body {
       flex: 1;
       overflow-y: auto;
-      padding: 12px 8px;
+      padding: var(--hub-space-3) var(--hub-space-3) var(--hub-space-6);
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: var(--hub-space-7);
     }
 
     .section-title {
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
+      font-size: var(--md-sys-typescale-label-medium-font-size);
+      line-height: var(--md-sys-typescale-label-medium-line-height);
+      font-weight: var(--md-sys-typescale-label-medium-font-weight);
+      letter-spacing: var(--md-sys-typescale-label-medium-letter-spacing);
       color: var(--md-sys-color-on-surface-variant);
-      padding: 4px 12px;
+      padding: 4px 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
     .project-header {
-      padding: 8px 12px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container);
-      border-radius: 12px;
-      margin-bottom: 8px;
+      border-radius: var(--md-sys-shape-corner-medium);
+      margin-bottom: var(--hub-space-3);
     }
 
     .project-name-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-weight: 600;
+      font-weight: var(--md-sys-typescale-title-medium-font-weight);
       color: var(--md-sys-color-on-surface);
-      font-size: 0.9375rem;
+      font-size: var(--md-sys-typescale-title-medium-font-size);
+      line-height: var(--md-sys-typescale-title-medium-line-height);
     }
 
     .project-path {
-      font-size: 0.75rem;
-      color: var(--md-sys-color-outline);
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
+      color: var(--md-sys-color-on-surface-variant);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -127,39 +139,60 @@ export class NavigationDrawer extends LitElement {
       margin: 0;
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 4px;
     }
 
     .nav-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
-      min-height: 48px;
+      width: 100%;
+      padding: 10px 12px;
+      min-height: 52px;
       box-sizing: border-box;
-      border-radius: 8px;
+      border: 0;
+      border-radius: var(--md-sys-shape-corner-medium);
       cursor: pointer;
       color: var(--md-sys-color-on-surface);
-      font-size: 0.875rem;
-      transition: background-color 0.15s ease;
+      background: transparent;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
+      text-align: left;
+      transition: background-color var(--hub-duration-short3) var(--hub-easing-standard),
+        color var(--hub-duration-short3) var(--hub-easing-standard),
+        transform var(--hub-duration-short2) var(--hub-easing-standard);
       user-select: none;
       text-decoration: none;
     }
 
     .nav-item:hover {
-      background-color: var(--md-sys-color-surface-container);
+      background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 7%, transparent);
+    }
+
+    .nav-item:active {
+      transform: scale(0.985);
     }
 
     .nav-item.active {
       background-color: var(--md-sys-color-secondary-container);
       color: var(--md-sys-color-on-secondary-container);
-      font-weight: 600;
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
+      box-shadow: inset 3px 0 var(--md-sys-color-primary);
+    }
+
+    .nav-item.active:hover {
+      background-color: color-mix(in srgb, var(--md-sys-color-secondary-container) 88%, var(--md-sys-color-primary));
+    }
+
+    .nav-item.active .icon {
+      --hub-icon-fill: 1;
+      color: var(--md-sys-color-primary);
     }
 
     .nav-item-left {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: var(--hub-space-3);
       min-width: 0;
       flex: 1;
     }
@@ -173,26 +206,31 @@ export class NavigationDrawer extends LitElement {
     .status-dot {
       width: 8px;
       height: 8px;
-      border-radius: 50%;
+      border-radius: var(--md-sys-shape-corner-full);
       flex-shrink: 0;
+      box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
     }
 
     .status-dot.running {
-      background-color: var(--hub-status-running, #34a853);
+      background-color: var(--status-running);
+      color: var(--status-running);
     }
 
     .status-dot.stopped {
-      background-color: var(--hub-status-stopped, #9aa0a6);
+      background-color: var(--status-stopped);
+      color: var(--status-stopped);
     }
 
     .status-dot.dead {
-      background-color: var(--hub-status-dead, #ea4335);
+      background-color: var(--status-dead);
+      color: var(--status-dead);
     }
 
     .agent-pill {
-      font-size: 0.6875rem;
-      padding: 1px 6px;
-      border-radius: 4px;
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      line-height: var(--md-sys-typescale-label-small-line-height);
+      padding: 3px 7px;
+      border-radius: var(--md-sys-shape-corner-small);
       background-color: var(--md-sys-color-surface-container-high);
       color: var(--md-sys-color-on-surface-variant);
       text-transform: lowercase;
@@ -201,57 +239,78 @@ export class NavigationDrawer extends LitElement {
 
     .actions-row {
       display: flex;
-      gap: 8px;
-      padding: 0 4px;
+      gap: var(--hub-space-2);
+      padding: 0 var(--hub-space-1);
     }
 
     .new-chat-btn {
       width: 100%;
-      margin: 4px 0 12px 0;
+      margin: var(--hub-space-2) 0 var(--hub-space-4);
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 18px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
+    .icon { --hub-icon-size: 20px; color: var(--md-sys-color-on-surface-variant); }
+
+    .section-action {
+      --md-icon-button-size: 32px;
+      width: 32px;
+      height: 32px;
+    }
+
+    .section-action-icon {
+      --hub-icon-size: 18px;
+    }
+
+    .archive-toggle {
+      --md-text-button-container-height: 32px;
+      --md-text-button-label-text-size: var(--md-sys-typescale-label-small-font-size);
+    }
+
+    .empty-nav {
+      padding: var(--hub-space-4) var(--hub-space-3);
+      color: var(--md-sys-color-outline);
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      text-align: center;
+    }
+
+    .version-label {
+      white-space: nowrap;
     }
 
     .footer {
-      padding: 12px 16px;
-      border-top: 1px solid var(--md-sys-color-outline-variant);
+      padding: var(--hub-space-4) 18px;
+      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 0.75rem;
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       color: var(--md-sys-color-on-surface-variant);
     }
 
     .ws-indicator {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: var(--hub-space-2);
     }
 
     .ws-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
+      width: 7px;
+      height: 7px;
+      border-radius: var(--md-sys-shape-corner-full);
     }
 
     .ws-dot.connected {
-      background-color: #34a853;
+      background-color: var(--status-running);
     }
 
     .ws-dot.connecting {
-      background-color: #fbbc04;
+      background-color: var(--status-starting);
     }
 
     .ws-dot.disconnected {
-      background-color: #ea4335;
+      background-color: var(--status-dead);
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();
@@ -311,13 +370,17 @@ export class NavigationDrawer extends LitElement {
 
     return html`
       <div class="drawer-header">
-        <div class="brand" @click=${this.handleGoHome}>
+        <button class="brand" type="button" @click=${this.handleGoHome}>
           <div class="brand-icon">
             <span class="icon">hub</span>
           </div>
           <span class="brand-title">Agent Hub</span>
-        </div>
-        <md-icon-button class="close-btn" @click=${this.closeMobileDrawer}>
+        </button>
+        <md-icon-button
+          class="close-btn"
+          aria-label="Close navigation"
+          @click=${this.closeMobileDrawer}
+        >
           <span class="icon">close</span>
         </md-icon-button>
       </div>
@@ -329,28 +392,30 @@ export class NavigationDrawer extends LitElement {
             <span>Projects</span>
             <md-icon-button
               title="New Project"
-              style="--md-icon-button-size: 28px; width: 28px; height: 28px;"
+              class="section-action"
               @click=${this.handleNewProject}
             >
-              <span class="icon" style="font-size: 16px;">add</span>
+              <span class="icon section-action-icon">add</span>
             </md-icon-button>
           </div>
 
           <ul class="nav-list">
             ${projects.map(
               (p) => html`
-                <li
-                  class="nav-item ${activeProjectId === p.id && !activeChatId
-                    ? 'active'
-                    : ''}"
-                  @click=${() => this.handleSelectProject(p.id)}
-                >
-                  <div class="nav-item-left">
-                    <span class="icon" style="color: var(--md-sys-color-outline);">
-                      folder
-                    </span>
-                    <span class="nav-item-title">${p.name}</span>
-                  </div>
+                <li>
+                  <button
+                    class="nav-item ${activeProjectId === p.id && !activeChatId
+                      ? 'active'
+                      : ''}"
+                    type="button"
+                    aria-current=${activeProjectId === p.id && !activeChatId ? 'page' : 'false'}
+                    @click=${() => this.handleSelectProject(p.id)}
+                  >
+                    <div class="nav-item-left">
+                      <span class="icon">folder</span>
+                      <span class="nav-item-title">${p.name}</span>
+                    </div>
+                  </button>
                 </li>
               `
             )}
@@ -381,7 +446,7 @@ export class NavigationDrawer extends LitElement {
                 <div class="section-title">
                   <span>Chats (${chats.length})</span>
                   <md-text-button
-                    style="--md-text-button-container-height: 24px; font-size: 0.6875rem;"
+                    class="archive-toggle"
                     @click=${() => (this.showArchived = !this.showArchived)}
                   >
                     ${this.showArchived ? 'Active only' : 'Archived'}
@@ -393,32 +458,34 @@ export class NavigationDrawer extends LitElement {
                     const isRunning = c.process_state === 'RUNNING';
                     const isDead = c.process_state === 'DEAD';
                     return html`
-                      <li
-                        class="nav-item ${activeChatId === c.id ? 'active' : ''}"
-                        @click=${() =>
-                          this.handleSelectChat(c.project_id, c.id)}
-                      >
-                        <div class="nav-item-left">
-                          <span
-                            class="status-dot ${isRunning
-                              ? 'running'
-                              : isDead
-                              ? 'dead'
-                              : 'stopped'}"
-                          ></span>
-                          <span class="nav-item-title" title=${c.title}>
-                            ${c.title || 'Untitled chat'}
-                          </span>
-                        </div>
-                        <span class="agent-pill">${c.agent}</span>
+                      <li>
+                        <button
+                          class="nav-item ${activeChatId === c.id ? 'active' : ''}"
+                          type="button"
+                          aria-current=${activeChatId === c.id ? 'page' : 'false'}
+                          @click=${() =>
+                            this.handleSelectChat(c.project_id, c.id)}
+                        >
+                          <div class="nav-item-left">
+                            <span
+                              class="status-dot ${isRunning
+                                ? 'running'
+                                : isDead
+                                ? 'dead'
+                                : 'stopped'}"
+                            ></span>
+                            <span class="nav-item-title" title=${c.title}>
+                              ${c.title || 'Untitled chat'}
+                            </span>
+                          </div>
+                          <span class="agent-pill">${c.agent}</span>
+                        </button>
                       </li>
                     `;
                   })}
                   ${chats.length === 0
                     ? html`
-                        <li
-                          style="padding: 12px; font-size: 0.8125rem; color: var(--md-sys-color-outline); text-align: center;"
-                        >
+                        <li class="empty-nav">
                           No chats yet
                         </li>
                       `
@@ -432,9 +499,9 @@ export class NavigationDrawer extends LitElement {
       <div class="footer">
         <div class="ws-indicator">
           <span class="ws-dot ${wsStatus}"></span>
-          <span style="text-transform: capitalize;">${wsStatus}</span>
+          <span>${wsStatus}</span>
         </div>
-        <span>Agent Hub v0.2.0</span>
+        <span class="version-label">Agent Hub v0.2.0</span>
       </div>
     `;
   }

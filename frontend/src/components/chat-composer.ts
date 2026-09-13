@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { store } from '../state/app-state';
 import { ProcessState, TurnState } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 import '@material/web/iconbutton/filled-icon-button.js';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/outlined-button.js';
@@ -23,37 +24,39 @@ export class ChatComposer extends LitElement {
   @state()
   private text: string = '';
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      background-color: var(--md-sys-color-surface-container);
-      border-top: 1px solid var(--md-sys-color-outline-variant);
-      padding: 12px 16px;
-      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      background-color: var(--md-sys-color-surface);
+      padding: var(--hub-space-4) var(--hub-space-5);
+      padding-bottom: calc(var(--hub-space-4) + env(safe-area-inset-bottom, 0px));
       box-sizing: border-box;
     }
 
     .composer-container {
-      max-width: 860px;
+      max-width: var(--hub-chat-max-width);
       margin: 0 auto;
       display: flex;
       align-items: flex-end;
-      gap: 10px;
+      gap: var(--hub-space-3);
       background-color: var(--md-sys-color-surface-container-high);
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: 24px;
-      padding: 6px 8px 6px 16px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      border: 1px solid transparent;
+      border-radius: var(--md-sys-shape-corner-extra-large);
+      padding: var(--hub-space-2) var(--hub-space-2) var(--hub-space-2) var(--hub-space-5);
+      box-shadow: var(--md-sys-elevation-level1);
+      transition: border-color var(--hub-duration-short3) var(--hub-easing-standard),
+        box-shadow var(--hub-duration-short3) var(--hub-easing-standard),
+        background-color var(--hub-duration-short3) var(--hub-easing-standard);
     }
 
     .composer-container:focus-within {
       border-color: var(--md-sys-color-primary);
-      box-shadow: 0 0 0 1px var(--md-sys-color-primary);
+      box-shadow: var(--hub-focus-ring), var(--md-sys-elevation-level2);
+      background-color: var(--md-sys-color-surface-container-highest);
     }
 
     .composer-container.disabled {
-      opacity: 0.6;
-      pointer-events: none;
+      opacity: var(--hub-disabled-content-opacity);
     }
 
     textarea {
@@ -62,13 +65,14 @@ export class ChatComposer extends LitElement {
       background: transparent;
       outline: none;
       resize: none;
-      font-family: inherit;
-      font-size: 0.9375rem;
-      line-height: 1.5;
+      font-family: var(--md-sys-typescale-body-large-font-family);
+      font-size: var(--md-sys-typescale-body-large-font-size);
+      line-height: var(--md-sys-typescale-body-large-line-height);
+      letter-spacing: var(--md-sys-typescale-body-large-letter-spacing);
       color: var(--md-sys-color-on-surface);
-      min-height: 24px;
+      min-height: 32px;
       max-height: 160px;
-      padding: 6px 0;
+      padding: var(--hub-space-2) 0;
       margin: 0;
       overflow-y: auto;
     }
@@ -80,20 +84,22 @@ export class ChatComposer extends LitElement {
     .actions {
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin-bottom: 2px;
+      gap: var(--hub-space-2);
+      margin-bottom: var(--hub-space-1);
     }
 
     .send-btn, .cancel-btn {
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
+      width: 48px;
+      height: 48px;
+      border-radius: var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-small);
       border: none;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: background-color 0.15s ease, transform 0.1s ease;
+      transition: background-color var(--hub-duration-short3) var(--hub-easing-standard),
+        transform var(--hub-duration-short2) var(--hub-easing-standard),
+        box-shadow var(--hub-duration-short3) var(--hub-easing-standard);
     }
 
     .send-btn {
@@ -102,12 +108,18 @@ export class ChatComposer extends LitElement {
     }
 
     .send-btn:hover:not(:disabled) {
-      background-color: var(--md-sys-color-primary);
-      opacity: 0.9;
+      background-color: color-mix(in srgb, var(--md-sys-color-primary) 88%, black);
+      box-shadow: var(--md-sys-elevation-level2);
+      transform: translateY(-1px);
+    }
+
+    .send-btn:active:not(:disabled),
+    .cancel-btn:active:not(:disabled) {
+      transform: scale(0.94);
     }
 
     .send-btn:disabled {
-      background-color: var(--md-sys-color-surface-variant);
+      background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
       color: var(--md-sys-color-outline);
       cursor: not-allowed;
     }
@@ -118,32 +130,35 @@ export class ChatComposer extends LitElement {
     }
 
     .cancel-btn:hover {
-      opacity: 0.9;
+      background-color: color-mix(in srgb, var(--md-sys-color-error) 88%, black);
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 20px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
-    }
+    .icon { --hub-icon-size: 22px; --hub-icon-fill: 1; }
 
     .hint {
-      font-size: 0.6875rem;
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      line-height: var(--md-sys-typescale-label-small-line-height);
       color: var(--md-sys-color-outline);
       text-align: right;
       max-width: 860px;
-      margin: 6px auto 0;
-      padding-right: 12px;
+      margin: var(--hub-space-2) auto 0;
+      padding-right: var(--hub-space-3);
     }
 
     @media (max-width: 599px) {
+      :host {
+        padding-inline: var(--hub-page-gutter-compact);
+      }
+
+      .composer-container {
+        padding-left: var(--hub-space-4);
+      }
+
       .hint {
         display: none;
       }
     }
-  `;
+  `];
 
   private handleInput(e: Event) {
     const target = e.target as HTMLTextAreaElement;
@@ -206,7 +221,7 @@ export class ChatComposer extends LitElement {
             ? 'Agent process stopped'
             : isPrompting
             ? 'Agent is thinking...'
-            : 'Type a message... (Ctrl+Enter to send)'}"
+            : 'Type a message...'}"
           .value=${this.text}
           ?disabled=${this.disabled || isStopped || isPrompting}
           @input=${this.handleInput}
