@@ -135,11 +135,7 @@ async fn api_validation_and_chat_identity() {
     let mgr = manager(tmp.path(), true);
     let mut config = Config::default();
     config.web.project_roots = vec![tmp.path().display().to_string()];
-    let app = router(AppState {
-        session_manager: mgr.clone(),
-        config: Arc::new(config),
-        server_port: 8765,
-    });
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
     async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16, Value) {
         let r = app
             .clone()
@@ -256,11 +252,7 @@ async fn folder_browsing_and_security() {
     let mgr = manager(&root, false);
     let mut config = Config::default();
     config.web.project_roots = vec![root.display().to_string()];
-    let app = router(AppState {
-        session_manager: mgr.clone(),
-        config: Arc::new(config),
-        server_port: 8765,
-    });
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
 
     async fn get(app: &axum::Router, uri: &str) -> (u16, Value) {
         let r = app
@@ -396,11 +388,7 @@ async fn git_clone_validation_and_behavior() {
     let mgr = manager(&root, false);
     let mut config = Config::default();
     config.web.project_roots = vec![root.display().to_string()];
-    let app = router(AppState {
-        session_manager: mgr.clone(),
-        config: Arc::new(config),
-        server_port: 8765,
-    });
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
 
     async fn post(app: &axum::Router, uri: &str, body: Value) -> (u16, Value) {
         let r = app
@@ -570,11 +558,7 @@ async fn acp_titles_and_lifecycle() {
     let mgr = manager(&root, false);
     let mut config = Config::default();
     config.web.project_roots = vec![root.display().to_string()];
-    let app = router(AppState {
-        session_manager: mgr.clone(),
-        config: Arc::new(config),
-        server_port: 8765,
-    });
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
 
     async fn post(app: &axum::Router, uri: &str, body: Value) -> (u16, Value) {
         let r = app
@@ -698,11 +682,7 @@ async fn http_permission_endpoint_accepts_frontend_payload() {
     let mgr = manager(&root, false);
     let mut config = Config::default();
     config.web.project_roots = vec![root.display().to_string()];
-    let app = router(AppState {
-        session_manager: mgr.clone(),
-        config: Arc::new(config),
-        server_port: 8765,
-    });
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
 
     let db = mgr.store.as_ref().unwrap();
     let project = db

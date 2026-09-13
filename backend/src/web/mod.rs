@@ -1,16 +1,19 @@
 mod auth;
+mod git;
 mod handlers;
 mod hub;
 mod static_files;
 mod websocket;
 
 pub use auth::*;
+pub use git::*;
 pub use handlers::*;
 pub use hub::*;
 pub use static_files::*;
 pub use websocket::*;
 
 use crate::config::Config;
+use crate::service::HubService;
 use crate::session::SessionManager;
 use axum::{
     middleware,
@@ -64,11 +67,7 @@ impl WebServer {
             }
         }
 
-        let state = AppState {
-            session_manager,
-            config,
-            server_port,
-        };
+        let state = AppState::new(session_manager, config, server_port);
 
         let app = router(state);
 
@@ -79,7 +78,7 @@ impl WebServer {
 }
 
 pub fn router(state: AppState) -> Router {
-    let legacy = if state.session_manager.store.is_none() {
+    let legacy = if state.hub.is_none() {
         Router::new()
             .route("/api/sessions", get(api_list_sessions))
             .route("/api/prompt/:session_id", post(api_prompt_session))
@@ -93,7 +92,7 @@ pub fn router(state: AppState) -> Router {
             "/api/projects",
             get(hub::projects).post(hub::create_project),
         )
-        .route("/api/projects/clone", post(hub::clone_project))
+        .route("/api/projects/clone", post(git::clone_project))
         .route(
             "/api/filesystem/directories",
             get(hub::filesystem_directories),
@@ -200,4 +199,21 @@ pub struct AppState {
     pub session_manager: Arc<SessionManager>,
     pub config: Arc<Config>,
     pub server_port: u16,
+    /// Absent only in the legacy non-persistent mode, which has no store.
+    pub hub: Option<Arc<HubService>>,
+}
+
+impl AppState {
+    pub fn new(
+        session_manager: Arc<SessionManager>,
+        config: Arc<Config>,
+        server_port: u16,
+    ) -> Self {
+        Self {
+            hub: HubService::from_session_manager(session_manager.clone(), &config),
+            session_manager,
+            config,
+            server_port,
+        }
+    }
 }

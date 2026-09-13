@@ -1,8 +1,7 @@
 use super::AppState;
 use crate::{
     acp::callbacks::CallbackPolicy,
-    events::EventPayload,
-    store::{validate_name, validate_project_path, Store},
+    service::{ChatEdit, ChatView, HubService, ServiceError},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -14,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         Self(StatusCode::BAD_REQUEST, e.to_string())
@@ -25,41 +24,37 @@ impl From<std::io::Error> for ApiError {
         Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     }
 }
+/// The one place a Hub failure becomes a status code.
+impl From<ServiceError> for ApiError {
+    fn from(e: ServiceError) -> Self {
+        let status = match &e {
+            ServiceError::NotFound(_) => StatusCode::NOT_FOUND,
+            ServiceError::Invalid(_) => StatusCode::BAD_REQUEST,
+            ServiceError::Conflict(_) => StatusCode::CONFLICT,
+            ServiceError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            ServiceError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self(status, e.to_string())
+    }
+}
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error":self.1}))).into_response()
     }
 }
-type Result<T> = std::result::Result<T, ApiError>;
-fn store(s: &AppState) -> Result<&Arc<Store>> {
-    s.session_manager.store.as_ref().ok_or(ApiError(
+pub type Result<T> = std::result::Result<T, ApiError>;
+
+/// The Hub service, or the error the legacy non-persistent mode returns.
+pub(crate) fn hub(s: &AppState) -> Result<&Arc<HubService>> {
+    s.hub.as_ref().ok_or(ApiError(
         StatusCode::SERVICE_UNAVAILABLE,
         "Run the agent-hub binary for persistent projects".into(),
     ))
 }
-fn changed(s: &AppState) {
-    s.session_manager
-        .event_log()
-        .append("", "", EventPayload::MetadataChanged {});
-}
-async fn session(s: &AppState, id: &str) -> Result<Arc<crate::session::AcpSession>> {
-    let c = store(s)?
-        .chat(id)
-        .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Chat not found".into()))?;
-    if !s.session_manager.has_agent(&c.agent) {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "This chat's agent is no longer configured".into(),
-        ));
-    }
-    s.session_manager
-        .get_by_id(id)
-        .await
-        .ok_or(ApiError(StatusCode::NOT_FOUND, "Chat not found".into()))
-}
 
 pub async fn projects(State(s): State<AppState>) -> Result<Json<Value>> {
-    Ok(Json(json!(store(&s)?.projects()?)))
+    Ok(Json(json!(hub(&s)?.list_projects()?)))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,10 +66,7 @@ pub async fn create_project(
     State(s): State<AppState>,
     Json(p): Json<ProjectInput>,
 ) -> Result<Json<Value>> {
-    let path = validate_project_path(&p.path, &s.config.web.project_roots)?;
-    let p = store(&s)?.create_project(p.name, path)?;
-    changed(&s);
-    Ok(Json(json!(p)))
+    Ok(Json(json!(hub(&s)?.create_project(p.name, p.path)?)))
 }
 
 #[derive(Debug, serde::Serialize, Deserialize)]
@@ -227,291 +219,27 @@ pub async fn filesystem_directories(
     }))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CloneProjectInput {
-    pub url: String,
-    pub parent_path: String,
-    pub name: Option<String>,
-}
-
-pub fn validate_git_url(url: &str) -> anyhow::Result<()> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("Repository URL cannot be empty");
-    }
-    if trimmed.starts_with("file://")
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.starts_with("../")
-        || trimmed.starts_with('~')
-        || trimmed.contains("::")
-    {
-        anyhow::bail!("Unsafe or unsupported repository URL transport");
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    // Plain HTTP sends credentials and repository content without encryption.
-    if lower.starts_with("http://") {
-        anyhow::bail!("Plain HTTP repository URLs are not allowed. Use HTTPS or SSH");
-    }
-    let is_https_ssh = lower.starts_with("https://") || lower.starts_with("ssh://");
-    let is_scp_ssh = trimmed.contains('@') && trimmed.contains(':') && !trimmed.contains("://");
-    if !is_https_ssh && !is_scp_ssh {
-        anyhow::bail!("Repository URL must be a valid HTTPS or SSH URL");
-    }
-    Ok(())
-}
-
-pub fn derive_repo_name(url: &str) -> Option<String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let without_git = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    let last_part = without_git.rsplit(['/', ':']).next()?;
-    let clean = last_part.trim();
-    if clean.is_empty() {
-        None
-    } else {
-        Some(clean.to_string())
-    }
-}
-
-/// Remove the userinfo of every URL in `msg`.
-///
-/// A token can appear as the user name alone, as in `https://TOKEN@host/repo`.
-/// This function therefore redacts the complete userinfo, not only the part
-/// after the colon.
-pub fn sanitize_credentials(msg: &str) -> String {
-    let mut out = String::new();
-    let mut remaining = msg;
-    while let Some(proto_idx) = remaining.find("://") {
-        out.push_str(&remaining[..proto_idx + 3]);
-        let after_proto = &remaining[proto_idx + 3..];
-        // The authority ends at the path, the query, the fragment, or a space.
-        let authority_end = after_proto
-            .find(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace())
-            .unwrap_or(after_proto.len());
-        let authority = &after_proto[..authority_end];
-        if let Some(at_idx) = authority.rfind('@') {
-            out.push_str("***@");
-            remaining = &after_proto[at_idx + 1..];
-            continue;
-        }
-        remaining = after_proto;
-    }
-    out.push_str(remaining);
-    out
-}
-
-pub fn validate_clone_destination_name(name: &str) -> anyhow::Result<()> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() || name.len() > 200 {
-        anyhow::bail!("Clone destination name must contain 1–200 bytes");
-    }
-    if name.contains('/') || name.contains('\\') {
-        anyhow::bail!("Clone destination name cannot contain path separators");
-    }
-    if trimmed == "." || trimmed == ".." {
-        anyhow::bail!("Clone destination name cannot be '.' or '..'");
-    }
-    let p = std::path::Path::new(name);
-    if p.is_absolute() {
-        anyhow::bail!("Clone destination name cannot be an absolute path");
-    }
-    let mut components = p.components();
-    match (components.next(), components.next()) {
-        (Some(std::path::Component::Normal(_)), None) => Ok(()),
-        _ => anyhow::bail!("Clone destination name must be a single filesystem component"),
-    }
-}
-
-pub async fn run_command_with_timeout(
-    mut child: tokio::process::Child,
-    timeout: std::time::Duration,
-    cleanup_path: Option<&std::path::Path>,
-) -> std::result::Result<std::process::Output, ApiError> {
-    use tokio::io::AsyncReadExt;
-
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
-
-    let stdout_fut = async {
-        let mut out = Vec::new();
-        if let Some(mut r) = stdout_pipe.take() {
-            let _ = r.read_to_end(&mut out).await;
-        }
-        out
-    };
-    let stderr_fut = async {
-        let mut err = Vec::new();
-        if let Some(mut r) = stderr_pipe.take() {
-            let _ = r.read_to_end(&mut err).await;
-        }
-        err
-    };
-
-    let wait_fut = async {
-        let (status_res, stdout, stderr) = tokio::join!(child.wait(), stdout_fut, stderr_fut);
-        let status = status_res?;
-        Ok::<_, std::io::Error>(std::process::Output {
-            status,
-            stdout,
-            stderr,
-        })
-    };
-
-    match tokio::time::timeout(timeout, wait_fut).await {
-        Ok(res) => res.map_err(|e| {
-            if let Some(path) = cleanup_path {
-                if path.exists() {
-                    let _ = std::fs::remove_dir_all(path);
-                }
-            }
-            ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to execute command: {e}"),
-            )
-        }),
-        Err(_) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            if let Some(path) = cleanup_path {
-                if path.exists() {
-                    let _ = std::fs::remove_dir_all(path);
-                }
-            }
-            Err(ApiError(
-                StatusCode::GATEWAY_TIMEOUT,
-                "Git clone timed out after 5 minutes".into(),
-            ))
-        }
-    }
-}
-
-pub async fn clone_project(
-    State(s): State<AppState>,
-    Json(input): Json<CloneProjectInput>,
-) -> Result<Json<Value>> {
-    validate_git_url(&input.url)?;
-    let parent_path = validate_project_path(&input.parent_path, &s.config.web.project_roots)?;
-    let name = match input.name.filter(|n| !n.trim().is_empty()) {
-        Some(n) => n.trim().to_string(),
-        None => derive_repo_name(&input.url)
-            .ok_or_else(|| anyhow::anyhow!("Could not derive project name from repository URL"))?,
-    };
-    validate_clone_destination_name(&name)?;
-
-    let parent = std::path::Path::new(&parent_path).canonicalize()?;
-    let dest = parent.join(&name);
-
-    if !dest.starts_with(&parent) {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Clone destination path escapes selected parent directory".into(),
-        ));
-    }
-    let beneath_roots = s
-        .config
-        .web
-        .project_roots
-        .iter()
-        .filter_map(|r| std::path::Path::new(r).canonicalize().ok())
-        .any(|r| dest.starts_with(&r));
-    if !beneath_roots {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Clone destination path is outside configured project roots".into(),
-        ));
-    }
-
-    if dest.exists() {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            format!("Destination directory already exists: {}", dest.display()),
-        ));
-    }
-
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.arg("clone")
-        .arg("--")
-        .arg(&input.url)
-        .arg(&dest)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .kill_on_drop(true);
-
-    let child = cmd.spawn().map_err(|e| {
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to execute git: {e}"),
-        )
-    })?;
-
-    let output =
-        run_command_with_timeout(child, std::time::Duration::from_secs(300), Some(&dest)).await?;
-
-    if !output.status.success() {
-        if dest.exists() {
-            let _ = std::fs::remove_dir_all(&dest);
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let sanitized = sanitize_credentials(&stderr);
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            format!("Git clone failed: {}", sanitized.trim()),
-        ));
-    }
-
-    let p = store(&s)?.create_project(name, dest.canonicalize()?.display().to_string())?;
-    changed(&s);
-    Ok(Json(json!(p)))
-}
 pub async fn edit_project(
     State(s): State<AppState>,
     Path(id): Path<String>,
     Json(input): Json<ProjectInput>,
 ) -> Result<Json<Value>> {
-    validate_name(&input.name)?;
-    let path = validate_project_path(&input.path, &s.config.web.project_roots)?;
-    let db = store(&s)?;
-    let mut p = db.project(&id)?;
-    if p.path != path && db.chats()?.iter().any(|c| c.project_id == id) {
-        return Err(ApiError(StatusCode::CONFLICT, "Move or delete the project's chats before changing its path; saved ACP sessions belong to their original directory".into()));
-    }
-    p.name = input.name;
-    p.path = path;
-    p.updated_at = chrono::Utc::now().to_rfc3339();
-    db.save_project(&p)?;
-    changed(&s);
-    Ok(Json(json!(p)))
+    Ok(Json(json!(
+        hub(&s)?.edit_project(&id, input.name, input.path)?
+    )))
 }
 pub async fn delete_project(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    let db = store(&s)?;
-    if db.chats()?.iter().any(|c| c.project_id == id) {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "Delete the project's chats first (project files are never deleted)".into(),
-        ));
-    }
-    db.delete_project(&id)?;
-    changed(&s);
+    hub(&s)?.delete_project(&id)?;
     Ok(Json(json!({"success":true})))
 }
-pub async fn chats(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    let db = store(&s)?;
-    db.project(&id)?;
-    let chats: Vec<_> = db
-        .chats()?
-        .into_iter()
-        .filter(|c| c.project_id == id)
-        .collect();
-    let mut result = Vec::new();
-    for chat in chats {
-        result.push(chat_view(&s, chat).await);
-    }
-    Ok(Json(json!(result)))
+pub async fn chats(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ChatView>>> {
+    Ok(Json(hub(&s)?.list_chats(&id).await?))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -523,37 +251,15 @@ pub async fn create_chat(
     State(s): State<AppState>,
     Path(id): Path<String>,
     Json(c): Json<ChatInput>,
-) -> Result<Json<Value>> {
-    if !s.session_manager.has_agent(&c.agent) {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Unknown agent".into()));
-    }
-    let db = store(&s)?;
-    db.project(&id)?;
-    let c = db.create_chat(id, c.agent, c.title)?;
-    changed(&s);
-    Ok(Json(chat_view(&s, c).await))
+) -> Result<Json<ChatView>> {
+    Ok(Json(hub(&s)?.create_chat(&id, &c.agent, c.title).await?))
 }
-async fn chat_view(s: &AppState, c: crate::store::Chat) -> Value {
-    let live = s.session_manager.get_by_id(&c.id).await;
-    let (process, turn) = if let Some(live) = live {
-        (
-            live.process_state().await.to_string(),
-            live.turn_state().await.to_string(),
-        )
-    } else {
-        ("STOPPED".into(), "IDLE".into())
-    };
-    let mut value = json!(c);
-    value["process_state"] = json!(process);
-    value["turn_state"] = json!(turn);
-    value
-}
-pub async fn chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    Ok(Json(chat_view(&s, store(&s)?.chat(&id)?).await))
+pub async fn chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<ChatView>> {
+    Ok(Json(hub(&s)?.get_chat(&id).await?))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ChatEdit {
+pub struct ChatEditInput {
     title: Option<String>,
     archived: Option<bool>,
     permission_policy: Option<CallbackPolicy>,
@@ -561,24 +267,17 @@ pub struct ChatEdit {
 pub async fn edit_chat(
     State(s): State<AppState>,
     Path(id): Path<String>,
-    Json(edit): Json<ChatEdit>,
-) -> Result<Json<Value>> {
-    if let Some(title) = &edit.title {
-        validate_name(title)?;
-    }
-    let live = session(&s, &id).await?;
-    let c = live
-        .edit_metadata(edit.title, edit.archived, edit.permission_policy)
-        .await?;
-    changed(&s);
-    Ok(Json(chat_view(&s, c).await))
+    Json(edit): Json<ChatEditInput>,
+) -> Result<Json<ChatView>> {
+    let edit = ChatEdit {
+        title: edit.title,
+        archived: edit.archived,
+        permission_policy: edit.permission_policy,
+    };
+    Ok(Json(hub(&s)?.edit_chat(&id, edit).await?))
 }
 pub async fn delete_chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    let live = session(&s, &id).await?;
-    live.delete_metadata().await?;
-    s.session_manager.event_log().forget_chat(&id);
-    s.session_manager.remove_session(&id).await;
-    changed(&s);
+    hub(&s)?.delete_chat(&id).await?;
     Ok(Json(json!({"success":true})))
 }
 #[derive(Deserialize)]
@@ -591,43 +290,22 @@ pub async fn prompt(
     Path(id): Path<String>,
     Json(p): Json<Prompt>,
 ) -> Result<(StatusCode, Json<Value>)> {
-    if p.text.trim().is_empty() || p.text.len() > 100_000 {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Prompt must contain 1–100000 bytes".into(),
-        ));
-    }
-    let live = session(&s, &id).await?;
-    let log = s.session_manager.event_log().clone();
-    let timeout = std::time::Duration::from_secs(s.config.timeouts.default);
-    // Own the task independently of HTTP disconnects. All completion/error state is streamed.
-    tokio::spawn(async move {
-        if let Err(e) = live.ask(p.text, Some(timeout)).await {
-            log.append(
-                &live.id,
-                &live.key.agent,
-                EventPayload::Error {
-                    message: e.to_string(),
-                },
-            );
-        }
-    });
+    hub(&s)?.prompt_chat(&id, p.text).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({"accepted":true}))))
 }
-pub async fn resume(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    session(&s, &id).await?.resume().await?;
-    Ok(Json(chat_view(&s, store(&s)?.chat(&id)?).await))
+pub async fn resume(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<ChatView>> {
+    Ok(Json(hub(&s)?.resume_chat(&id).await?))
 }
 pub async fn cancel(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    session(&s, &id).await?.cancel().await?;
+    hub(&s)?.cancel_chat(&id).await?;
     Ok(Json(json!({"success":true})))
 }
 pub async fn stop(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    session(&s, &id).await?.stop().await?;
+    hub(&s)?.stop_chat(&id).await?;
     Ok(Json(json!({"success":true})))
 }
 pub async fn config(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
-    Ok(Json(session(&s, &id).await?.config_options().await))
+    Ok(Json(hub(&s)?.chat_config(&id).await?))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -640,9 +318,7 @@ pub async fn set_config(
     Path(id): Path<String>,
     Json(c): Json<ConfigEdit>,
 ) -> Result<Json<Value>> {
-    Ok(Json(
-        session(&s, &id).await?.set_config(&c.id, c.value).await?,
-    ))
+    Ok(Json(hub(&s)?.set_chat_config(&id, &c.id, c.value).await?))
 }
 #[derive(Deserialize)]
 pub struct Cursor {
@@ -653,12 +329,7 @@ pub async fn remote_sessions(
     Path(id): Path<String>,
     Query(q): Query<Cursor>,
 ) -> Result<Json<Value>> {
-    Ok(Json(
-        session(&s, &id)
-            .await?
-            .list_remote_sessions(q.cursor)
-            .await?,
-    ))
+    Ok(Json(hub(&s)?.remote_sessions(&id, q.cursor).await?))
 }
 pub async fn agents(State(s): State<AppState>) -> Json<Value> {
     // Sorted ids. Richer agent metadata belongs to a later phase, because

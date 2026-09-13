@@ -184,14 +184,11 @@ mod tests {
         };
         config.web.project_root = temp.path().to_string_lossy().to_string();
 
-        let state = AppState {
-            session_manager: SessionManager::new(
-                config.agents.clone(),
-                Arc::new(EventLog::new(100)),
-            ),
-            config: Arc::new(config),
-            server_port: 0,
-        };
+        let state = AppState::new(
+            SessionManager::new(config.agents.clone(), Arc::new(EventLog::new(100))),
+            Arc::new(config),
+            0,
+        );
 
         let Json(response) = api_list_sessions(State(state)).await.unwrap();
 

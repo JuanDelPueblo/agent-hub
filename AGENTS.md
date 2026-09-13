@@ -73,6 +73,7 @@ agent-hub/
 │   │   ├── lib.rs            # Library exports
 │   │   ├── acp/              # ACP protocol, callbacks, process supervision
 │   │   ├── agents/           # Agent definitions, launch config, agents.json
+│   │   ├── service/          # HubService: the operations every surface shares
 │   │   ├── session/          # Chat sessions, turn locks, idle reaping
 │   │   ├── store/            # SQLite migrations, projects, chats, events
 │   │   ├── events.rs         # Event log and WebSocket broadcasting
@@ -131,11 +132,25 @@ agent-hub/
 - **Event Log**: A thread-safe in-memory ring buffer that holds the latest 10,000 events for reconnect and replay.
 - **WebSocket Streaming**: A client subscribes with `from_seq` and resumes the stream without a gap.
 
-### 5.5. Web API and Static Serving (`backend/src/web/`)
+### 5.5. Application Services (`backend/src/service/`)
+- **`HubService`**: Owns the user-visible Hub operations for projects and chats
+  and coordinates the store, the session manager, the event log, and the agent
+  registry. It does not speak ACP.
+- **Why**: The MCP surface and the federation surface must run the same
+  operations as the browser. Put a new Hub operation here, not in a handler.
+- **`ServiceError`**: Names the kind of failure (not found, invalid, conflict,
+  unavailable, timeout, internal). Each transport maps it to its own errors.
+
+### 5.6. Web API and Static Serving (`backend/src/web/`)
 - **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, and permissions.
+- **Adapters**: Handlers in `web/hub.rs` parse the request, call `HubService`,
+  and map `ServiceError` to a status code. Business rules do not live here.
+- **Web-only work (`web/git.rs`)**: Repository cloning shells out to git with
+  its own timeout and cleanup. It registers the finished clone through
+  `HubService` so a project row is always created one way.
 - **Static Assets (`backend/src/web/static_files.rs`)**: Serves the embedded Angular assets. Hashed assets get `Cache-Control: public, max-age=31536000, immutable`. `index.html` gets revalidation headers and the History API fallback.
 
-### 5.6. Frontend (`frontend/`)
+### 5.7. Frontend (`frontend/`)
 - **Framework**: Angular standalone components with signals, `HttpClient`, the Angular Router, and RxJS for the WebSocket stream.
 - **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Agent Hub status tokens.
 - **Window Classes**: Compact (<600px) uses a modal drawer, full-width inputs, touch targets of 48px or more, and `env(safe-area-inset-bottom)`. Medium (600–839px) uses a modal drawer and flexible margins. Expanded (>=840px) uses a permanent drawer, a dual-pane layout, and a side sheet for configuration.
