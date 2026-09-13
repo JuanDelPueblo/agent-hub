@@ -1,4 +1,3 @@
-.ace-tool/
 target
 frontend/node_modules/
 frontend/dist/
@@ -10,3 +9,7 @@ frontend/.test-build/
 
 # Angular CLI build cache
 frontend/.angular/
+
+# direnv
+.direnv/
+.envrc.local

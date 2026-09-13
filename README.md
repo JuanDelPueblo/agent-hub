@@ -23,6 +23,80 @@ target/debug/agent-hub --database /path/to/state/hub.sqlite3 \
 
 The database parent directory must exist and be private. The server binds only to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing it. `--public-origin` authorizes an exact browser Origin and Host.
 
+## Development environment
+
+The repository ships a Nix flake with a dev shell. The shell supplies Rust, Node, the linker, and the test tools at pinned versions.
+
+With direnv:
+
+```sh
+direnv allow
+```
+
+direnv then loads the shell every time you enter the directory. Install `nix-direnv` first, because it caches the shell. On NixOS set `programs.direnv.enable = true`.
+
+Without direnv:
+
+```sh
+nix develop
+```
+
+Put machine-specific settings in `.envrc.local`. Git ignores that file.
+
+## Fake backend
+
+The fake backend serves the REST and WebSocket surface of `backend/src/web/` from memory. Use it to work on the frontend without a Rust build and without an agent binary. It starts in under a second, so the edit-reload loop stays short.
+
+Start the frontend and the fake backend together:
+
+```sh
+cd frontend
+npm ci        # one time
+npm run dev
+```
+
+Open `http://localhost:4200`. The Angular dev server proxies `/api` and `/ws` to the fake backend on port 8765, which is the port the real binary uses.
+
+To run the two parts separately:
+
+```sh
+npm run fake-backend    # port 8765
+npm start               # Angular dev server on port 4200
+```
+
+The fake backend accepts two options:
+
+| Option | Meaning |
+| --- | --- |
+| `--port <number>` | Listen port. Default 8765. |
+| `--latency <factor>` | Multiplier for every simulated delay. `0.1` is fast, `3` is slow. Default 1. |
+
+### Seeded data
+
+The fake backend starts with three projects, four chats, and one finished conversation. The folder picker browses a synthetic directory tree under `/home/dev/projects`, so the picker never depends on the layout of your machine.
+
+### Prompt scenarios
+
+A keyword in the prompt selects the turn that the fake agent streams. This makes a UI state reproducible.
+
+| Keyword | Streamed turn |
+| --- | --- |
+| `plan` | Thought, then a plan that advances through its steps. |
+| `tool` | Tool calls only, without a thought block. |
+| `permission` | A permission request that waits for your answer. |
+| `error` | An error event and a failed turn. |
+| `long` | A long answer, for scrolling and layout checks. |
+| `quiet` | One short message. |
+| (anything else) | A full turn: thought, plan, tool calls, permission request, and answer. |
+
+The permission policy of the chat still applies. A chat set to `auto-approve`, `deny-all`, or `read-only` answers the request without the browser, exactly like `backend/src/acp/callbacks.rs`.
+
+Cancel, stop, resume, archive, rename, and delete all work. Turn state, process state, and the event sequence follow the same rules as the Rust backend, so the reconnect and replay paths get exercised.
+
+### Limits
+
+The fake backend is a development tool. It keeps everything in memory, so a restart resets it. It has no authentication, no database, and no access to the real filesystem. It never runs an agent. Test protocol behavior against the Rust backend and the integration tests in `tests/`.
+
 ## Projects and Chats
 
 Create a project pointing to an existing directory under a configured project root or clone from a Git repository. Canonical paths reject missing directories and symlink escapes. Create as many chats as needed, including several using the same agent in one project. Each chat has a stable UUID, independent process, ACP session ID, turn lock, permission policy, and selected ACP configuration values.
@@ -68,6 +142,8 @@ Permission policy is separate from agent configuration. New chats default to `as
 | `/api/agents` | GET configured names |
 | `/ws` | WebSocket; send `{ "type":"subscribe", "from_seq":0 }` |
 
+The fake backend serves this same table, which keeps the frontend contract in one place.
+
 ## Development and Checks
 
 ```sh
@@ -81,7 +157,7 @@ cd ..
 # Rust format, lint, and tests
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
+cargo nextest run
 
 # Full reproducible Nix flake build
 nix build .#agent-hub

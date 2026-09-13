@@ -28,7 +28,7 @@ impl AcpProcess {
     ) -> anyhow::Result<Self> {
         // Windows: use our hand-rolled JobObject path. process-wrap's `JobObject`
         // wrapper associates a completion port with the job; that association
-        // empirically prevents `KILL_ON_JOB_CLOSE` from firing when ccgo dies,
+        // empirically prevents `KILL_ON_JOB_CLOSE` from firing when agent-hub dies,
         // leaving the codex-acp subtree alive. Confirmed via tasklist after
         // matching reproductions on both paths.
         #[cfg(windows)]

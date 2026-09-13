@@ -44,6 +44,22 @@
           },
             "defaultConfiguration": "production"
         },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "options": {
+            "proxyConfig": "proxy.conf.json",
+            "port": 4200
+          },
+          "configurations": {
+            "development": {
+              "buildTarget": "agent-hub-frontend:build:development"
+            },
+            "production": {
+              "buildTarget": "agent-hub-frontend:build:production"
+            }
+          },
+          "defaultConfiguration": "development"
+        },
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {

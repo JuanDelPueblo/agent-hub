@@ -673,20 +673,3 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
-
----
-
-DUAL LICENSING NOTICE
-
-This software is dual-licensed:
-
-1. **Non-Commercial / Personal Use**: GNU General Public License v3.0 (see above)
-   - Free for personal projects, educational purposes, open source projects,
-     and non-commercial use.
-
-2. **Commercial / Workplace Use**: Commercial License Required
-   - If you use this software in a commercial environment, workplace, or for
-     any commercial purpose, you must obtain a commercial license.
-   - Please contact missdeer@gmail.com for commercial licensing inquiries.
-
-See LICENSE-COMMERCIAL for more details about commercial licensing.

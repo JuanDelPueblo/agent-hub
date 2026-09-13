@@ -10,8 +10,20 @@ keywords = ["acp", "agent", "supervisor", "claude", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-# Async runtime
-tokio = { version = "1.43", features = ["full"] }
+# Async runtime.
+# "full" compiles every tokio driver. This list holds only the drivers the
+# crate uses. It makes the dependency graph smaller and the build faster.
+tokio = { version = "1.43", features = [
+    "rt-multi-thread",
+    "macros",
+    "fs",
+    "io-util",
+    "net",
+    "process",
+    "signal",
+    "sync",
+    "time",
+] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -20,9 +32,6 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 
 # Web server
 axum = { version = "0.7", features = ["ws"] }
-axum-extra = { version = "0.9", features = ["typed-header"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "cors"] }
 rust-embed = { version = "8.5", features = ["axum"] }
 mime_guess = "2.0"
 
@@ -32,14 +41,11 @@ futures-util = "0.3"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"
 
 # Utilities
-thiserror = "2.0"
 anyhow = "1.0"
 uuid = { version = "1.11", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
-futures = "0.3"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -54,14 +60,36 @@ process-wrap = { version = "6", default-features = false, features = ["tokio1", 
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_JobObjects"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
 tempfile = "3.14"
+# `oneshot` drives the axum router directly in the integration tests.
+tower = { version = "0.5", features = ["util"] }
+
+# The Rust sources sit in `backend/src`, next to the fake backend, so Cargo
+# needs the paths. Integration tests keep the default `tests/` location.
+[lib]
+name = "agent_hub"
+path = "backend/src/lib.rs"
 
 [[bin]]
 name = "agent-hub"
-path = "src/main.rs"
+path = "backend/src/main.rs"
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+# Full debug info is a large part of the compile time and of the link time.
+# Line tables keep backtraces readable and keep panic locations exact.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.test]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Debug info for dependency code is rarely useful and it is expensive to
+# generate and to link. Own code keeps its line tables.
+[profile.dev.package."*"]
+debug = false

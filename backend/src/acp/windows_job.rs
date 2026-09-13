@@ -3,7 +3,7 @@
 //! Replaces process-wrap's `JobObject` wrapper on Windows. process-wrap also
 //! associates an IoCompletionPort with the job (`JobObjectAssociateCompletion
 //! PortInformation`); empirically that association keeps the codex-acp tree
-//! alive even after ccgo dies, so `KILL_ON_JOB_CLOSE` never fires. We create
+//! alive even after agent-hub dies, so `KILL_ON_JOB_CLOSE` never fires. We create
 //! a plain job with only KILL_ON_JOB_CLOSE, AssignProcessToJobObject, and
 //! resume — verified to terminate the whole tree.
 //!
@@ -255,7 +255,7 @@ fn log_self_job_status() {
         tracing::warn!(error = %err, "T0: IsProcessInJob(self) failed");
         return;
     }
-    tracing::info!(in_job = in_job != 0, "T0: ccgo itself in some job?");
+    tracing::info!(in_job = in_job != 0, "T0: agent-hub itself in some job?");
 
     if in_job == 0 {
         return;
@@ -279,7 +279,7 @@ fn log_self_job_status() {
     }
     log_limit_flags(
         info.BasicLimitInformation.LimitFlags,
-        "T0: ccgo's outer job",
+        "T0: agent-hub's outer job",
     );
 }
 

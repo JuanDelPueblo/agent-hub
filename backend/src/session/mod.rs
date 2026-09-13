@@ -25,7 +25,7 @@ pub struct AcpSession {
     acp_session_id: RwLock<Option<agent_client_protocol_schema::SessionId>>,
     // Last spawned wrapper PID. Kept independently of `client` so that even if
     // `mark_dead` takes the client (and the spawned shutdown task races with
-    // ccgo's own exit), `shutdown` still has a root pid to sweep descendants.
+    // agent-hub's own exit), `shutdown` still has a root pid to sweep descendants.
     child_root_pid: RwLock<Option<u32>>,
     config: AgentConfig,
     event_log: Arc<EventLog>,

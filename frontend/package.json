@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "ng build",
-    "test": "ng test --watch=false"
+    "test": "ng test --watch=false",
+    "start": "ng serve",
+    "fake-backend": "node ../backend/fake/server.mjs",
+    "dev": "node ../backend/fake/dev.mjs"
   },
   "dependencies": {
     "@angular/cdk": "22.1.6",
