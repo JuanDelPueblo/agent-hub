@@ -12,7 +12,7 @@ Agent Hub is a single-owner, persistent web supervisor for local ACP (Agent Clie
 1. **Single-Service Deployment**: A single Rust binary serves the REST API, WebSocket streams, and embedded production frontend assets.
 2. **Reproducible Offline Builds**: Nix flakes build both the frontend (`buildNpmPackage`) and backend (`buildRustPackage`) without network calls during build phases.
 3. **Protocol Fidelity**: Subprocesses communicate strictly via standard ACP (NDJSON JSON-RPC over stdio).
-4. **Lightweight Modern Web**: Componentized Lit + TypeScript frontend using `@material/web` M3 components and CSS custom properties; no heavy frameworks (no React/Next.js/Redux).
+4. **Lightweight Modern Web**: Standalone Angular + TypeScript frontend using Angular Material/CDK primitives and signals; no additional framework or state library (no React/Next.js/Redux/NgRx).
 
 ---
 
@@ -62,20 +62,15 @@ agent-hub/
 │   └── web/                  # Axum router, REST handlers, static file serving
 ├── static/                   # Production-hashed embedded frontend assets
 │   ├── index.html            # Embedded HTML shell
-│   └── assets/               # JS, CSS, and font bundles
+│   └── media/                # JS, CSS, and font bundles
 ├── frontend/                 # Frontend source code
+│   ├── angular.json           # Angular CLI application and test targets
 │   ├── package.json          # Pinned frontend dependencies
-│   ├── vite.config.ts        # Vite bundler config
-│   ├── scripts/run-tests.mjs # esbuild test bundler and test runner
+│   ├── public/                # Static files copied into the Angular build
 │   ├── src/
-│   │   ├── main.ts           # Frontend entrypoint
-│   │   ├── router.ts         # History API client-side routing
-│   │   ├── api/              # Typed REST and WebSocket clients
-│   │   ├── state/            # Reactive store and event reducer
-│   │   ├── styles/           # Material 3 tokens and responsive layout CSS
-│   │   └── components/       # Componentized Lit UI components
-│   └── test/                 # Frontend state and component tests
-│       └── helpers/dom.ts    # jsdom environment for the component tests
+│   │   ├── main.ts            # Frontend entrypoint
+│   │   ├── app/               # Standalone features, services, and routes
+│   │   └── styles.scss        # Angular Material theme and global composition CSS
 └── tests/                    # Backend integration tests
 ```
 
@@ -95,23 +90,17 @@ npm test
 npm run build
 ```
 
-`npm test` runs `scripts/run-tests.mjs`. That script bundles each `test/*.test.ts`
-file with esbuild, then runs the bundles with the test runner of Node. The bundle
-step is necessary because the Lit components use decorators, which the
-type-stripping mode of Node cannot run.
+`npm test` runs the Angular unit-test target with Vitest. Angular compiles the
+standalone components and services before Vitest executes the tests.
 
 The test suite has two layers:
 
-- **State tests** (`test/event-reducer.test.ts`, `test/router.test.ts`,
-  `test/workflows.test.ts`) call the store and the router directly.
-- **Component tests** (`test/project-dialogs.test.ts`,
-  `test/chat-connection.test.ts`, `test/app-shell.test.ts`) render the real Lit
-  components in jsdom, click the real buttons, and read the rendered output.
-
-Import `test/helpers/dom.ts` first in every component test. That module starts
-jsdom, copies the browser globals, adds the polyfills that `@material/web` needs
-(`<dialog>`, `ElementInternals`, and `Element.animate`), and replaces `fetch` and
-`WebSocket` with controllable stubs.
+- **Transport/state tests** (`src/app/core/api/*.spec.ts`,
+  `src/app/state/*.spec.ts`) exercise typed HTTP, event reduction, and signal
+  store behavior.
+- **Component tests** (`src/app/chats/*.spec.ts`,
+  `src/app/projects/*.spec.ts`) render Agent Hub components in jsdom, interact
+  with their real controls, and verify user-visible behavior.
 
 Write a test for a user-visible defect at the component layer. A test that only
 reads and writes store fields cannot catch a broken dialog binding, a stale
@@ -133,6 +122,6 @@ nix build .#agent-hub
 ## 5. Coding Constraints & Commitments
 
 - **No Quotas / Hermes**: Do not implement quota tracking (Codex/Claude/Antigravity), cost calculation, CodexBar, or Hermes integration unless explicitly requested in subsequent milestones.
-- **No Heavy Frontend Frameworks**: Keep the frontend componentized with Lit and standard DOM APIs.
+- **No Heavy Frontend Frameworks**: Keep the frontend componentized with Angular standalone components and standard DOM APIs.
 - **Single-service deployment**: Production assets must be embedded into Rust via `rust-embed` and served with appropriate cache headers.
 - **Security**: Server-side directory browsing and git clone endpoints must strictly validate paths against configured `--project-root` boundaries, reject symlink traversal, and reject dangerous git URL schemes. Accept only HTTPS and SSH repository URLs; reject plain `http://`. Remove the complete userinfo of every URL from a Git error before you return that error, because a token can appear as the user name alone.

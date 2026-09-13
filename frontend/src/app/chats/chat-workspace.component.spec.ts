@@ -1,0 +1,95 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { BreakpointObserver } from '@angular/cdk/layout';
+import { signal } from '@angular/core';
+import { of } from 'rxjs';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import type { Chat } from '../core/api/types';
+import { AppStateService } from '../state/app-state.service';
+import { ChatWorkspaceComponent } from './chat-workspace.component';
+
+const chat: Chat = {
+  id: 'chat-1',
+  project_id: 'project-1',
+  agent: 'codex',
+  title: 'Initial chat',
+  created_at: '2026-09-13',
+  updated_at: '2026-09-13',
+  archived: false,
+  permission_policy: 'ask',
+  config_values: {},
+  process_state: 'RUNNING',
+  turn_state: 'IDLE',
+};
+
+describe('ChatWorkspaceComponent', () => {
+  let fixture: ComponentFixture<ChatWorkspaceComponent>;
+  let state: {
+    connectingChats: ReturnType<typeof signal<Set<string>>>;
+    connectErrors: ReturnType<typeof signal<Record<string, string>>>;
+    configLoadedByChat: ReturnType<typeof signal<Record<string, boolean>>>;
+    reducersByChat: ReturnType<typeof signal<Record<string, never>>>;
+    configOptionsByChat: ReturnType<typeof signal<Record<string, never>>>;
+    retryConnection: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(async () => {
+    state = {
+      connectingChats: signal(new Set<string>()),
+      connectErrors: signal<Record<string, string>>({}),
+      configLoadedByChat: signal({ 'chat-1': true }),
+      reducersByChat: signal<Record<string, never>>({}),
+      configOptionsByChat: signal<Record<string, never>>({}),
+      retryConnection: vi.fn(async () => undefined),
+    };
+
+    const stateValue = {
+      ...state,
+      findChat: (id: string) => id === chat.id ? chat : null,
+      setMobileDrawerOpen: vi.fn(),
+      stopChatProcess: vi.fn(async () => undefined),
+      cancelActiveTurn: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      respondPermission: vi.fn(async () => undefined),
+      setChatPolicy: vi.fn(async () => undefined),
+      setChatConfig: vi.fn(async () => undefined),
+      renameChat: vi.fn(async () => undefined),
+      archiveChat: vi.fn(async () => undefined),
+      deleteChat: vi.fn(async () => undefined),
+    } as unknown as AppStateService;
+
+    await TestBed.configureTestingModule({
+      imports: [ChatWorkspaceComponent],
+      providers: [
+        { provide: AppStateService, useValue: stateValue },
+        { provide: BreakpointObserver, useValue: { observe: () => of({ matches: false }) } },
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ChatWorkspaceComponent);
+    fixture.componentRef.setInput('chatId', 'chat-1');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  });
+
+  it('renders a ready Material composer once configuration is loaded', () => {
+    expect(fixture.nativeElement.textContent).toContain('codex connected');
+    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it('locks the composer and exposes retry when the connection fails', async () => {
+    state.connectErrors.set({ 'chat-1': 'Agent process exited unexpectedly' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Connection failed');
+    expect(fixture.nativeElement.textContent).toContain('Agent process exited unexpectedly');
+    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
+
+    const retry = Array.from(fixture.nativeElement.querySelectorAll('button'))
+      .find((button: unknown) => (button as Element).textContent?.includes('Retry connection')) as HTMLButtonElement;
+    retry.click();
+    expect(state.retryConnection).toHaveBeenCalledWith('chat-1');
+  });
+});

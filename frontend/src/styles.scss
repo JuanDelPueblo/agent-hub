@@ -1,0 +1,122 @@
+@use '@angular/material' as mat;
+@import 'material-symbols/outlined.css';
+
+$light-theme: mat.define-theme(
+  (
+    color: (
+      theme-type: light,
+      primary: mat.$violet-palette,
+      tertiary: mat.$orange-palette,
+    ),
+    typography: (
+      brand-family: Roboto,
+      plain-family: Roboto,
+    ),
+    density: (
+      scale: 0,
+    ),
+  )
+);
+
+$dark-theme: mat.define-theme(
+  (
+    color: (
+      theme-type: dark,
+      primary: mat.$violet-palette,
+      tertiary: mat.$orange-palette,
+    ),
+    typography: (
+      brand-family: Roboto,
+      plain-family: Roboto,
+    ),
+    density: (
+      scale: 0,
+    ),
+  )
+);
+
+html {
+  @include mat.all-component-themes($light-theme);
+  color-scheme: light;
+  font-family: Roboto, Arial, sans-serif;
+  background: var(--mat-sys-surface);
+}
+
+html[data-theme='dark'] {
+  @include mat.all-component-colors($dark-theme);
+  color-scheme: dark;
+}
+
+html[data-theme='light'] {
+  @include mat.all-component-colors($light-theme);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme='light']) {
+    @include mat.all-component-colors($dark-theme);
+    color-scheme: dark;
+  }
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --hub-status-running: #2e7d32;
+  --hub-status-running-container: #c8e6c9;
+  --hub-status-starting: #8a5a00;
+  --hub-status-dead: #ba1a1a;
+  --hub-status-dead-container: #ffdad6;
+  --hub-status-stopped: var(--mat-sys-on-surface-variant);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hub-status-running: #9bd49b;
+    --hub-status-running-container: #1d371e;
+    --hub-status-starting: #e9c46a;
+    --hub-status-dead: #ffb4ab;
+    --hub-status-dead-container: #93000a;
+  }
+}
+
+html[data-theme='light'] {
+  --hub-status-running: #2e7d32;
+  --hub-status-running-container: #c8e6c9;
+  --hub-status-starting: #8a5a00;
+  --hub-status-dead: #ba1a1a;
+  --hub-status-dead-container: #ffdad6;
+}
+
+html[data-theme='dark'] {
+  --hub-status-running: #9bd49b;
+  --hub-status-running-container: #1d371e;
+  --hub-status-starting: #e9c46a;
+  --hub-status-dead: #ffb4ab;
+  --hub-status-dead-container: #93000a;
+}
+
+.material-symbols-outlined,
+mat-icon {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'liga';
+}

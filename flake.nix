@@ -13,10 +13,13 @@
             pname = "agent-hub-frontend";
             version = "0.2.0";
             src = ./frontend;
-            npmDepsHash = "sha256-piUuzTp9tzlr0GGFf6J+d8eb9eLcPsPBKl4bjlOY46Q=";
+            npmDepsHash = "sha256-Uz0McjnDAbC/0YNc8bcb4MXGnQl/tMU26xVnIz5BUDg=";
+            preBuild = ''
+              export NG_CLI_ANALYTICS=false
+            '';
             installPhase = ''
               mkdir -p $out
-              cp -r dist/* $out/
+              cp -r dist/browser/* $out/
             '';
           };
         in rec {

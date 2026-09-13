@@ -7,3 +7,6 @@ result-*
 
 # Frontend test bundles
 frontend/.test-build/
+
+# Angular CLI build cache
+frontend/.angular/

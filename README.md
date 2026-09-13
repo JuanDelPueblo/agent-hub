@@ -4,7 +4,7 @@ A single-owner, persistent web supervisor for local ACP coding agents (such as C
 
 ## Features
 
-- **Material 3 Adaptive UI**: Clean, modern interface built with `@material/web` components and adaptive layouts responsive to compact (<600px), medium (600–839px), and expanded (>=840px) window sizes.
+- **Angular Material Adaptive UI**: A standalone Angular application using Angular Material/CDK primitives and adaptive layouts responsive to compact, medium, and expanded window sizes.
 - **Persistent Projects & Chats**: Multiple independent chats per project across different or identical agents. Full process lifecycle management with automatic session resumption, cancel, stop, and reconnect.
 - **Server-Side Project Creation**: Create projects by browsing existing server directories with boundary enforcement or cloning remote Git repositories directly.
 - **Streamlined Chat Flow**: New chat creation with simple agent selection; automatically connects ACP session and displays configuration options immediately before the first prompt.
@@ -72,7 +72,7 @@ Permission policy is separate from agent configuration. New chats default to `as
 
 ```sh
 # Frontend tests and build
-# `npm test` runs the state tests and the jsdom component tests.
+# `npm test` runs Angular service, state, and component tests through Vitest.
 cd frontend
 npm test
 npm run build

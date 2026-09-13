@@ -4,7 +4,7 @@
 
 Agent Hub is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents (such as Codex, Claude, OpenCode, and Antigravity). It provides a full web interface adhering to modern Material 3 design and adaptive layout conventions, managing persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
 
-The backend is written in Rust using `tokio` and `axum`. The frontend is written in TypeScript and Lit, styled with `@material/web` components and Material 3 design tokens, built via Vite into production-hashed assets, and embedded directly into the Rust binary with `rust-embed`.
+The backend is written in Rust using `tokio` and `axum`. The frontend is a standalone Angular application written in TypeScript, using Angular Material/CDK primitives and Angular Router. Angular produces production-hashed static assets that are embedded directly into the Rust binary with `rust-embed`.
 
 ## 2. System Architecture
 
@@ -65,16 +65,16 @@ graph TD
 
 ### 3.5. Web API & Static Serving (`src/web/`)
 - **REST Endpoints**: Projects, filesystem directory browsing, git clone creation, chats, ACP prompts, configuration, and permissions.
-- **Static Assets (`src/web/static_files.rs`)**: Serves embedded Vite production assets. Implements long-term cache headers (`Cache-Control: public, max-age=31536000, immutable`) for hashed assets and revalidation headers for `index.html` with SPA History API fallback.
+- **Static Assets (`src/web/static_files.rs`)**: Serves embedded Angular production assets. Implements long-term cache headers (`Cache-Control: public, max-age=31536000, immutable`) for hashed assets and revalidation headers for `index.html` with SPA History API fallback.
 
 ## 4. Frontend Architecture (`frontend/`)
 
-- **Framework**: Lit 3 web components with TypeScript.
-- **UI System**: `@material/web` (Material 3) components, design tokens (`src/styles/tokens.css`), and adaptive layout styles (`src/styles/layout.css`).
+- **Framework**: Angular standalone components with signals, `HttpClient`, Angular Router, and RxJS for WebSocket event streams.
+- **UI System**: Angular Material and Angular CDK components, with one Material 3 theme in `src/styles.scss` and small Agent Hub semantic status tokens.
 - **Responsive Window Classes**:
   - **Compact (<600px)**: Bottom-sheet style or modal drawer, full-width inputs, touch targets >= 48px, `env(safe-area-inset-bottom)`.
   - **Medium (600–839px)**: Modal drawer navigation, flexible margins.
   - **Expanded (>=840px)**: Permanent side navigation drawer, dual-pane layout, persistent side sheet for configuration.
-- **Routing**: Lightweight History API client router (`src/router.ts`) supporting `/`, `/projects/:projectId`, and `/projects/:projectId/chats/:chatId`.
-- **State Management**: Reactive store (`src/state/app-state.ts`) and pure event reducer (`src/state/event-reducer.ts`) handling turns, thoughts, tools, plans, and permissions.
-- **Packaging**: Built reproducibly with Nix via `buildNpmPackage` and embedded in Rust for zero-dependency, single-service deployment.
+- **Routing**: Angular Router supporting `/`, `/projects/:projectId`, and `/projects/:projectId/chats/:chatId`, including the Rust SPA fallback for deep links.
+- **State Management**: Signal-based application store (`src/app/state/app-state.service.ts`) and pure event reducer (`src/app/state/event-reducer.ts`) handling turns, thoughts, tools, plans, and permissions.
+- **Packaging**: Built reproducibly with Nix via `buildNpmPackage` from `dist/browser` and embedded in Rust for zero-dependency, single-service deployment.

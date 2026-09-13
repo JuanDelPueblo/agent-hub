@@ -1,0 +1,59 @@
+import { describe, expect, it } from 'vitest';
+import { EventReducer } from './event-reducer';
+import type { SessionEvent } from '../core/api/types';
+
+const event = (seq: number, type: SessionEvent['payload']['type'], extra: Record<string, unknown> = {}): SessionEvent => ({
+  seq, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:00Z', payload: { type, ...extra },
+});
+
+describe('EventReducer', () => {
+  it('aggregates streamed messages and completes the turn', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'user_message', { text: 'Inspect this' }));
+    reducer.ingest(event(2, 'message_chunk', { text: 'Hello ' }));
+    reducer.ingest(event(3, 'message_chunk', { text: 'world' }));
+    reducer.ingest(event(4, 'turn_complete', { stop_reason: 'end_turn' }));
+    expect(reducer.items).toHaveLength(2);
+    expect(reducer.items[1]).toMatchObject({ type: 'turn', status: 'complete', stopReason: 'end_turn' });
+    expect((reducer.items[1] as { entries: Array<{ text: string }> }).entries[0].text).toBe('Hello world');
+  });
+
+  it('deduplicates replayed sequence numbers and resolves permissions', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'permission_request', { id: 'permission-1', method: 'execute_command', description: 'Run tests' }));
+    reducer.ingest(event(1, 'permission_request', { id: 'permission-1', method: 'execute_command', description: 'Duplicate' }));
+    reducer.ingest(event(2, 'permission_response', { id: 'permission-1', granted: true }));
+    expect(reducer.items).toHaveLength(1);
+    expect((reducer.items[0] as { entries: Array<{ responded?: boolean; decision?: string }> }).entries[0]).toMatchObject({ responded: true, decision: 'Allowed' });
+  });
+
+  it('updates tool output and preserves thought entries', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'thought_chunk', { text: 'Inspecting the repository' }));
+    reducer.ingest(event(2, 'tool_call', { toolCallId: 'tool-1', title: 'List files', status: 'running' }));
+    reducer.ingest(event(3, 'tool_call_update', { toolCallId: 'tool-1', status: 'completed', output: 'README.md' }));
+
+    expect(reducer.items[0]).toMatchObject({ type: 'turn', status: 'in_progress' });
+    expect((reducer.items[0] as unknown as { entries: Array<Record<string, unknown>> }).entries).toEqual([
+      expect.objectContaining({ type: 'thought_chunk', text: 'Inspecting the repository' }),
+      expect.objectContaining({ type: 'tool_call', toolCallId: 'tool-1', status: 'completed', output: 'README.md' }),
+    ]);
+  });
+
+  it('replaces the active plan and displays terminal state changes', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'plan', { entries: [{ content: 'Run tests', status: 'in_progress' }] }));
+    reducer.ingest(event(2, 'plan', { entries: [{ content: 'Run tests', status: 'completed' }] }));
+    reducer.ingest(event(3, 'turn_complete', { stop_reason: 'end_turn' }));
+    reducer.ingest(event(4, 'state_change', { process: 'DEAD', turn: 'IDLE' }));
+    reducer.ingest(event(5, 'state_change', { process: 'RUNNING', turn: 'IDLE' }));
+
+    expect(reducer.items[0]).toMatchObject({ type: 'turn', status: 'complete', stopReason: 'end_turn' });
+    expect((reducer.items[0] as { entries: Array<{ type: string; entries?: unknown[] }> }).entries[0]).toMatchObject({
+      type: 'plan',
+      entries: [{ content: 'Run tests', status: 'completed' }],
+    });
+    expect(reducer.items).toHaveLength(2);
+    expect(reducer.items[1]).toMatchObject({ type: 'state_change', process: 'DEAD', turn: 'IDLE' });
+  });
+});

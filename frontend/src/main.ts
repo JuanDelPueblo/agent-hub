@@ -1,11 +1,9 @@
-import './styles/tokens.css';
-import './styles/layout.css';
-import './styles/global.css';
-import './components/app-shell';
-import { AppShell } from './components/app-shell';
+import { bootstrapApplication } from '@angular/platform-browser';
+import { provideHttpClient } from '@angular/common/http';
+import { provideRouter } from '@angular/router';
+import { AppComponent } from './app/app.component';
+import { routes } from './app/app.routes';
 
-if (!customElements.get('agent-hub-app')) {
-  customElements.define('agent-hub-app', class extends AppShell {});
-}
-
-console.log('Agent Hub initialized');
+bootstrapApplication(AppComponent, {
+  providers: [provideHttpClient(), provideRouter(routes)],
+}).catch((error: unknown) => console.error(error));
