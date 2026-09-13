@@ -30,19 +30,21 @@ import { Breadcrumb, DirectoryListing } from '../core/api/types';
           }
         </nav>
 
-        <div class="directory-list" aria-label="Subdirectories">
+        <div class="directory-list">
           @if (loading()) {
             <mat-progress-bar mode="indeterminate" aria-label="Loading directories" />
           }
-          @for (directory of current.directories; track directory.path) {
-            <button mat-list-item type="button" (click)="browseTo(directory.path)">
-              <mat-icon matListItemIcon>folder</mat-icon>
-              <span matListItemTitle>{{ directory.name }}</span>
-              <mat-icon matListItemMeta>chevron_right</mat-icon>
-            </button>
-          } @empty {
-            @if (!loading()) { <p class="empty">No subdirectories found</p> }
-          }
+          <mat-action-list aria-label="Subdirectories">
+            @for (directory of current.directories; track directory.path) {
+              <button mat-list-item type="button" (click)="browseTo(directory.path)">
+                <mat-icon matListItemIcon>folder</mat-icon>
+                <span matListItemTitle>{{ directory.name }}</span>
+                <mat-icon matListItemMeta>chevron_right</mat-icon>
+              </button>
+            } @empty {
+              @if (!loading()) { <p class="empty">No subdirectories found</p> }
+            }
+          </mat-action-list>
         </div>
 
         <div class="picker-actions">
@@ -61,10 +63,14 @@ import { Breadcrumb, DirectoryListing } from '../core/api/types';
     :host { display: block; }
     .picker { display: flex; flex-direction: column; gap: 12px; }
     .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container-low); color: var(--mat-sys-on-surface-variant); }
-    .breadcrumbs .crumb { min-width: 0; padding-inline: 7px; }
+    .breadcrumbs .crumb { --mat-button-text-label-text-color: var(--mat-sys-on-surface); min-width: 0; padding-inline: 7px; }
+    .breadcrumbs .crumb:last-of-type { --mat-button-text-label-text-color: var(--mat-sys-primary); }
     .directory-list { min-height: 170px; max-height: 250px; overflow: auto; border: 1px solid var(--mat-sys-outline-variant); border-radius: var(--mat-sys-corner-medium); }
     .directory-list mat-progress-bar { position: sticky; top: 0; z-index: 1; }
-    .directory-list button { width: 100%; text-align: left; }
+        .directory-list mat-action-list { padding: 4px; }
+    .directory-list button { border-radius: var(--mat-sys-corner-medium); }
+    .directory-list button mat-icon[matListItemIcon] { color: var(--mat-sys-on-surface-variant); }
+    .directory-list button mat-icon[matListItemMeta] { width: 20px; height: 20px; font-size: 20px; font-family: 'Material Symbols Outlined'; color: var(--mat-sys-on-surface-variant); }
     .empty { padding: 32px 16px; margin: 0; color: var(--mat-sys-on-surface-variant); text-align: center; }
     .loading { min-height: 170px; display: grid; align-content: center; }
     .picker-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

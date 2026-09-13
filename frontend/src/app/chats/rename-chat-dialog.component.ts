@@ -26,7 +26,7 @@ import { AppStateService } from '../state/app-state.service';
     </mat-dialog-actions>
   `,
   styles: `
-    mat-dialog-content { min-width: min(360px, calc(100vw - 48px)); }
+    mat-dialog-content { min-width: min(360px, calc(100vw - 48px)); padding-top: 10px !important; }
     mat-form-field { width: 100%; }
     .error { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
     @media (max-width: 599px) { mat-dialog-content { min-width: 0; } }

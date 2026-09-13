@@ -58,6 +58,15 @@ body {
   --hub-measure: 920px;
   --hub-gutter: 24px;
 
+  // Shared measure for the pages that hold a card grid. The top app bar uses
+  // the same values, so the brand lines up with the page title below it.
+  --hub-page-max: 1200px;
+  --hub-page-gutter: 32px;
+
+  @media (max-width: 599px) {
+    --hub-page-gutter: 16px;
+  }
+
   --hub-status-running: light-dark(#2e7d32, #9bd49b);
   --hub-status-running-container: light-dark(#c8e6c9, #1d371e);
   --hub-status-starting: light-dark(#8a5a00, #e9c46a);
@@ -111,4 +120,36 @@ mat-icon {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'liga';
+}
+
+// Menu panels that Angular Material attaches to the overlay container. The
+// panels sit outside every component, so the headings need global rules.
+.hub-agent-menu,
+.hub-project-menu {
+  .menu-heading,
+  .agent-menu-heading {
+    padding: 10px 16px 6px;
+    color: var(--mat-sys-on-surface-variant);
+    font: var(--mat-sys-label-medium);
+    letter-spacing: var(--mat-sys-label-medium-tracking);
+  }
+
+  .agent-menu-empty {
+    padding: 12px 16px;
+    color: var(--mat-sys-on-surface-variant);
+    font: var(--mat-sys-body-medium);
+  }
+
+  .agent-menu-name {
+    text-transform: capitalize;
+  }
+
+  .mat-mdc-menu-item.current {
+    background: var(--mat-sys-secondary-container);
+    color: var(--mat-sys-on-secondary-container);
+  }
+}
+
+.hub-wide-dialog {
+  --mat-dialog-container-max-width: min(720px, calc(100vw - 32px));
 }

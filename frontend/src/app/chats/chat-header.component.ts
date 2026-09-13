@@ -18,7 +18,7 @@ import { RenameChatDialogComponent } from './rename-chat-dialog.component';
       @if (chat) {
         <div class="header-left">
           <button mat-icon-button class="nav-button" aria-label="Open navigation" matTooltip="Open navigation" (click)="toggleNavigation()"><mat-icon>menu</mat-icon></button>
-          <div class="title-area"><div class="title-line"><button mat-button class="title-button" type="button" (click)="rename()" [attr.aria-label]="'Rename chat ' + (chat.title || 'Untitled chat')">{{ chat.title || 'Untitled chat' }}</button>@if (chat.archived) { <span class="badge stopped">Archived</span> }</div><div class="badges"><span class="badge agent">{{ chat.agent }}</span>@if (chat.turn_state === 'PROMPTING') { <span class="badge thinking">Thinking…</span> }<span class="badge" [class.running]="chat.process_state === 'RUNNING'" [class.dead]="chat.process_state === 'DEAD'"><span class="status-dot"></span>{{ chat.process_state || 'STOPPED' }}</span></div></div>
+          <div class="title-area"><div class="title-line"><button mat-button class="title-button" type="button" (click)="rename()" [attr.aria-label]="'Rename chat ' + (chat.title || 'Untitled chat')">{{ chat.title || 'Untitled chat' }}</button>@if (chat.archived) { <span class="badge stopped">Archived</span> }</div><div class="badges"><span class="badge agent">{{ chat.agent }}</span>@if (chat.turn_state === 'PROMPTING') { <span class="badge thinking">Thinking…</span> }<span class="badge" [class.running]="chat.process_state === 'RUNNING'" [class.dead]="chat.process_state === 'DEAD'"><span class="status-dot"></span>{{ stateLabel(chat.process_state) }}</span></div></div>
         </div>
         <div class="header-actions">
           @if (chat.process_state === 'RUNNING') { <button mat-icon-button matTooltip="Stop process" aria-label="Stop process" (click)="stop()"><mat-icon>pause_circle</mat-icon></button> } @else { <button mat-icon-button matTooltip="Reconnect process" aria-label="Reconnect process" (click)="reconnect()"><mat-icon>play_circle</mat-icon></button> }
@@ -38,11 +38,12 @@ import { RenameChatDialogComponent } from './rename-chat-dialog.component';
     .header-actions { flex: 0 0 auto; gap: 2px; }
     .title-area { min-width: 0; }
     .title-line { min-width: 0; gap: 8px; }
-    .title-button { min-width: 0; overflow: hidden; max-width: min(50vw, 560px); padding-inline: 0; color: var(--mat-sys-on-surface); font: var(--mat-sys-title-medium); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+    .title-button { --mat-button-text-label-text-color: var(--mat-sys-on-surface); justify-content: flex-start; min-width: 0; overflow: hidden; max-width: min(50vw, 560px); padding-inline: 12px; margin-left: -12px; font: var(--mat-sys-title-medium); letter-spacing: var(--mat-sys-title-medium-tracking); text-align: left; }
+    .title-button ::ng-deep .mdc-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
     .title-button:hover { text-decoration: underline; }
     .badges { flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
-    .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); }
+    .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); text-transform: lowercase; }
     .badge.running { background: var(--hub-status-running-container); color: var(--hub-status-running); }
     .badge.dead { background: var(--hub-status-dead-container); color: var(--hub-status-dead); }
     .badge.thinking { background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
@@ -59,6 +60,7 @@ export class ChatHeaderComponent {
   readonly state = inject(AppStateService);
   private readonly dialog = inject(MatDialog);
   toggleNavigation(): void { this.state.setMobileDrawerOpen(!this.state.isMobileDrawerOpen()); }
+  stateLabel(processState: string | null | undefined): string { const value = processState ?? 'STOPPED'; return value.charAt(0) + value.slice(1).toLowerCase(); }
   rename(): void { if (this.chat) this.dialog.open(RenameChatDialogComponent, { width: 'min(480px, calc(100vw - 32px))', data: this.chat }); }
   async stop(): Promise<void> { if (this.chat) await this.state.stopChatProcess(this.chat.id).catch((error) => console.error('Failed to stop process', error)); }
   async reconnect(): Promise<void> { if (this.chat) await this.state.retryConnection(this.chat.id); }

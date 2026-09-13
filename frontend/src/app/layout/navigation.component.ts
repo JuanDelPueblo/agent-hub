@@ -1,143 +1,219 @@
-import { Component, EventEmitter, Output, inject } from '@angular/core';
+import { Component, EventEmitter, Output, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
+import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { AppStateService } from '../state/app-state.service';
-import { AgentPickerComponent } from '../agents/agent-picker.component';
+import { NewChatButtonComponent } from '../chats/new-chat-button.component';
 import { ProjectDialogComponent } from '../projects/project-dialog.component';
+import { ConnectionStatusComponent } from './connection-status.component';
 import { ThemeService } from '../core/theme.service';
 
+/**
+ * The navigation drawer for a selected project. It holds the project switcher
+ * and the chats of the active project. The shell hides it when no project is
+ * selected.
+ */
 @Component({
   selector: 'hub-navigation',
   standalone: true,
   imports: [
+    ConnectionStatusComponent,
     MatButtonModule,
     MatDialogModule,
     MatDividerModule,
     MatIconModule,
     MatListModule,
+    MatMenuModule,
     MatTooltipModule,
+    NewChatButtonComponent,
     RouterLink,
     RouterLinkActive,
   ],
   template: `
-    <header class="navigation-header">
-      <button mat-button class="brand" type="button" aria-label="Go to projects" (click)="goHome()">
+    <header class="drawer-header">
+      <a class="brand" routerLink="/" aria-label="Agent Hub home" (click)="closeRequested.emit()">
         <span class="brand-mark"><mat-icon>hub</mat-icon></span>
         <span class="brand-name">Agent Hub</span>
-      </button>
-      <button mat-icon-button matTooltip="Close navigation" aria-label="Close navigation" (click)="closeRequested.emit()">
+      </a>
+      <span class="header-spacer"></span>
+      <button
+        mat-icon-button
+        class="drawer-close"
+        matTooltip="Close navigation"
+        aria-label="Close navigation"
+        (click)="closeRequested.emit()"
+      >
         <mat-icon>close</mat-icon>
       </button>
     </header>
 
-    <div class="navigation-body">
-      <section aria-labelledby="projects-heading">
-        <div class="section-heading">
-          <span id="projects-heading">Projects</span>
-          <button mat-icon-button matTooltip="New project" aria-label="New project" (click)="newProject()">
-            <mat-icon>add</mat-icon>
+    <div class="drawer-body">
+      @if (state.activeProject(); as project) {
+        <button
+          mat-button
+          type="button"
+          class="project-switcher"
+          [matMenuTriggerFor]="projectMenu"
+          aria-label="Switch project"
+        >
+          <span class="switcher-icon"><mat-icon>folder</mat-icon></span>
+          <span class="switcher-text">
+            <span class="switcher-name">{{ project.name }}</span>
+            <span class="switcher-path" [title]="project.path">{{ project.path }}</span>
+          </span>
+          <mat-icon iconPositionEnd class="switcher-caret">unfold_more</mat-icon>
+        </button>
+
+        <mat-menu #projectMenu="matMenu" class="hub-project-menu" [overlapTrigger]="false">
+          <div class="menu-heading" role="presentation">Projects</div>
+          @for (item of state.projects(); track item.id) {
+            <button
+              mat-menu-item
+              type="button"
+              [class.current]="item.id === project.id"
+              (click)="openProject(item.id)"
+            >
+              <mat-icon>{{ item.id === project.id ? 'folder_open' : 'folder' }}</mat-icon>
+              <span>{{ item.name }}</span>
+            </button>
+          }
+          <mat-divider />
+          <button mat-menu-item type="button" (click)="goHome()">
+            <mat-icon>grid_view</mat-icon><span>All projects</span>
+          </button>
+          <button mat-menu-item type="button" (click)="newProject()">
+            <mat-icon>create_new_folder</mat-icon><span>New project</span>
+          </button>
+        </mat-menu>
+
+        @if (showNewChat()) {
+          <hub-new-chat-button class="drawer-new-chat" [projectId]="project.id" />
+        }
+
+        <div class="list-subheader">
+          <span id="chats-heading">Chats</span>
+          <span class="count">{{ visibleChats().length }}</span>
+          <span class="subheader-spacer"></span>
+          <button
+            mat-icon-button
+            class="archive-toggle"
+            [class.on]="state.showArchived()"
+            [matTooltip]="state.showArchived() ? 'Hide archived chats' : 'Show archived chats'"
+            [attr.aria-pressed]="state.showArchived()"
+            aria-label="Show archived chats"
+            (click)="state.setShowArchived(!state.showArchived())"
+          >
+            <mat-icon>inventory_2</mat-icon>
           </button>
         </div>
 
-        <mat-nav-list>
-          @for (project of state.projects(); track project.id) {
+        <mat-nav-list aria-labelledby="chats-heading">
+          @for (chat of visibleChats(); track chat.id) {
             <a
               mat-list-item
-              [routerLink]="['/projects', project.id]"
+              lines="2"
+              [routerLink]="['/projects', chat.project_id, 'chats', chat.id]"
               routerLinkActive="selected"
-              [routerLinkActiveOptions]="{ exact: true }"
               (click)="closeRequested.emit()"
-              [attr.aria-label]="'Open project ' + project.name"
+              [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
             >
-              <mat-icon matListItemIcon>folder</mat-icon>
-              <span matListItemTitle>{{ project.name }}</span>
+              <span matListItemIcon class="status-slot">
+                <span
+                  class="status-dot"
+                  [class.running]="chat.process_state === 'RUNNING'"
+                  [class.dead]="chat.process_state === 'DEAD'"
+                ></span>
+              </span>
+              <span matListItemTitle>{{ chat.title || 'Untitled chat' }}</span>
+              <span matListItemLine>
+                <span class="chat-meta">
+                  <span class="agent-badge">{{ chat.agent }}</span>
+                  @if (chat.archived) { <span class="archived-tag">Archived</span> }
+                </span>
+              </span>
             </a>
           } @empty {
-            <div class="empty-navigation">No projects yet</div>
+            <p class="drawer-empty">
+              {{ state.showArchived() ? 'No archived chats.' : 'No chats yet.' }}
+            </p>
           }
         </mat-nav-list>
-      </section>
-
-      @if (state.activeProject(); as project) {
-        <section class="active-project" aria-labelledby="active-project-heading">
-          <div class="project-summary">
-            <a id="active-project-heading" [routerLink]="['/projects', project.id]" (click)="closeRequested.emit()">{{ project.name }}</a>
-            <span [title]="project.path">{{ project.path }}</span>
-          </div>
-
-          <button mat-flat-button class="new-chat-button" (click)="newChat()">
-            <mat-icon>add_comment</mat-icon>
-            New chat
-          </button>
-
-          <div class="section-heading chats-heading">
-            <span>Chats ({{ visibleChats().length }})</span>
-            <button mat-button class="archive-toggle" (click)="state.setShowArchived(!state.showArchived())">
-              {{ state.showArchived() ? 'Active only' : 'Archived' }}
-            </button>
-          </div>
-
-          <mat-nav-list>
-            @for (chat of visibleChats(); track chat.id) {
-              <a
-                mat-list-item
-                [routerLink]="['/projects', chat.project_id, 'chats', chat.id]"
-                routerLinkActive="selected"
-                (click)="closeRequested.emit()"
-                [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
-              >
-                <span matListItemIcon class="chat-status" [class.running]="chat.process_state === 'RUNNING'" [class.dead]="chat.process_state === 'DEAD'"></span>
-                <span matListItemTitle>{{ chat.title || 'Untitled chat' }}</span>
-                <span class="agent-label">{{ chat.agent }}</span>
-              </a>
-            } @empty {
-              <div class="empty-navigation">No chats yet</div>
-            }
-          </mat-nav-list>
-        </section>
       }
     </div>
 
-    <footer class="navigation-footer">
-      <span class="socket-state"><span class="socket-dot" [class]="state.wsStatus()"></span>{{ state.wsStatus() }}</span>
-      <span class="footer-actions"><span>v0.2.0</span><button mat-icon-button [matTooltip]="theme.label()" [attr.aria-label]="theme.label()" (click)="theme.cycle()"><mat-icon>{{ theme.icon() }}</mat-icon></button></span>
+    <footer class="drawer-footer">
+      <hub-connection-status />
+      <span class="footer-spacer"></span>
+      <span class="version">v0.2.0</span>
+      <button
+        mat-icon-button
+        [matTooltip]="theme.label()"
+        [attr.aria-label]="theme.label()"
+        (click)="theme.cycle()"
+      >
+        <mat-icon>{{ theme.icon() }}</mat-icon>
+      </button>
     </footer>
   `,
   styles: `
-    :host { display: flex; flex-direction: column; height: 100%; min-width: 280px; background: var(--mat-sys-surface-container-low); }
-    .navigation-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 18px 16px 12px; }
-    .brand { display: inline-flex; align-items: center; gap: 12px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-    .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 16px 16px 16px 4px; background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
-    .brand-name { font: var(--mat-sys-title-large); }
-    .navigation-body { flex: 1; overflow: auto; padding: 8px 12px 20px; }
-    .section-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-large); letter-spacing: .06em; text-transform: uppercase; }
-    .section-heading button { flex: 0 0 auto; }
+    :host { display: flex; flex-direction: column; height: 100%; background: var(--mat-sys-surface-container-low); }
+
+    .drawer-header { display: flex; align-items: center; gap: 4px; height: 64px; padding: 0 8px 0 16px; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; min-width: 0; height: 48px; padding: 0 18px 0 10px; margin-left: -10px; border-radius: var(--mat-sys-corner-full); color: var(--mat-sys-on-surface); text-decoration: none; transition: background 120ms ease; }
+    .brand:hover { background: var(--mat-sys-surface-container-high); }
+    .brand:focus-visible { outline: 3px solid var(--mat-sys-secondary); outline-offset: 1px; }
+    .header-spacer { flex: 1; }
+    .brand-mark { display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
+    .brand-mark mat-icon { width: 20px; height: 20px; font-size: 20px; }
+    .brand-name { overflow: hidden; font: var(--mat-sys-title-medium); letter-spacing: var(--mat-sys-title-medium-tracking); text-overflow: ellipsis; white-space: nowrap; }
+    .drawer-close { flex: 0 0 auto; }
+
+    .drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 16px; }
+
+    .project-switcher { --mat-button-text-label-text-color: var(--mat-sys-on-surface); --mat-button-text-icon-color: var(--mat-sys-on-surface-variant); display: flex; width: 100%; height: 56px; padding: 0 8px 0 12px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container); text-align: left; }
+    .project-switcher ::ng-deep .mdc-button__label { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
+    .switcher-icon { display: grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border-radius: var(--mat-sys-corner-small); background: var(--mat-sys-surface-container-highest); color: var(--mat-sys-on-surface-variant); }
+    .switcher-icon mat-icon { width: 18px; height: 18px; font-size: 18px; }
+    .switcher-text { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+    .switcher-name { overflow: hidden; font: var(--mat-sys-title-small); letter-spacing: var(--mat-sys-title-small-tracking); text-overflow: ellipsis; white-space: nowrap; }
+    .switcher-path { overflow: hidden; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+    .switcher-caret { flex: 0 0 auto; width: 20px; height: 20px; font-size: 20px; color: var(--mat-sys-on-surface-variant); }
+
+    .drawer-new-chat { display: flex; margin: 16px 0 8px; }
+
+    .list-subheader { display: flex; align-items: center; gap: 8px; height: 40px; padding-left: 16px; margin-top: 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-title-small); letter-spacing: var(--mat-sys-title-small-tracking); }
+    .list-subheader .count { padding: 1px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); font: var(--mat-sys-label-small); }
+    .subheader-spacer { flex: 1; }
+    .archive-toggle { --mat-icon-button-icon-color: var(--mat-sys-on-surface-variant); }
+    .archive-toggle mat-icon { width: 20px; height: 20px; font-size: 20px; }
+    .archive-toggle.on { --mat-icon-button-icon-color: var(--mat-sys-on-secondary-container); background: var(--mat-sys-secondary-container); }
+
     mat-nav-list { padding: 0; }
-    mat-list-item { margin: 2px 0; border-radius: var(--mat-sys-corner-full); }
+    mat-list-item { --mat-list-list-item-leading-icon-start-space: 16px; --mat-list-list-item-leading-icon-end-space: 16px; margin-bottom: 2px; border-radius: var(--mat-sys-corner-full); }
     mat-list-item.selected { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); }
-    .empty-navigation { padding: 12px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-medium); text-align: center; }
-    .active-project { margin-top: 20px; }
-    .project-summary { display: flex; flex-direction: column; gap: 2px; padding: 12px; margin-bottom: 10px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container); }
-    .project-summary a { color: inherit; font: var(--mat-sys-title-small); text-decoration: none; }
-    .project-summary span { overflow: hidden; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-overflow: ellipsis; white-space: nowrap; }
-    .new-chat-button { width: 100%; margin: 2px 0 16px; }
-    .chats-heading { padding-right: 0; }
-    .archive-toggle { min-width: 0; }
-    .chat-status { width: 8px; height: 8px; margin: 0 16px 0 8px; border-radius: 50%; background: var(--hub-status-stopped); }
-    .chat-status.running { background: var(--hub-status-running); }
-    .chat-status.dead { background: var(--hub-status-dead); }
-    .agent-label { margin-left: auto; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-transform: lowercase; }
-    .navigation-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--mat-sys-outline-variant); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
-    .socket-state { display: inline-flex; align-items: center; gap: 6px; text-transform: capitalize; }
-    .socket-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hub-status-dead); }
-    .socket-dot.connected { background: var(--hub-status-running); }
-    .socket-dot.connecting { background: var(--hub-status-starting); }
-    @media (min-width: 840px) { :host > .navigation-header > button:last-child { display: none; } }
+    mat-list-item.selected .chat-meta { color: inherit; opacity: .8; }
+    .status-slot { display: grid !important; place-items: center; align-self: center !important; margin-top: 0 !important; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hub-status-stopped); }
+    .status-dot.running { background: var(--hub-status-running); }
+    .status-dot.dead { background: var(--hub-status-dead); }
+    .chat-meta { display: inline-flex; align-items: center; gap: 6px; }
+    .mat-mdc-list-item-line::before { display: none !important; }
+    .agent-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); font: var(--mat-sys-label-small); text-transform: lowercase; }
+    .archived-tag { padding: 2px 6px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-highest); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-transform: none; }
+    mat-list-item.selected .agent-badge { background: var(--mat-sys-surface-container-highest); color: var(--mat-sys-on-surface); }
+    mat-list-item.selected .archived-tag { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
+    .drawer-empty { padding: 20px 16px; color: var(--mat-sys-on-surface-variant); text-align: center; }
+
+    .drawer-footer { display: flex; align-items: center; gap: 8px; height: 56px; flex: 0 0 auto; padding: 0 8px 0 16px; border-top: 1px solid var(--mat-sys-outline-variant); }
+    .footer-spacer { flex: 1; }
+    .version { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); letter-spacing: var(--mat-sys-label-medium-tracking); }
+
+    @media (min-width: 840px) { .drawer-close { display: none; } }
   `,
 })
 export class NavigationComponent {
@@ -147,10 +223,18 @@ export class NavigationComponent {
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
 
+  /** The project overview page carries its own button, so the drawer hides one. */
+  readonly showNewChat = computed(() => this.state.activeChatId() !== null);
+
   visibleChats() {
     const projectId = this.state.activeProjectId();
     const chats = projectId ? this.state.chatsByProject()[projectId] ?? [] : [];
     return this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived);
+  }
+
+  openProject(projectId: string): void {
+    void this.router.navigate(['/projects', projectId]);
+    this.closeRequested.emit();
   }
 
   goHome(): void {
@@ -159,17 +243,7 @@ export class NavigationComponent {
   }
 
   newProject(): void {
-    this.dialog.open(ProjectDialogComponent, { width: 'min(720px, calc(100vw - 32px))' });
-    this.closeRequested.emit();
-  }
-
-  newChat(): void {
-    const projectId = this.state.activeProjectId();
-    if (!projectId) return;
-    this.dialog.open(AgentPickerComponent, {
-      width: 'min(560px, calc(100vw - 32px))',
-      data: { projectId },
-    });
+    this.dialog.open(ProjectDialogComponent, { width: 'min(720px, calc(100vw - 32px))', panelClass: 'hub-wide-dialog' });
     this.closeRequested.emit();
   }
 }

@@ -78,7 +78,7 @@ import { FolderPickerComponent } from './folder-picker.component';
     </mat-dialog-actions>
   `,
   styles: `
-    mat-dialog-content { min-width: min(600px, calc(100vw - 48px)); max-height: min(680px, 70vh); }
+    mat-dialog-content { max-height: min(680px, 70vh); }
     .tab-content { display: flex; flex-direction: column; gap: 14px; padding: 22px 4px 8px; }
     mat-form-field { width: 100%; }
     .help { color: var(--mat-sys-on-surface-variant); }
@@ -87,7 +87,6 @@ import { FolderPickerComponent } from './folder-picker.component';
     .selected-path { display: flex; flex-direction: column; gap: 4px; }
     code { overflow-wrap: anywhere; }
     .error-box { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
-    @media (max-width: 599px) { mat-dialog-content { min-width: 0; } }
   `,
 })
 export class ProjectDialogComponent {
