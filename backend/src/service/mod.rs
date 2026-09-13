@@ -76,10 +76,7 @@ impl HubService {
     /// made before: an unknown chat is not found, and a chat whose agent left
     /// the configuration is a conflict rather than a missing chat.
     pub(crate) async fn live(&self, chat_id: &str) -> ServiceResult<Arc<AcpSession>> {
-        let chat = self
-            .store
-            .chat(chat_id)
-            .map_err(|_| ServiceError::NotFound("Chat not found".into()))?;
+        let chat = self.store.chat(chat_id)?;
         if !self.sessions.has_agent(&chat.agent) {
             return Err(ServiceError::Conflict(
                 "This chat's agent is no longer configured".into(),

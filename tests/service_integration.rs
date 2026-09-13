@@ -188,10 +188,44 @@ async fn errors_carry_the_kind_the_caller_needs() {
         Err(ServiceError::Invalid(_))
     ));
 
+    // Missing get_chat returns NotFound
+    assert!(matches!(
+        hub.get_chat("nope").await,
+        Err(ServiceError::NotFound(_))
+    ));
+
+    // Missing get_project returns NotFound
+    assert!(matches!(
+        hub.get_project("nope"),
+        Err(ServiceError::NotFound(_))
+    ));
+
+    // Missing-project list_chats returns NotFound
+    assert!(matches!(
+        hub.list_chats("nope").await,
+        Err(ServiceError::NotFound(_))
+    ));
+
+    // Missing-project create_chat returns NotFound
+    assert!(matches!(
+        hub.create_chat("nope", "codex", None).await,
+        Err(ServiceError::NotFound(_))
+    ));
+
     // An empty prompt never reaches the agent.
     assert!(matches!(
         hub.prompt_chat(&chat.chat.id, "   ".into()).await,
         Err(ServiceError::Invalid(_))
+    ));
+
+    // An internal SQLite failure returns ServiceError::Internal.
+    {
+        let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+        raw.execute_batch("DROP TABLE projects;").unwrap();
+    }
+    assert!(matches!(
+        hub.list_projects(),
+        Err(ServiceError::Internal(_))
     ));
 
     sessions.shutdown_all().await;

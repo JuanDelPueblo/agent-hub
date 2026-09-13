@@ -24,6 +24,11 @@ impl From<std::io::Error> for ApiError {
         Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     }
 }
+impl From<crate::store::StoreError> for ApiError {
+    fn from(e: crate::store::StoreError) -> Self {
+        ServiceError::from(e).into()
+    }
+}
 /// The one place a Hub failure becomes a status code.
 impl From<ServiceError> for ApiError {
     fn from(e: ServiceError) -> Self {

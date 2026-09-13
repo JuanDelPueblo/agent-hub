@@ -19,13 +19,14 @@ impl HubService {
     }
 
     /// Registers a directory that is already on disk, such as a finished clone.
-    /// The caller has canonicalized the path, so this does not re-derive it.
-    pub fn register_cloned_project(
+    /// Validates the path against configured project roots before saving.
+    pub(crate) fn register_cloned_project(
         &self,
         name: String,
         canonical_path: String,
     ) -> ServiceResult<Project> {
-        let project = self.store.create_project(name, canonical_path)?;
+        let path = validate_project_path(&canonical_path, &self.project_roots)?;
+        let project = self.store.create_project(name, path)?;
         self.notify_metadata_changed();
         Ok(project)
     }
@@ -52,6 +53,7 @@ impl HubService {
     }
 
     pub fn delete_project(&self, id: &str) -> ServiceResult<()> {
+        self.store.project(id)?;
         if self.store.chats()?.iter().any(|c| c.project_id == id) {
             return Err(ServiceError::Conflict(
                 "Delete the project's chats first (project files are never deleted)".into(),
@@ -60,5 +62,60 @@ impl HubService {
         self.store.delete_project(id)?;
         self.notify_metadata_changed();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::{AgentDefinition, AgentRegistry};
+    use crate::config::Config;
+    use crate::events::EventLog;
+    use crate::session::SessionManager;
+    use crate::store::Store;
+    use std::sync::Arc;
+
+    fn test_hub(root: &std::path::Path) -> Arc<HubService> {
+        let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
+        let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+        let agent = AgentDefinition::codex_default();
+        let agents = Arc::new(AgentRegistry::new([agent]));
+        let sessions = SessionManager::with_store(agents.clone(), log, Some(store.clone()));
+        let mut config = Config {
+            agents: agents.clone(),
+            ..Default::default()
+        };
+        config.web.project_roots = vec![root.display().to_string()];
+        HubService::new(store, sessions, agents, &config)
+    }
+
+    #[tokio::test]
+    async fn register_cloned_project_enforces_path_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = test_hub(tmp.path());
+
+        // Escaping / outside path rejected
+        assert!(matches!(
+            hub.register_cloned_project("escape".into(), "/outside/root".into()),
+            Err(ServiceError::Invalid(_))
+        ));
+
+        // Non-existent path rejected
+        assert!(matches!(
+            hub.register_cloned_project(
+                "nope".into(),
+                tmp.path().join("nonexistent").display().to_string()
+            ),
+            Err(ServiceError::Invalid(_))
+        ));
+
+        // Valid path within project roots succeeds
+        let valid_dir = tmp.path().join("cloned");
+        std::fs::create_dir_all(&valid_dir).unwrap();
+        let p = hub
+            .register_cloned_project("cloned".into(), valid_dir.display().to_string())
+            .unwrap();
+        assert_eq!(p.name, "cloned");
+        assert_eq!(hub.get_project(&p.id).unwrap().name, "cloned");
     }
 }

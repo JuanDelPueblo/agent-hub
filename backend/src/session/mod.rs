@@ -205,7 +205,7 @@ impl AcpSession {
             {
                 client.shutdown().await;
                 self.set_states(ProcessState::Dead, TurnState::Idle).await;
-                return Err(e);
+                return Err(e.into());
             }
             let values = store.chat(&self.id)?.config_values;
             if let Some(values) = values.as_object() {
@@ -458,7 +458,8 @@ impl AcpSession {
         self.store
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?
-            .delete_chat(&self.id)
+            .delete_chat(&self.id)?;
+        Ok(())
     }
 
     pub async fn cancel(&self) -> anyhow::Result<()> {

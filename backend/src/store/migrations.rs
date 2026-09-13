@@ -78,6 +78,17 @@ pub fn latest_version() -> i64 {
     MIGRATIONS.last().map_or(0, |m| m.version)
 }
 
+pub(crate) fn check_version(conn: &Connection) -> Result<()> {
+    let latest = latest_version();
+    let current = user_version(conn)?;
+    anyhow::ensure!(
+        current <= latest,
+        "Database schema version {current} comes from a newer Agent Hub \
+         (this build understands version {latest}). Upgrade Agent Hub or restore a backup."
+    );
+    Ok(())
+}
+
 pub(crate) fn migrate(db: &mut Connection) -> Result<()> {
     apply(db, MIGRATIONS)
 }
@@ -87,13 +98,8 @@ fn apply(db: &mut Connection, migrations: &[Migration]) -> Result<()> {
         migrations.windows(2).all(|w| w[0].version < w[1].version),
         "migrations must be ordered by ascending version"
     );
-    let latest = migrations.last().map_or(0, |m| m.version);
+    check_version(db)?;
     let current = user_version(db)?;
-    anyhow::ensure!(
-        current <= latest,
-        "Database schema version {current} comes from a newer Agent Hub \
-         (this build understands version {latest}). Upgrade Agent Hub or restore a backup."
-    );
 
     for m in migrations.iter().filter(|m| m.version > current) {
         // Immediate takes the write lock before the version re-check, so a
@@ -355,6 +361,7 @@ mod tests {
         let path = tmp.path().join("hub.db");
         let conn = Connection::open(&path).unwrap();
         conn.pragma_update(None, "user_version", 999_i64).unwrap();
+        conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
         drop(conn);
 
         let err = Store::open(&path).err().unwrap();
@@ -363,5 +370,13 @@ mod tests {
         let conn = Connection::open(&path).unwrap();
         assert_eq!(user_version(&conn).unwrap(), 999);
         assert!(table_names(&conn).is_empty(), "database was modified");
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            mode.to_uppercase(),
+            "DELETE",
+            "journal_mode was mutated before version check"
+        );
     }
 }

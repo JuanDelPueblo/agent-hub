@@ -31,7 +31,17 @@ impl std::fmt::Display for ServiceError {
 
 impl std::error::Error for ServiceError {}
 
-/// An error that bubbles out of the session or the store is a bad request.
+impl From<crate::store::StoreError> for ServiceError {
+    fn from(e: crate::store::StoreError) -> Self {
+        match e {
+            crate::store::StoreError::NotFound(m) => Self::NotFound(m),
+            crate::store::StoreError::Validation(m) => Self::Invalid(m),
+            crate::store::StoreError::Internal(e) => Self::Internal(e),
+        }
+    }
+}
+
+/// An error that bubbles out of the session is a bad request or conflict.
 /// The HTTP layer answered those with 400 before the service layer existed,
 /// and that contract is asserted by the integration tests.
 impl From<anyhow::Error> for ServiceError {

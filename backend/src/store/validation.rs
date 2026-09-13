@@ -1,31 +1,39 @@
 //! Input validation shared by the HTTP layer and the service layer.
-use anyhow::{bail, Context, Result};
+use super::{StoreError, StoreResult};
 use std::path::Path;
 
-pub fn validate_name(name: &str) -> Result<()> {
+pub fn validate_name(name: &str) -> StoreResult<()> {
     if name.trim().is_empty() || name.len() > 200 {
-        bail!("Name must contain 1–200 bytes")
+        return Err(StoreError::Validation(
+            "Name must contain 1–200 bytes".into(),
+        ));
     }
     Ok(())
 }
 
-pub fn validate_project_path(path: &str, roots: &[String]) -> Result<String> {
+pub fn validate_project_path(path: &str, roots: &[String]) -> StoreResult<String> {
     let input = Path::new(path);
     if !input.is_absolute() {
-        bail!("Project path must be absolute")
+        return Err(StoreError::Validation(
+            "Project path must be absolute".into(),
+        ));
     }
     let canonical = input
         .canonicalize()
-        .context("Project directory does not exist")?;
+        .map_err(|_| StoreError::Validation("Project directory does not exist".into()))?;
     if !canonical.is_dir() {
-        bail!("Project path must be a directory")
+        return Err(StoreError::Validation(
+            "Project path must be a directory".into(),
+        ));
     }
     if !roots
         .iter()
         .filter_map(|r| Path::new(r).canonicalize().ok())
         .any(|r| canonical.starts_with(r))
     {
-        bail!("Project directory is outside the configured project roots")
+        return Err(StoreError::Validation(
+            "Project directory is outside the configured project roots".into(),
+        ));
     }
     Ok(canonical.to_string_lossy().into_owned())
 }

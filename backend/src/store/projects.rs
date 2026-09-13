@@ -1,7 +1,7 @@
 //! Project rows. The row keeps the whole struct as a JSON document in `data`;
 //! only the identifier needs its own column.
 use super::validation::validate_name;
-use anyhow::{bail, Result};
+use super::{StoreError, StoreResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ const SELECT_WITH_COUNT: &str = "SELECT p.data, \
     (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_count \
     FROM projects p";
 
-pub(crate) fn new(name: String, path: String) -> Result<Project> {
+pub(crate) fn new(name: String, path: String) -> StoreResult<Project> {
     validate_name(&name)?;
     let now = chrono::Utc::now().to_rfc3339();
     Ok(Project {
@@ -34,23 +34,24 @@ pub(crate) fn new(name: String, path: String) -> Result<Project> {
     })
 }
 
-pub(crate) fn list(conn: &Connection) -> Result<Vec<Project>> {
+pub(crate) fn list(conn: &Connection) -> StoreResult<Vec<Project>> {
     let mut stmt = conn.prepare(&format!("{SELECT_WITH_COUNT} ORDER BY p.rowid"))?;
     let rows = stmt.query_map([], |r| {
         let data: String = r.get(0)?;
         let count: i64 = r.get(1)?;
         Ok((data, count as usize))
     })?;
-    rows.map(|r| {
+    let mut projects = Vec::new();
+    for r in rows {
         let (data, count) = r?;
         let mut p: Project = serde_json::from_str(&data)?;
         p.chat_count = count;
-        Ok(p)
-    })
-    .collect()
+        projects.push(p);
+    }
+    Ok(projects)
 }
 
-pub(crate) fn get(conn: &Connection, id: &str) -> Result<Project> {
+pub(crate) fn get(conn: &Connection, id: &str) -> StoreResult<Project> {
     let mut stmt = conn.prepare(&format!("{SELECT_WITH_COUNT} WHERE p.id = ?1"))?;
     let row = stmt
         .query_row(params![id], |r| {
@@ -65,11 +66,11 @@ pub(crate) fn get(conn: &Connection, id: &str) -> Result<Project> {
             p.chat_count = count;
             Ok(p)
         }
-        None => bail!("Project not found"),
+        None => Err(StoreError::NotFound("Project not found".into())),
     }
 }
 
-pub(crate) fn save(conn: &Connection, p: &Project) -> Result<()> {
+pub(crate) fn save(conn: &Connection, p: &Project) -> StoreResult<()> {
     conn.execute(
         "INSERT INTO projects (id, data) VALUES (?1, ?2) \
          ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -78,7 +79,10 @@ pub(crate) fn save(conn: &Connection, p: &Project) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn delete(conn: &Connection, id: &str) -> Result<()> {
-    conn.execute("DELETE FROM projects WHERE id=?1", [id])?;
+pub(crate) fn delete(conn: &Connection, id: &str) -> StoreResult<()> {
+    let affected = conn.execute("DELETE FROM projects WHERE id=?1", [id])?;
+    if affected == 0 {
+        return Err(StoreError::NotFound("Project not found".into()));
+    }
     Ok(())
 }

@@ -14,16 +14,61 @@ pub use chats::Chat;
 pub use projects::Project;
 pub use validation::{validate_name, validate_project_path};
 
-use anyhow::Result;
 use rusqlite::Connection;
 use std::{path::Path, sync::Mutex};
+
+#[derive(Debug)]
+pub enum StoreError {
+    NotFound(String),
+    Validation(String),
+    Internal(anyhow::Error),
+}
+
+pub type StoreResult<T> = std::result::Result<T, StoreError>;
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(m) | Self::Validation(m) => f.write_str(m),
+            Self::Internal(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for StoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Internal(e) => Some(e.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+impl From<rusqlite::Error> for StoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Internal(e.into())
+    }
+}
+
+impl From<serde_json::Error> for StoreError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Internal(e.into())
+    }
+}
+
+impl From<anyhow::Error> for StoreError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Internal(e)
+    }
+}
 
 pub struct Store(Mutex<Connection>);
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> StoreResult<Self> {
         let mut db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
+        migrations::check_version(&db)?;
         // Both pragmas must run outside a transaction. SQLite rejects
         // `journal_mode=WAL` inside one and silently ignores `foreign_keys`.
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
@@ -31,33 +76,33 @@ impl Store {
         Ok(Self(Mutex::new(db)))
     }
 
-    pub fn projects(&self) -> Result<Vec<Project>> {
+    pub fn projects(&self) -> StoreResult<Vec<Project>> {
         projects::list(&self.0.lock().unwrap())
     }
 
-    pub fn project(&self, id: &str) -> Result<Project> {
+    pub fn project(&self, id: &str) -> StoreResult<Project> {
         projects::get(&self.0.lock().unwrap(), id)
     }
 
-    pub fn save_project(&self, p: &Project) -> Result<()> {
+    pub fn save_project(&self, p: &Project) -> StoreResult<()> {
         projects::save(&self.0.lock().unwrap(), p)
     }
 
-    pub fn create_project(&self, name: String, path: String) -> Result<Project> {
+    pub fn create_project(&self, name: String, path: String) -> StoreResult<Project> {
         let p = projects::new(name, path)?;
         self.save_project(&p)?;
         Ok(p)
     }
 
-    pub fn delete_project(&self, id: &str) -> Result<()> {
+    pub fn delete_project(&self, id: &str) -> StoreResult<()> {
         projects::delete(&self.0.lock().unwrap(), id)
     }
 
-    pub fn chats(&self) -> Result<Vec<Chat>> {
+    pub fn chats(&self) -> StoreResult<Vec<Chat>> {
         chats::list(&self.0.lock().unwrap())
     }
 
-    pub fn chat(&self, id: &str) -> Result<Chat> {
+    pub fn chat(&self, id: &str) -> StoreResult<Chat> {
         chats::get(&self.0.lock().unwrap(), id)
     }
 
@@ -66,19 +111,19 @@ impl Store {
         project_id: String,
         agent: String,
         title: Option<String>,
-    ) -> Result<Chat> {
+    ) -> StoreResult<Chat> {
         let c = chats::new(project_id, agent, title)?;
         chats::insert(&self.0.lock().unwrap(), &c)?;
         Ok(c)
     }
 
     /// Read/modify/write under one lock so a config notification cannot overwrite a rename.
-    pub fn update_chat(&self, id: &str, edit: impl FnOnce(&mut Chat)) -> Result<Chat> {
+    pub fn update_chat(&self, id: &str, edit: impl FnOnce(&mut Chat)) -> StoreResult<Chat> {
         chats::update(&self.0.lock().unwrap(), id, edit)
     }
 
     /// A chat and its events go together, so one transaction covers both tables.
-    pub fn delete_chat(&self, id: &str) -> Result<()> {
+    pub fn delete_chat(&self, id: &str) -> StoreResult<()> {
         let mut db = self.0.lock().unwrap();
         let tx = db.transaction()?;
         chats::delete(&tx, id)?;
@@ -87,11 +132,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn save_event(&self, event: &crate::events::SessionEvent) -> Result<()> {
+    pub fn save_event(&self, event: &crate::events::SessionEvent) -> StoreResult<()> {
         events::save(&self.0.lock().unwrap(), event)
     }
 
-    pub fn events(&self) -> Result<Vec<crate::events::SessionEvent>> {
+    pub fn events(&self) -> StoreResult<Vec<crate::events::SessionEvent>> {
         events::recent(&self.0.lock().unwrap())
     }
 }
