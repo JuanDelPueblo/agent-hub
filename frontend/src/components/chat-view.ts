@@ -250,9 +250,8 @@ export class ChatView extends LitElement {
                       </div>
                     </div>
                     <chat-config
-                      .chatId=${chat.id}
+                      .chat=${chat}
                       .options=${configOptions}
-                      .policy=${chat.permission_policy}
                     ></chat-config>
                   </div>
                 </div>
@@ -283,9 +282,8 @@ export class ChatView extends LitElement {
         </div>
         <div class="side-sheet-body">
           <chat-config
-            .chatId=${chat.id}
+            .chat=${chat}
             .options=${configOptions}
-            .policy=${chat.permission_policy}
           ></chat-config>
         </div>
       </div>

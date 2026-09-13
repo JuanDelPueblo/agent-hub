@@ -1,5 +1,5 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { LitElement, html, css, PropertyValues } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
 import '@material/web/dialog/dialog.js';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/text-button.js';
@@ -90,7 +90,7 @@ export class ProjectDialog extends LitElement {
     }
   `;
 
-  @state() public isOpen = false;
+  @property({ type: Boolean }) public open = false;
   @state() private mode: 'folder' | 'clone' = 'folder';
 
   // Folder mode state
@@ -104,15 +104,35 @@ export class ProjectDialog extends LitElement {
   @state() private isCloning = false;
   @state() private errorMessage = '';
 
+  protected updated(changedProperties: PropertyValues) {
+    if (changedProperties.has('open') && this.open) {
+      this.errorMessage = '';
+      this.isCloning = false;
+      this.mode = 'folder';
+      this.selectedPath = '';
+      this.projectName = '';
+      this.repoUrl = '';
+      this.cloneParentPath = '';
+      this.cloneProjectName = '';
+    }
+  }
+
   public show() {
-    this.isOpen = true;
-    this.errorMessage = '';
-    this.isCloning = false;
-    this.mode = 'folder';
+    this.open = true;
   }
 
   public close() {
-    this.isOpen = false;
+    this.handleClose();
+  }
+
+  private handleClose() {
+    this.open = false;
+    this.dispatchEvent(
+      new CustomEvent('dialog-closed', { bubbles: true, composed: true })
+    );
+    this.dispatchEvent(
+      new CustomEvent('close', { bubbles: true, composed: true })
+    );
   }
 
   private handleFolderBrowsed(e: CustomEvent) {
@@ -145,7 +165,7 @@ export class ProjectDialog extends LitElement {
       this.errorMessage = '';
       const p = await api.createProject(this.projectName, this.selectedPath);
       await store.loadProjects();
-      this.close();
+      this.handleClose();
       router.navigate(`/projects/${p.id}`);
     } catch (e: any) {
       this.errorMessage = e?.message || 'Failed to create project';
@@ -158,16 +178,16 @@ export class ProjectDialog extends LitElement {
       return;
     }
 
-    this.isCloning = true;
-    this.errorMessage = '';
     try {
+      this.errorMessage = '';
+      this.isCloning = true;
       const p = await api.cloneProject({
         url: this.repoUrl,
         parent_path: this.cloneParentPath,
         name: this.cloneProjectName || undefined,
       });
       await store.loadProjects();
-      this.close();
+      this.handleClose();
       router.navigate(`/projects/${p.id}`);
     } catch (e: any) {
       this.errorMessage = e?.message || 'Failed to clone repository';
@@ -178,7 +198,7 @@ export class ProjectDialog extends LitElement {
 
   render() {
     return html`
-      <md-dialog ?open=${this.isOpen} @closed=${() => (this.isOpen = false)}>
+      <md-dialog ?open=${this.open} @closed=${this.handleClose}>
         <div slot="headline">
           <span>New Project</span>
         </div>

@@ -297,6 +297,91 @@ pub fn sanitize_credentials(msg: &str) -> String {
     out
 }
 
+pub fn validate_clone_destination_name(name: &str) -> anyhow::Result<()> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || name.len() > 200 {
+        anyhow::bail!("Clone destination name must contain 1–200 bytes");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("Clone destination name cannot contain path separators");
+    }
+    if trimmed == "." || trimmed == ".." {
+        anyhow::bail!("Clone destination name cannot be '.' or '..'");
+    }
+    let p = std::path::Path::new(name);
+    if p.is_absolute() {
+        anyhow::bail!("Clone destination name cannot be an absolute path");
+    }
+    let mut components = p.components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => anyhow::bail!("Clone destination name must be a single filesystem component"),
+    }
+}
+
+pub async fn run_command_with_timeout(
+    mut child: tokio::process::Child,
+    timeout: std::time::Duration,
+    cleanup_path: Option<&std::path::Path>,
+) -> std::result::Result<std::process::Output, ApiError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let stdout_fut = async {
+        let mut out = Vec::new();
+        if let Some(mut r) = stdout_pipe.take() {
+            let _ = r.read_to_end(&mut out).await;
+        }
+        out
+    };
+    let stderr_fut = async {
+        let mut err = Vec::new();
+        if let Some(mut r) = stderr_pipe.take() {
+            let _ = r.read_to_end(&mut err).await;
+        }
+        err
+    };
+
+    let wait_fut = async {
+        let (status_res, stdout, stderr) = tokio::join!(child.wait(), stdout_fut, stderr_fut);
+        let status = status_res?;
+        Ok::<_, std::io::Error>(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    };
+
+    match tokio::time::timeout(timeout, wait_fut).await {
+        Ok(res) => res.map_err(|e| {
+            if let Some(path) = cleanup_path {
+                if path.exists() {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+            ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to execute command: {e}"),
+            )
+        }),
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            if let Some(path) = cleanup_path {
+                if path.exists() {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+            Err(ApiError(
+                StatusCode::GATEWAY_TIMEOUT,
+                "Git clone timed out after 5 minutes".into(),
+            ))
+        }
+    }
+}
+
 pub async fn clone_project(
     State(s): State<AppState>,
     Json(input): Json<CloneProjectInput>,
@@ -308,9 +393,31 @@ pub async fn clone_project(
         None => derive_repo_name(&input.url)
             .ok_or_else(|| anyhow::anyhow!("Could not derive project name from repository URL"))?,
     };
-    validate_name(&name)?;
+    validate_clone_destination_name(&name)?;
 
-    let dest = std::path::Path::new(&parent_path).join(&name);
+    let parent = std::path::Path::new(&parent_path).canonicalize()?;
+    let dest = parent.join(&name);
+
+    if !dest.starts_with(&parent) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Clone destination path escapes selected parent directory".into(),
+        ));
+    }
+    let beneath_roots = s
+        .config
+        .web
+        .project_roots
+        .iter()
+        .filter_map(|r| std::path::Path::new(r).canonicalize().ok())
+        .any(|r| dest.starts_with(&r));
+    if !beneath_roots {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Clone destination path is outside configured project roots".into(),
+        ));
+    }
+
     if dest.exists() {
         return Err(ApiError(
             StatusCode::CONFLICT,
@@ -323,29 +430,20 @@ pub async fn clone_project(
         .arg("--")
         .arg(&input.url)
         .arg(&dest)
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .kill_on_drop(true);
 
-    let output = match tokio::time::timeout(std::time::Duration::from_secs(300), cmd.output()).await
-    {
-        Ok(res) => res.map_err(|e| {
-            if dest.exists() {
-                let _ = std::fs::remove_dir_all(&dest);
-            }
-            ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to execute git: {e}"),
-            )
-        })?,
-        Err(_) => {
-            if dest.exists() {
-                let _ = std::fs::remove_dir_all(&dest);
-            }
-            return Err(ApiError(
-                StatusCode::GATEWAY_TIMEOUT,
-                "Git clone timed out after 5 minutes".into(),
-            ));
-        }
-    };
+    let child = cmd.spawn().map_err(|e| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to execute git: {e}"),
+        )
+    })?;
+
+    let output =
+        run_command_with_timeout(child, std::time::Duration::from_secs(300), Some(&dest)).await?;
 
     if !output.status.success() {
         if dest.exists() {

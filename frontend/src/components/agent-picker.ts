@@ -70,21 +70,36 @@ export class AgentPicker extends LitElement {
   `;
 
   @property({ type: String }) projectId = '';
-  @state() public isOpen = false;
+  @property({ type: Boolean }) public open = false;
   @state() private selectedAgent = '';
   @state() private creating = false;
   @state() private errorMessage = '';
 
+  protected updated(changedProperties: any) {
+    if (changedProperties.has('open') && this.open) {
+      this.selectedAgent = store.agents[0] || 'codex';
+      this.creating = false;
+      this.errorMessage = '';
+    }
+  }
+
   public show(projectId?: string) {
     if (projectId) this.projectId = projectId;
-    this.isOpen = true;
-    this.selectedAgent = store.agents[0] || 'codex';
-    this.creating = false;
-    this.errorMessage = '';
+    this.open = true;
   }
 
   public close() {
-    this.isOpen = false;
+    this.handleClose();
+  }
+
+  private handleClose() {
+    this.open = false;
+    this.dispatchEvent(
+      new CustomEvent('dialog-closed', { bubbles: true, composed: true })
+    );
+    this.dispatchEvent(
+      new CustomEvent('close', { bubbles: true, composed: true })
+    );
   }
 
   private async handleCreate() {
@@ -95,7 +110,7 @@ export class AgentPicker extends LitElement {
     try {
       const chat = await api.createChat(this.projectId, this.selectedAgent);
       await store.loadChats(this.projectId);
-      this.close();
+      this.handleClose();
       router.navigate(`/projects/${this.projectId}/chats/${chat.id}`);
     } catch (e: any) {
       this.errorMessage = e?.message || 'Failed to create chat';
@@ -115,7 +130,7 @@ export class AgentPicker extends LitElement {
 
   render() {
     return html`
-      <md-dialog ?open=${this.isOpen} @closed=${() => (this.isOpen = false)}>
+      <md-dialog ?open=${this.open} @closed=${this.handleClose}>
         <div slot="headline">Select Agent</div>
 
         <div slot="content">
@@ -148,7 +163,7 @@ export class AgentPicker extends LitElement {
         </div>
 
         <div slot="actions">
-          <md-text-button @click=${this.close} ?disabled=${this.creating}>
+          <md-text-button @click=${this.handleClose} ?disabled=${this.creating}>
             Cancel
           </md-text-button>
           <md-filled-button

@@ -137,12 +137,8 @@ export interface TurnEntryPermission {
   id: number;
   type: 'permission_request';
   requestId: string;
-  toolCall: {
-    toolCallId?: string;
-    title?: string;
-    kind?: string;
-  };
-  options: PermissionOption[];
+  method: string;
+  description: string;
   responded?: boolean;
   decision?: string;
 }

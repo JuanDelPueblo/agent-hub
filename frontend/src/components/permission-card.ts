@@ -89,23 +89,23 @@ export class PermissionCard extends LitElement {
     }
   `;
 
-  private handleRespond(optionId: string) {
+  private handleRespond(granted: boolean) {
     if (!this.chatId || !this.permission.requestId) return;
-    store.respondPermission(this.chatId, this.permission.requestId, optionId);
+    store.respondPermission(this.chatId, this.permission.requestId, granted);
   }
 
   render() {
     if (!this.permission) return html``;
 
-    const { toolCall, options, responded, decision } = this.permission;
-    const title = toolCall?.title || 'Action requested';
-    const kind = toolCall?.kind ? ` (${toolCall.kind})` : '';
+    const { method, description, responded, decision } = this.permission;
+    const title = description || method || 'Action requested';
+    const methodDisplay = method ? ` (${method})` : '';
 
     return html`
       <div class="card ${responded ? 'responded' : ''}">
         <div class="header">
           <span class="icon">shield_person</span>
-          <span>Permission Request${kind}</span>
+          <span>Permission Request${methodDisplay}</span>
         </div>
 
         <div class="tool-details">${title}</div>
@@ -119,26 +119,16 @@ export class PermissionCard extends LitElement {
             `
           : html`
               <div class="actions">
-                ${(options || []).map((opt) => {
-                  const isAllow = opt.kind.startsWith('allow');
-                  if (isAllow) {
-                    return html`
-                      <md-filled-button
-                        @click=${() => this.handleRespond(opt.optionId)}
-                      >
-                        ${opt.name}
-                      </md-filled-button>
-                    `;
-                  } else {
-                    return html`
-                      <md-outlined-button
-                        @click=${() => this.handleRespond(opt.optionId)}
-                      >
-                        ${opt.name}
-                      </md-outlined-button>
-                    `;
-                  }
-                })}
+                <md-outlined-button
+                  @click=${() => this.handleRespond(false)}
+                >
+                  Deny
+                </md-outlined-button>
+                <md-filled-button
+                  @click=${() => this.handleRespond(true)}
+                >
+                  Allow
+                </md-filled-button>
               </div>
             `}
       </div>

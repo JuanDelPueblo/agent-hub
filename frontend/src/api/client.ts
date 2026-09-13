@@ -1,15 +1,18 @@
-import {
+import type {
   Project,
   Chat,
   ConfigOption,
   DirectoryListing,
   CloneProjectInput,
   PermissionPolicy,
-} from './types';
+} from './types.ts';
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  public status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
     this.name = 'ApiError';
   }
 }
@@ -136,16 +139,13 @@ export const api = {
   async respondPermission(
     chatId: string,
     id: string,
-    optionId: string
+    granted: boolean
   ): Promise<void> {
     await request(`/api/chats/${chatId}/permission`, {
       method: 'POST',
       body: JSON.stringify({
         id,
-        outcome: {
-          outcome: 'selected',
-          optionId,
-        },
+        granted,
       }),
     });
   },

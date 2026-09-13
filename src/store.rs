@@ -12,6 +12,8 @@ pub struct Project {
     pub path: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub chat_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,16 +48,43 @@ impl Store {
 
     pub fn projects(&self) -> Result<Vec<Project>> {
         let db = self.0.lock().unwrap();
-        let mut stmt = db.prepare("SELECT data FROM projects ORDER BY rowid")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+        let mut stmt = db.prepare(
+            "SELECT p.data, (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_count FROM projects p ORDER BY p.rowid",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let data: String = r.get(0)?;
+            let count: i64 = r.get(1)?;
+            Ok((data, count as usize))
+        })?;
+        rows.map(|r| {
+            let (data, count) = r?;
+            let mut p: Project = serde_json::from_str(&data)?;
+            p.chat_count = count;
+            Ok(p)
+        })
+        .collect()
     }
 
     pub fn project(&self, id: &str) -> Result<Project> {
-        self.projects()?
-            .into_iter()
-            .find(|p| p.id == id)
-            .context("Project not found")
+        let db = self.0.lock().unwrap();
+        let mut stmt = db.prepare(
+            "SELECT p.data, (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_count FROM projects p WHERE p.id = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![id], |r| {
+                let data: String = r.get(0)?;
+                let count: i64 = r.get(1)?;
+                Ok((data, count as usize))
+            })
+            .optional()?;
+        match row {
+            Some((data, count)) => {
+                let mut p: Project = serde_json::from_str(&data)?;
+                p.chat_count = count;
+                Ok(p)
+            }
+            None => bail!("Project not found"),
+        }
     }
 
     pub fn save_project(&self, p: &Project) -> Result<()> {
@@ -75,6 +104,7 @@ impl Store {
             path,
             created_at: now.clone(),
             updated_at: now,
+            chat_count: 0,
         };
         self.save_project(&p)?;
         Ok(p)

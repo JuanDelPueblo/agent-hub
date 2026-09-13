@@ -1,4 +1,4 @@
-import { SessionEvent } from './types';
+import type { SessionEvent } from './types.ts';
 
 export type EventCallback = (event: SessionEvent) => void;
 export type StatusCallback = (status: 'connected' | 'connecting' | 'disconnected') => void;
@@ -32,7 +32,7 @@ export class WebSocketClient {
   }
 
   private connect() {
-    if (this.isDestroyed) return;
+    if (this.isDestroyed || typeof window === 'undefined') return;
     this.notifyStatus('connecting');
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

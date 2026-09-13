@@ -205,21 +205,36 @@ export class EventReducer {
         id: this.nextId++,
         type: 'permission_request',
         requestId: p.id || '',
-        toolCall: p.toolCall || {},
-        options: p.options || [],
+        method: p.method || '',
+        description: p.description || '',
         responded: false,
       });
       return;
     }
 
     if (p.type === 'permission_response') {
-      const perm = turn.entries
-        .slice()
-        .reverse()
-        .find((e): e is TurnEntryPermission => e.type === 'permission_request');
-      if (perm) {
-        perm.responded = true;
-        perm.decision = p.outcome?.outcome || 'responded';
+      const permId = p.id;
+      const markEntry = (entries: TurnEntry[]): boolean => {
+        for (const entry of entries) {
+          if (
+            entry.type === 'permission_request' &&
+            (!permId || entry.requestId === permId)
+          ) {
+            entry.responded = true;
+            entry.decision = p.granted ? 'Allowed' : 'Denied';
+            return true;
+          }
+        }
+        return false;
+      };
+
+      if (turn && markEntry(turn.entries)) {
+        return;
+      }
+      for (const item of this.items) {
+        if (item.type === 'turn' && markEntry(item.entries)) {
+          return;
+        }
       }
       return;
     }

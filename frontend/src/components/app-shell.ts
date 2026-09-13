@@ -2,13 +2,18 @@ import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { store } from '../state/app-state';
 import { router } from '../router';
+import { Project } from '../api/types';
 import './navigation-drawer';
 import './project-list';
 import './chat-view';
 import './project-dialog';
 import './agent-picker';
+import './edit-project-dialog';
+import './delete-project-dialog';
 import '@material/web/iconbutton/icon-button.js';
 import '@material/web/button/filled-button.js';
+import '@material/web/menu/menu.js';
+import '@material/web/menu/menu-item.js';
 
 @customElement('app-shell')
 export class AppShell extends LitElement {
@@ -17,6 +22,21 @@ export class AppShell extends LitElement {
 
   @state()
   private isAgentPickerOpen = false;
+
+  @state()
+  private isProjectMenuOpen = false;
+
+  @state()
+  private editingProject: Project | null = null;
+
+  @state()
+  private isEditDialogOpen = false;
+
+  @state()
+  private deletingProject: Project | null = null;
+
+  @state()
+  private isDeleteDialogOpen = false;
 
   private unsubscribeStore?: () => void;
 
@@ -139,6 +159,97 @@ export class AppShell extends LitElement {
       gap: 16px;
     }
 
+    .project-title {
+      margin: 0 0 6px;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .project-path {
+      font-size: 0.875rem;
+      color: var(--md-sys-color-outline);
+      font-family: monospace;
+    }
+
+    .project-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-heading {
+      font-size: 1.125rem;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    .chats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .chat-card {
+      background-color: var(--md-sys-color-surface-container-low);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: 12px;
+      padding: 16px;
+      cursor: pointer;
+      min-height: 48px;
+      box-sizing: border-box;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+
+    .chat-card:hover {
+      border-color: var(--md-sys-color-primary);
+      transform: translateY(-1px);
+    }
+
+    .chat-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .chat-agent-badge {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background-color: var(--md-sys-color-secondary-container);
+      color: var(--md-sys-color-on-secondary-container);
+      font-weight: 500;
+    }
+
+    .chat-state-label {
+      font-size: 0.75rem;
+      color: var(--md-sys-color-outline);
+    }
+
+    .chat-card-title {
+      font-weight: 600;
+      font-size: 0.9375rem;
+      color: var(--md-sys-color-on-surface);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chats-empty {
+      grid-column: 1 / -1;
+      padding: 32px;
+      text-align: center;
+      color: var(--md-sys-color-outline);
+    }
+
+    .danger-action {
+      color: var(--md-sys-color-error);
+    }
+
+    .menu-anchor {
+      position: relative;
+    }
+
     .icon {
       font-family: 'Material Symbols Outlined';
       font-size: 24px;
@@ -188,52 +299,80 @@ export class AppShell extends LitElement {
         <div class="project-overview">
           <div class="project-hero">
             <div>
-              <h1 style="margin: 0 0 6px; font-size: 1.5rem;">
+              <h1 class="project-title">
                 ${activeProject.name}
               </h1>
-              <div
-                style="font-size: 0.875rem; color: var(--md-sys-color-outline); font-family: monospace;"
-              >
+              <div class="project-path">
                 ${activeProject.path}
               </div>
             </div>
-            <md-filled-button @click=${this.openAgentPicker}>
-              <span class="icon" slot="icon">add_comment</span>
-              New Chat
-            </md-filled-button>
+            <div class="project-actions">
+              <md-filled-button @click=${this.openAgentPicker}>
+                <span class="icon" slot="icon">add_comment</span>
+                New Chat
+              </md-filled-button>
+              <div class="menu-anchor">
+                <md-icon-button
+                  id="project-overview-menu-trigger"
+                  @click=${() =>
+                    (this.isProjectMenuOpen = !this.isProjectMenuOpen)}
+                >
+                  <span class="icon">more_vert</span>
+                </md-icon-button>
+                <md-menu
+                  anchor="project-overview-menu-trigger"
+                  .open=${this.isProjectMenuOpen}
+                  @closed=${() => (this.isProjectMenuOpen = false)}
+                >
+                  <md-menu-item
+                    @click=${() => {
+                      this.editingProject = activeProject;
+                      this.isEditDialogOpen = true;
+                      this.isProjectMenuOpen = false;
+                    }}
+                  >
+                    <div slot="headline">Edit Project</div>
+                  </md-menu-item>
+                  <md-menu-item
+                    @click=${() => {
+                      this.deletingProject = activeProject;
+                      this.isDeleteDialogOpen = true;
+                      this.isProjectMenuOpen = false;
+                    }}
+                  >
+                    <div
+                      slot="headline"
+                      class="danger-action"
+                    >
+                      Delete Project
+                    </div>
+                  </md-menu-item>
+                </md-menu>
+              </div>
+            </div>
           </div>
 
-          <h2 style="font-size: 1.125rem; margin-bottom: 16px;">
+          <h2 class="section-heading">
             Chats in this project (${chats.length})
           </h2>
 
-          <div
-            style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;"
-          >
+          <div class="chats-grid">
             ${chats.map(
               (c) => html`
                 <div
-                  style="background-color: var(--md-sys-color-surface-container-low); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 12px; padding: 16px; cursor: pointer;"
+                  class="chat-card"
                   @click=${() =>
                     router.navigate(`/projects/${c.project_id}/chats/${c.id}`)}
                 >
-                  <div
-                    style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;"
-                  >
-                    <span
-                      style="font-size: 0.75rem; padding: 2px 8px; border-radius: 6px; background-color: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-weight: 500;"
-                    >
+                  <div class="chat-card-header">
+                    <span class="chat-agent-badge">
                       ${c.agent}
                     </span>
-                    <span
-                      style="font-size: 0.75rem; color: var(--md-sys-color-outline);"
-                    >
+                    <span class="chat-state-label">
                       ${c.process_state || 'STOPPED'}
                     </span>
                   </div>
-                  <div
-                    style="font-weight: 600; font-size: 0.9375rem; color: var(--md-sys-color-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
-                  >
+                  <div class="chat-card-title">
                     ${c.title || 'Untitled chat'}
                   </div>
                 </div>
@@ -241,9 +380,7 @@ export class AppShell extends LitElement {
             )}
             ${chats.length === 0
               ? html`
-                  <div
-                    style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--md-sys-color-outline);"
-                  >
+                  <div class="chats-empty">
                     No chats in this project yet. Start a new chat with an
                     agent!
                   </div>
@@ -297,6 +434,7 @@ export class AppShell extends LitElement {
       <project-dialog
         .open=${this.isProjectDialogOpen}
         @dialog-closed=${() => (this.isProjectDialogOpen = false)}
+        @close=${() => (this.isProjectDialogOpen = false)}
       ></project-dialog>
 
       <!-- New Chat Agent Picker Dialog -->
@@ -304,7 +442,24 @@ export class AppShell extends LitElement {
         .open=${this.isAgentPickerOpen}
         .projectId=${store.activeProjectId || ''}
         @dialog-closed=${() => (this.isAgentPickerOpen = false)}
+        @close=${() => (this.isAgentPickerOpen = false)}
       ></agent-picker>
+
+      <!-- Edit Project Dialog -->
+      <edit-project-dialog
+        .open=${this.isEditDialogOpen}
+        .project=${this.editingProject}
+        @dialog-closed=${() => (this.isEditDialogOpen = false)}
+        @close=${() => (this.isEditDialogOpen = false)}
+      ></edit-project-dialog>
+
+      <!-- Delete Project Dialog -->
+      <delete-project-dialog
+        .open=${this.isDeleteDialogOpen}
+        .project=${this.deletingProject}
+        @dialog-closed=${() => (this.isDeleteDialogOpen = false)}
+        @close=${() => (this.isDeleteDialogOpen = false)}
+      ></delete-project-dialog>
     `;
   }
 }

@@ -196,6 +196,17 @@ async fn api_validation_and_chat_identity() {
     let (_, b) = call(&app, "POST", &path, json!({"agent":"codex","title":"b"})).await;
     assert_ne!(a["id"], b["id"]);
     assert_eq!(a["permission_policy"], "ask");
+
+    let (list_status, list) = call(&app, "GET", "/api/projects", json!({})).await;
+    assert_eq!(list_status, 200);
+    let p_item = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == p["id"])
+        .unwrap();
+    assert_eq!(p_item["chat_count"], 2);
+
     let response = app
         .oneshot(
             Request::builder()
@@ -428,6 +439,90 @@ async fn git_clone_validation_and_behavior() {
     let count_after = mgr.store.as_ref().unwrap().projects().unwrap().len();
     assert_eq!(count_before, count_after);
 
+    // 5. Destination name traversal validation unit checks
+    use agent_hub::web::validate_clone_destination_name;
+    assert!(validate_clone_destination_name("valid-name").is_ok());
+    assert!(validate_clone_destination_name("my_repo_123").is_ok());
+    assert!(validate_clone_destination_name("../outside").is_err());
+    assert!(validate_clone_destination_name("../../foo").is_err());
+    assert!(validate_clone_destination_name("/foo").is_err());
+    assert!(validate_clone_destination_name("foo/bar").is_err());
+    assert!(validate_clone_destination_name("foo\\bar").is_err());
+    assert!(validate_clone_destination_name(".").is_err());
+    assert!(validate_clone_destination_name("..").is_err());
+    assert!(validate_clone_destination_name("").is_err());
+    assert!(validate_clone_destination_name("   ").is_err());
+
+    // 6. Path traversal and absolute path attempts via clone endpoint rejected
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/repo.git",
+            "parent_path": root.display().to_string(),
+            "name": "../outside",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/repo.git",
+            "parent_path": root.display().to_string(),
+            "name": "/foo",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/repo.git",
+            "parent_path": root.display().to_string(),
+            "name": "foo/bar",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    let (status, _) = post(
+        &app,
+        "/api/projects/clone",
+        json!({
+            "url": "https://github.com/example/repo.git",
+            "parent_path": root.display().to_string(),
+            "name": "..",
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // 7. Process timeout kills, waits/reaps, cleans up destination, and does not create Project
+    let mut sleep_cmd = tokio::process::Command::new("python3");
+    sleep_cmd
+        .arg("-c")
+        .arg("import time; time.sleep(10)")
+        .kill_on_drop(true);
+    let child = sleep_cmd.spawn().unwrap();
+    let dest_dir = root.join("timed_out_destination");
+    std::fs::create_dir_all(&dest_dir).unwrap();
+    assert!(dest_dir.exists());
+
+    let res =
+        agent_hub::web::run_command_with_timeout(child, Duration::from_millis(50), Some(&dest_dir))
+            .await;
+    assert!(res.is_err());
+    assert!(!dest_dir.exists());
+    assert_eq!(
+        mgr.store.as_ref().unwrap().projects().unwrap().len(),
+        count_before
+    );
+
     mgr.shutdown_all().await;
 }
 
@@ -555,6 +650,89 @@ async fn acp_titles_and_lifecycle() {
         .filter(|e| matches!(e.payload, EventPayload::MetadataChanged {}))
         .collect();
     assert!(!meta_events.is_empty());
+
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn http_permission_endpoint_accepts_frontend_payload() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let mgr = manager(&root, false);
+    let mut config = Config::default();
+    config.web.project_roots = vec![root.display().to_string()];
+    let app = router(AppState {
+        session_manager: mgr.clone(),
+        config: Arc::new(config),
+        server_port: 8765,
+    });
+
+    let db = mgr.store.as_ref().unwrap();
+    let project = db
+        .create_project("perm-test".into(), root.display().to_string())
+        .unwrap();
+    let chat = db
+        .create_chat(project.id, "codex".into(), Some("perm-chat".into()))
+        .unwrap();
+    let session = mgr.get_by_id(&chat.id).await.unwrap();
+
+    let mut events = mgr.event_log().subscribe();
+    let prompt_task = {
+        let session = session.clone();
+        tokio::spawn(async move { session.ask("permission".into(), None).await })
+    };
+
+    let perm_id = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let EventPayload::PermissionRequest { id, .. } = events.recv().await.unwrap().payload
+            {
+                break id;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    // Call HTTP permission endpoint with exact frontend payload: {"id": "<id>", "granted": true}
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/chats/{}/permission", chat.id))
+        .header("host", "127.0.0.1:8765")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": perm_id,
+                "granted": true
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let body_bytes = to_bytes(resp.into_body(), 100_000).await.unwrap();
+    let resp_json: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(resp_json["success"], true);
+
+    // Prompt finishes successfully because permission was granted
+    assert_eq!(prompt_task.await.unwrap().unwrap(), "yes");
+
+    // Second response to already handled perm_id returns 409 CONFLICT
+    let req_stale = Request::builder()
+        .method("POST")
+        .uri(format!("/api/chats/{}/permission", chat.id))
+        .header("host", "127.0.0.1:8765")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": perm_id,
+                "granted": true
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let resp_stale = app.oneshot(req_stale).await.unwrap();
+    assert_eq!(resp_stale.status(), axum::http::StatusCode::CONFLICT);
 
     mgr.shutdown_all().await;
 }

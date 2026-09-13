@@ -7,10 +7,20 @@ import '@material/web/fab/fab.js';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/outlined-button.js';
 import '@material/web/iconbutton/icon-button.js';
+import '@material/web/menu/menu.js';
+import '@material/web/menu/menu-item.js';
+import './edit-project-dialog';
+import './delete-project-dialog';
 
 @customElement('project-list')
 export class ProjectList extends LitElement {
   private unsubscribeStore?: () => void;
+
+  @state() private openMenuId: string | null = null;
+  @state() private editingProject: Project | null = null;
+  @state() private isEditDialogOpen = false;
+  @state() private deletingProject: Project | null = null;
+  @state() private isDeleteDialogOpen = false;
 
   static styles = css`
     :host {
@@ -63,6 +73,7 @@ export class ProjectList extends LitElement {
       justify-content: space-between;
       cursor: pointer;
       transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+      position: relative;
     }
 
     .project-card:hover {
@@ -114,6 +125,10 @@ export class ProjectList extends LitElement {
       font-family: monospace;
     }
 
+    .menu-anchor {
+      position: relative;
+    }
+
     .card-meta {
       display: flex;
       align-items: center;
@@ -148,8 +163,8 @@ export class ProjectList extends LitElement {
       width: 64px;
       height: 64px;
       border-radius: 50%;
-      background-color: var(--md-sys-color-primary-container);
-      color: var(--md-sys-color-on-primary-container);
+      background-color: var(--md-sys-color-surface-container-high);
+      color: var(--md-sys-color-primary);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -168,14 +183,24 @@ export class ProjectList extends LitElement {
       color: var(--md-sys-color-on-surface-variant);
       max-width: 440px;
       margin: 0 0 24px;
-      line-height: 1.5;
+      line-height: 1.4;
     }
 
     .fab-container {
       position: fixed;
       bottom: 24px;
       right: 24px;
-      z-index: 50;
+      z-index: 10;
+      display: none;
+    }
+
+    @media (max-width: 600px) {
+      .fab-container {
+        display: block;
+      }
+      .header md-filled-button {
+        display: none;
+      }
     }
 
     .icon {
@@ -184,15 +209,6 @@ export class ProjectList extends LitElement {
       font-style: normal;
       font-weight: normal;
       line-height: 1;
-    }
-
-    @media (max-width: 599px) {
-      :host {
-        padding: 16px;
-      }
-      .grid {
-        grid-template-columns: 1fr;
-      }
     }
   `;
 
@@ -257,6 +273,8 @@ export class ProjectList extends LitElement {
               <div class="grid">
                 ${projects.map((p) => {
                   const chats = chatsByProject[p.id] || [];
+                  const count =
+                    p.chat_count !== undefined ? p.chat_count : chats.length;
                   return html`
                     <div
                       class="project-card"
@@ -272,12 +290,54 @@ export class ProjectList extends LitElement {
                             ${p.path}
                           </div>
                         </div>
+                        <div
+                          class="menu-anchor"
+                          @click=${(e: Event) => e.stopPropagation()}
+                        >
+                          <md-icon-button
+                            id="menu-trigger-${p.id}"
+                            @click=${() =>
+                              (this.openMenuId =
+                                this.openMenuId === p.id ? null : p.id)}
+                          >
+                            <span class="icon">more_vert</span>
+                          </md-icon-button>
+                          <md-menu
+                            anchor="menu-trigger-${p.id}"
+                            .open=${this.openMenuId === p.id}
+                            @closed=${() => (this.openMenuId = null)}
+                          >
+                            <md-menu-item
+                              @click=${() => {
+                                this.editingProject = p;
+                                this.isEditDialogOpen = true;
+                                this.openMenuId = null;
+                              }}
+                            >
+                              <div slot="headline">Edit Project</div>
+                            </md-menu-item>
+                            <md-menu-item
+                              @click=${() => {
+                                this.deletingProject = p;
+                                this.isDeleteDialogOpen = true;
+                                this.openMenuId = null;
+                              }}
+                            >
+                              <div
+                                slot="headline"
+                                style="color: var(--md-sys-color-error)"
+                              >
+                                Delete Project
+                              </div>
+                            </md-menu-item>
+                          </md-menu>
+                        </div>
                       </div>
 
                       <div class="card-meta">
                         <span class="chat-count">
                           <span class="icon" style="font-size: 16px;">chat</span>
-                          ${chats.length} chat${chats.length === 1 ? '' : 's'}
+                          ${count} chat${count === 1 ? '' : 's'}
                         </span>
                         <span style="font-size: 0.75rem; color: var(--md-sys-color-outline)">
                           ${new Date(p.updated_at || p.created_at).toLocaleDateString()}
@@ -298,6 +358,22 @@ export class ProjectList extends LitElement {
           <span class="icon" slot="icon">add</span>
         </md-fab>
       </div>
+
+      <!-- Edit Project Dialog -->
+      <edit-project-dialog
+        .open=${this.isEditDialogOpen}
+        .project=${this.editingProject}
+        @dialog-closed=${() => (this.isEditDialogOpen = false)}
+        @close=${() => (this.isEditDialogOpen = false)}
+      ></edit-project-dialog>
+
+      <!-- Delete Project Dialog -->
+      <delete-project-dialog
+        .open=${this.isDeleteDialogOpen}
+        .project=${this.deletingProject}
+        @dialog-closed=${() => (this.isDeleteDialogOpen = false)}
+        @close=${() => (this.isDeleteDialogOpen = false)}
+      ></delete-project-dialog>
     `;
   }
 }

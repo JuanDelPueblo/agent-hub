@@ -135,6 +135,8 @@ export class NavigationDrawer extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 8px 12px;
+      min-height: 48px;
+      box-sizing: border-box;
       border-radius: 8px;
       cursor: pointer;
       color: var(--md-sys-color-on-surface);

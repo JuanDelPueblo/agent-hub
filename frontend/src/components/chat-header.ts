@@ -28,6 +28,9 @@ export class ChatHeader extends LitElement {
   @state()
   private isMenuOpen = false;
 
+  @state()
+  private isDeleteDialogOpen = false;
+
   static styles = css`
     :host {
       display: block;
@@ -36,6 +39,11 @@ export class ChatHeader extends LitElement {
       padding: 8px 16px;
       height: 64px;
       box-sizing: border-box;
+    }
+
+    .delete-btn {
+      --md-filled-button-container-color: var(--md-sys-color-error);
+      --md-filled-button-label-text-color: var(--md-sys-color-on-error);
     }
 
     .header-container {
@@ -221,9 +229,14 @@ export class ChatHeader extends LitElement {
     }
   }
 
-  private async handleDelete() {
-    if (this.chat && confirm(`Delete chat "${this.chat.title}"?`)) {
+  private handleDelete() {
+    this.isDeleteDialogOpen = true;
+  }
+
+  private async handleConfirmDelete() {
+    if (this.chat) {
       await store.deleteChat(this.chat.id);
+      this.isDeleteDialogOpen = false;
     }
   }
 
@@ -369,6 +382,25 @@ export class ChatHeader extends LitElement {
           </md-text-button>
           <md-filled-button @click=${this.handleRenameSubmit}>
             Save
+          </md-filled-button>
+        </div>
+      </md-dialog>
+
+      <!-- Delete Chat Dialog -->
+      <md-dialog
+        .open=${this.isDeleteDialogOpen}
+        @closed=${() => (this.isDeleteDialogOpen = false)}
+      >
+        <div slot="headline">Delete Chat</div>
+        <div slot="content">
+          Are you sure you want to delete "${this.chat.title || 'this chat'}"? This action cannot be undone.
+        </div>
+        <div slot="actions">
+          <md-text-button @click=${() => (this.isDeleteDialogOpen = false)}>
+            Cancel
+          </md-text-button>
+          <md-filled-button class="delete-btn" @click=${this.handleConfirmDelete}>
+            Delete
           </md-filled-button>
         </div>
       </md-dialog>

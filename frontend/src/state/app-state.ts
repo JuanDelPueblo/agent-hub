@@ -1,14 +1,14 @@
-import { api } from '../api/client';
-import {
+import { api } from '../api/client.ts';
+import type {
   Project,
   Chat,
   ConfigOption,
   PermissionPolicy,
   SessionEvent,
-} from '../api/types';
-import { EventReducer } from './event-reducer';
-import { WebSocketClient } from '../api/websocket';
-import { router } from '../router';
+} from '../api/types.ts';
+import { EventReducer } from './event-reducer.ts';
+import { WebSocketClient } from '../api/websocket.ts';
+import { router } from '../router.ts';
 
 export type StateListener = () => void;
 
@@ -27,6 +27,7 @@ export class AppStore {
 
   public connectingChats: Set<string> = new Set();
   public connectErrors: Record<string, string> = {};
+  private inFlightConnections: Map<string, Promise<Chat | void>> = new Map();
 
   private listeners: Set<StateListener> = new Set();
   private ws: WebSocketClient;
@@ -66,11 +67,9 @@ export class AppStore {
   }
 
   private async init() {
+    if (typeof window === 'undefined') return;
     await Promise.all([this.loadProjects(), this.loadAgents()]);
-    if (this.activeProjectId) {
-      await this.loadChats(this.activeProjectId);
-      this.autoConnectActiveChat();
-    }
+    // The router subscription handles the initial route and its chat loading / auto-connection.
   }
 
   public subscribe(listener: StateListener): () => void {
@@ -137,34 +136,61 @@ export class AppStore {
     const chat = this.activeChat;
     if (!chat) return;
 
+    if (this.inFlightConnections.has(chat.id)) {
+      return this.inFlightConnections.get(chat.id);
+    }
+
     // Check if stopped or dead or starting
     if (chat.process_state !== 'RUNNING') {
-      await this.connectChat(chat.id);
+      try {
+        await this.connectChat(chat.id);
+      } catch {
+        // Handled in connectChat
+      }
     } else {
       // Fetch current config options if already running
       this.fetchConfig(chat.id);
     }
   }
 
-  public async connectChat(chatId: string) {
-    this.connectingChats.add(chatId);
-    delete this.connectErrors[chatId];
-    this.notify();
-
-    try {
-      const updated = await api.resumeChat(chatId);
-      if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-        this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-          this.activeProjectId
-        ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
-      }
-      await this.fetchConfig(chatId);
-    } catch (err: any) {
-      this.connectErrors[chatId] = err?.message || 'Failed to connect to agent';
-    } finally {
-      this.connectingChats.delete(chatId);
-      this.notify();
+  public connectChat(chatId: string): Promise<Chat | void> {
+    const existing = this.inFlightConnections.get(chatId);
+    if (existing) {
+      return existing;
     }
+
+    const promise = (async () => {
+      this.connectingChats.add(chatId);
+      delete this.connectErrors[chatId];
+      this.notify();
+
+      try {
+        const updated = await api.resumeChat(chatId);
+        if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
+          this.chatsByProject[this.activeProjectId] = this.chatsByProject[
+            this.activeProjectId
+          ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
+        }
+        delete this.connectErrors[chatId];
+        await this.fetchConfig(chatId);
+        return updated;
+      } catch (err: any) {
+        const currentChat = this.chatsByProject[this.activeProjectId || '']?.find(
+          (c) => c.id === chatId
+        );
+        if (!currentChat || currentChat.process_state !== 'RUNNING') {
+          this.connectErrors[chatId] = err?.message || 'Failed to connect to agent';
+        }
+        throw err;
+      } finally {
+        this.connectingChats.delete(chatId);
+        this.inFlightConnections.delete(chatId);
+        this.notify();
+      }
+    })();
+
+    this.inFlightConnections.set(chatId, promise);
+    return promise;
   }
 
   public async fetchConfig(chatId: string) {
@@ -267,29 +293,57 @@ export class AppStore {
     this.notify();
   }
 
+  public async createProject(name: string, path: string): Promise<Project> {
+    const created = await api.createProject(name, path);
+    this.projects = [created, ...this.projects];
+    this.notify();
+    return created;
+  }
+
+  public async createChat(projectId: string, agent: string): Promise<Chat> {
+    const created = await api.createChat(projectId, agent);
+    if (!this.chatsByProject[projectId]) {
+      this.chatsByProject[projectId] = [];
+    }
+    this.chatsByProject[projectId] = [...this.chatsByProject[projectId], created];
+    this.projects = this.projects.map((p) =>
+      p.id === projectId ? { ...p, chat_count: (p.chat_count || 0) + 1 } : p
+    );
+    this.notify();
+    return created;
+  }
+
+  public async editProject(
+    id: string,
+    name: string,
+    path: string
+  ): Promise<Project> {
+    const updated = await api.editProject(id, name, path);
+    this.projects = this.projects.map((p) =>
+      p.id === id ? { ...p, ...updated } : p
+    );
+    this.notify();
+    return updated;
+  }
+
+  public async deleteProject(id: string): Promise<void> {
+    await api.deleteProject(id);
+    this.projects = this.projects.filter((p) => p.id !== id);
+    delete this.chatsByProject[id];
+    if (this.activeProjectId === id) {
+      this.activeProjectId = null;
+      this.activeChatId = null;
+      router.navigate('/');
+    }
+    this.notify();
+  }
+
   public async respondPermission(
     chatId: string,
     requestId: string,
-    optionId: string
+    granted: boolean
   ) {
-    await api.respondPermission(chatId, requestId, optionId);
-    const reducer = this.reducersByChat[chatId];
-    if (reducer) {
-      for (const item of reducer.items) {
-        if (item.type === 'turn') {
-          for (const entry of item.entries) {
-            if (
-              entry.type === 'permission_request' &&
-              entry.requestId === requestId
-            ) {
-              entry.responded = true;
-              entry.decision = optionId;
-            }
-          }
-        }
-      }
-      this.notify();
-    }
+    await api.respondPermission(chatId, requestId, granted);
   }
 
   private handleIncomingEvent(ev: SessionEvent) {
@@ -297,7 +351,10 @@ export class AppStore {
 
     if (payload.type === 'metadata_changed') {
       this.loadProjects();
-      if (this.activeProjectId) {
+      for (const pid of Object.keys(this.chatsByProject)) {
+        this.loadChats(pid);
+      }
+      if (this.activeProjectId && !this.chatsByProject[this.activeProjectId]) {
         this.loadChats(this.activeProjectId);
       }
       return;

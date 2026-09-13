@@ -155,9 +155,9 @@ describe('EventReducer', () => {
       timestamp: '2026-09-12T12:00:01Z',
       payload: {
         type: 'permission_request',
-        requestId: 'req-1',
-        toolCall: { title: 'git push' },
-        options: [{ optionId: 'opt-allow', name: 'Allow', kind: 'allow_once' }],
+        id: 'req-1',
+        method: 'terminal/run_command',
+        description: 'Run git push',
       },
     });
 
@@ -167,6 +167,29 @@ describe('EventReducer', () => {
       assert.equal(turn.entries.length, 2);
       assert.equal(turn.entries[0].type, 'plan');
       assert.equal(turn.entries[1].type, 'permission_request');
+      const perm = turn.entries[1] as any;
+      assert.equal(perm.requestId, 'req-1');
+      assert.equal(perm.method, 'terminal/run_command');
+      assert.equal(perm.description, 'Run git push');
+      assert.equal(perm.responded, false);
+    }
+
+    reducer.ingest({
+      seq: 3,
+      session_id: 's1',
+      agent: 'antigravity',
+      timestamp: '2026-09-12T12:00:02Z',
+      payload: {
+        type: 'permission_response',
+        id: 'req-1',
+        granted: true,
+      },
+    });
+
+    if (turn.type === 'turn') {
+      const perm = turn.entries[1] as any;
+      assert.equal(perm.responded, true);
+      assert.equal(perm.decision, 'Allowed');
     }
   });
 
