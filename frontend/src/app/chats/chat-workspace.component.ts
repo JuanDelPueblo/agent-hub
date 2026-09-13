@@ -36,7 +36,7 @@ import { EventStreamComponent } from './event-stream.component';
         } @else if (!items().length) {
           <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
         } @else { <hub-event-stream [items]="items()" [chatId]="chatId" /> }
-        @if (chat()) { <hub-chat-composer [chatId]="chatId" [processState]="chat()!.process_state || 'STOPPED'" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="connecting() || !!connectError() || !configLoaded()" /> }
+        @if (chat()) { <hub-chat-composer [chatId]="chatId" [options]="options()" [processState]="chat()!.process_state || 'STOPPED'" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="connecting() || !!connectError() || !configLoaded()" /> }
       </mat-drawer-content>
     </mat-drawer-container>
   `,

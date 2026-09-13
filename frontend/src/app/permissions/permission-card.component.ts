@@ -48,6 +48,7 @@ import { AppStateService } from '../state/app-state.service';
     .permission-method { margin-top: 2px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-medium); overflow-wrap: anywhere; }
     mat-card-content { padding-top: 12px; }
     pre { margin: 0; padding: 12px; overflow: auto; border-radius: var(--mat-sys-corner-small); background: color-mix(in srgb, var(--mat-sys-surface-container-lowest) 80%, transparent); white-space: pre-wrap; font: inherit; }
+    mat-card-actions { gap: 8px; }
     .decision { display: flex; align-items: center; gap: 8px; padding: 10px 16px 14px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-medium); }
     .decision mat-icon { flex: 0 0 24px; }
   `,

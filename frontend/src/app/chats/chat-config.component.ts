@@ -30,11 +30,11 @@ import { AppStateService } from '../state/app-state.service';
           <p>Controls whether the agent must ask before running commands or editing files.</p>
         </div>
         <mat-divider />
-        @if (!options.length) {
+        @if (!hasAdditionalOptions()) {
           <p class="no-options">No additional agent configuration options advertised.</p>
         } @else {
           @for (option of options; track option.id) {
-            @if (option.type === 'select') {
+            @if (!isComposerOption(option) && option.type === 'select') {
               <div class="config-item">
                 <mat-form-field appearance="outline">
                   <mat-label>{{ option.name }}</mat-label>
@@ -50,12 +50,12 @@ import { AppStateService } from '../state/app-state.service';
                 </mat-form-field>
                 @if (option.description) { <p>{{ option.description }}</p> }
               </div>
-            } @else if (option.type === 'boolean') {
+            } @else if (!isComposerOption(option) && option.type === 'boolean') {
               <div class="boolean-item">
                 <div><strong>{{ option.name }}</strong>@if (option.description) { <p>{{ option.description }}</p> }</div>
                 <mat-slide-toggle [checked]="!!option.currentValue" (change)="changeOption(option, $event.checked)" [attr.aria-label]="option.name" />
               </div>
-            } @else {
+            } @else if (!isComposerOption(option)) {
               <div class="config-item"><strong>{{ option.name }}</strong><div class="unsupported">{{ option.currentValue }} (type: {{ option.type }})</div></div>
             }
           }
@@ -76,6 +76,15 @@ export class ChatConfigComponent {
 
   isGroup(value: NonNullable<ConfigOption['options']>[number]): value is ConfigOptionSelectGroup {
     return 'options' in value;
+  }
+
+  isComposerOption(option: ConfigOption): boolean {
+    return option.id === 'model' || option.id === 'reasoning_effort'
+      || option.name.toLowerCase() === 'model' || option.name.toLowerCase() === 'reasoning effort';
+  }
+
+  hasAdditionalOptions(): boolean {
+    return this.options.some((option) => !this.isComposerOption(option));
   }
 
   async changePolicy(policy: PermissionPolicy): Promise<void> {

@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ChatComposerComponent } from './chat-composer.component';
 import { AppStateService } from '../state/app-state.service';
+import type { ConfigOption } from '../core/api/types';
 
 describe('ChatComposerComponent', () => {
   let fixture: ComponentFixture<ChatComposerComponent>;
@@ -36,5 +37,31 @@ describe('ChatComposerComponent', () => {
     fixture.componentRef.setInput('disabled', true);
     fixture.detectChanges();
     expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  it('places model and reasoning selectors in the composer footer', () => {
+    const options: ConfigOption[] = [
+      {
+        id: 'model',
+        name: 'Model',
+        type: 'select',
+        currentValue: 'gpt-5',
+        options: [{ value: 'gpt-5', name: 'GPT-5' }],
+      },
+      {
+        id: 'reasoning_effort',
+        name: 'Reasoning effort',
+        type: 'select',
+        currentValue: 'medium',
+        options: [{ value: 'medium', name: 'Medium' }],
+      },
+    ];
+    fixture.componentRef.setInput('options', options);
+    fixture.detectChanges();
+
+    const selectors = fixture.nativeElement.querySelectorAll('.selector');
+    expect(selectors).toHaveLength(2);
+    expect(selectors[0].textContent).toContain('GPT-5');
+    expect(selectors[1].textContent).toContain('Reasoning effort: Medium');
   });
 });
