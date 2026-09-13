@@ -328,7 +328,7 @@ async fn folder_browsing_and_security() {
 
 #[tokio::test]
 async fn git_clone_validation_and_behavior() {
-    use agent_hub::web::{derive_repo_name, validate_git_url};
+    use agent_hub::web::{derive_repo_name, sanitize_credentials, validate_git_url};
 
     // Validation unit checks
     assert!(validate_git_url("https://github.com/JuanDelPueblo/agent-hub.git").is_ok());
@@ -339,6 +339,43 @@ async fn git_clone_validation_and_behavior() {
     assert!(validate_git_url("./local-repo").is_err());
     assert!(validate_git_url("ext::sh -c evil").is_err());
     assert!(validate_git_url("").is_err());
+
+    // Plain HTTP sends credentials without encryption. Reject it.
+    assert!(validate_git_url("http://github.com/JuanDelPueblo/agent-hub.git").is_err());
+    assert!(validate_git_url("HTTP://github.com/JuanDelPueblo/agent-hub.git").is_err());
+    assert!(validate_git_url("http://user:pw@github.com/org/repo.git").is_err());
+    assert!(validate_git_url("git://github.com/JuanDelPueblo/agent-hub.git").is_err());
+
+    // Credential sanitization must remove the complete userinfo.
+    assert_eq!(
+        sanitize_credentials("fatal: could not read https://ghp_SECRET@github.com/org/repo.git"),
+        "fatal: could not read https://***@github.com/org/repo.git"
+    );
+    assert_eq!(
+        sanitize_credentials("remote: https://user:ghp_SECRET@github.com/org/repo.git denied"),
+        "remote: https://***@github.com/org/repo.git denied"
+    );
+    assert_eq!(
+        sanitize_credentials("ssh://git@github.com/org/repo.git"),
+        "ssh://***@github.com/org/repo.git"
+    );
+    // A URL without userinfo stays unchanged.
+    assert_eq!(
+        sanitize_credentials("https://github.com/org/repo.git"),
+        "https://github.com/org/repo.git"
+    );
+    // An '@' in the path is not userinfo.
+    assert_eq!(
+        sanitize_credentials("https://github.com/org/repo.git@v1"),
+        "https://github.com/org/repo.git@v1"
+    );
+    // Two URLs in one message are both sanitized.
+    assert_eq!(
+        sanitize_credentials("https://A@host/a.git and https://B@host/b.git"),
+        "https://***@host/a.git and https://***@host/b.git"
+    );
+    // The token must not survive anywhere in the output.
+    assert!(!sanitize_credentials("https://ghp_SECRET@github.com/o/r.git").contains("ghp_SECRET"));
 
     // Name derivation
     assert_eq!(

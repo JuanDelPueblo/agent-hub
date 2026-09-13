@@ -193,13 +193,16 @@ export class ChatComposer extends LitElement {
     const isPrompting = this.turnState === 'PROMPTING';
     const isCancelling = this.turnState === 'CANCELLING';
     const isStopped = this.processState !== 'RUNNING';
-    const canSend = !isStopped && !isPrompting && this.text.trim().length > 0;
+    const canSend =
+      !this.disabled && !isStopped && !isPrompting && this.text.trim().length > 0;
 
     return html`
-      <div class="composer-container ${isStopped ? 'disabled' : ''}">
+      <div class="composer-container ${isStopped || this.disabled ? 'disabled' : ''}">
         <textarea
           rows="1"
-          placeholder="${isStopped
+          placeholder="${this.disabled
+            ? 'Waiting for the agent connection...'
+            : isStopped
             ? 'Agent process stopped'
             : isPrompting
             ? 'Agent is thinking...'

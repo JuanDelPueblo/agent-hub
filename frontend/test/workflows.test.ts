@@ -14,7 +14,7 @@ import { api } from '../src/api/client.ts';
 import { router } from '../src/router.ts';
 import type { Project, Chat, SessionEvent, ConfigOption } from '../src/api/types.ts';
 
-describe('Hub Frontend Workflows', () => {
+describe('Hub store and routing', () => {
   let mockProjects: Project[];
   let mockChats: Record<string, Chat[]>;
   let resumeCallCount: number;
@@ -109,7 +109,7 @@ describe('Hub Frontend Workflows', () => {
       }
       throw new Error('Chat not found');
     };
-    api.fetchConfig = async (_chatId: string) => [];
+    api.fetchChatConfig = async (_chatId: string) => [];
     api.respondPermission = async (chatId: string, requestId: string, granted: boolean) => {
       respondedPermissions.push({ chatId, requestId, granted });
     };
@@ -333,15 +333,4 @@ describe('Hub Frontend Workflows', () => {
     assert.equal(store.chatsByProject['proj-1'][0].title, 'Generated Smart Title from ACP');
   });
 
-  it('manages mobile drawer state and backdrop interactions', () => {
-    const store = new AppStore();
-    assert.equal(store.isMobileDrawerOpen, false);
-
-    store.isMobileDrawerOpen = true;
-    assert.equal(store.isMobileDrawerOpen, true);
-
-    // Simulate backdrop click
-    store.isMobileDrawerOpen = false;
-    assert.equal(store.isMobileDrawerOpen, false);
-  });
 });

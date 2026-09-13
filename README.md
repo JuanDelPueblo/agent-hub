@@ -72,6 +72,7 @@ Permission policy is separate from agent configuration. New chats default to `as
 
 ```sh
 # Frontend tests and build
+# `npm test` runs the state tests and the jsdom component tests.
 cd frontend
 npm test
 npm run build

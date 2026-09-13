@@ -13,7 +13,7 @@
             pname = "agent-hub-frontend";
             version = "0.2.0";
             src = ./frontend;
-            npmDepsHash = "sha256-exIUfYc/RppwNfsh15XqgwH5C2OHe02Wjlx9Rci9/jg=";
+            npmDepsHash = "sha256-piUuzTp9tzlr0GGFf6J+d8eb9eLcPsPBKl4bjlOY46Q=";
             installPhase = ''
               mkdir -p $out
               cp -r dist/* $out/

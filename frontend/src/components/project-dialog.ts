@@ -80,6 +80,17 @@ export class ProjectDialog extends LitElement {
       word-break: break-all;
     }
 
+    .browsed-path-card {
+      padding: 10px 14px;
+      background-color: var(--md-sys-color-surface-container-low);
+      color: var(--md-sys-color-on-surface-variant);
+      border: 1px dashed var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-small);
+      font-family: var(--md-sys-typescale-code-font);
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
     .error-box {
       padding: 10px 14px;
       background-color: var(--md-sys-color-error-container);
@@ -94,12 +105,20 @@ export class ProjectDialog extends LitElement {
   @state() private mode: 'folder' | 'clone' = 'folder';
 
   // Folder mode state
+  /** Directory that the user committed with "Select Current Folder". */
   @state() private selectedPath = '';
+  /** Directory that the picker shows now. It is not a selection. */
+  @state() private browsedPath = '';
   @state() private projectName = '';
+  /** True after the user types a name. It stops the automatic default. */
+  @state() private projectNameEdited = false;
 
   // Clone mode state
   @state() private repoUrl = '';
+  /** Parent directory that the user committed in clone mode. */
   @state() private cloneParentPath = '';
+  /** Parent directory that the clone picker shows now. */
+  @state() private cloneBrowsedPath = '';
   @state() private cloneProjectName = '';
   @state() private isCloning = false;
   @state() private errorMessage = '';
@@ -110,9 +129,12 @@ export class ProjectDialog extends LitElement {
       this.isCloning = false;
       this.mode = 'folder';
       this.selectedPath = '';
+      this.browsedPath = '';
       this.projectName = '';
+      this.projectNameEdited = false;
       this.repoUrl = '';
       this.cloneParentPath = '';
+      this.cloneBrowsedPath = '';
       this.cloneProjectName = '';
     }
   }
@@ -136,9 +158,18 @@ export class ProjectDialog extends LitElement {
   }
 
   private handleFolderBrowsed(e: CustomEvent) {
+    // Browsing only moves the picker. It does not select a directory.
+    if (this.mode === 'folder') {
+      this.browsedPath = e.detail.path;
+    } else {
+      this.cloneBrowsedPath = e.detail.path;
+    }
+  }
+
+  private handleFolderSelected(e: CustomEvent) {
     if (this.mode === 'folder') {
       this.selectedPath = e.detail.path;
-      if (!this.projectName) {
+      if (!this.projectNameEdited) {
         this.projectName = e.detail.name;
       }
     } else {
@@ -146,13 +177,9 @@ export class ProjectDialog extends LitElement {
     }
   }
 
-  private handleFolderSelected(e: CustomEvent) {
-    if (this.mode === 'folder') {
-      this.selectedPath = e.detail.path;
-      this.projectName = e.detail.name;
-    } else {
-      this.cloneParentPath = e.detail.path;
-    }
+  private handleProjectNameInput(e: Event) {
+    this.projectName = (e.target as HTMLInputElement).value;
+    this.projectNameEdited = true;
   }
 
   private async handleCreateFromFolder() {
@@ -235,6 +262,17 @@ export class ProjectDialog extends LitElement {
                   ></folder-picker>
                 </div>
 
+                ${this.browsedPath && this.browsedPath !== this.selectedPath
+                  ? html`
+                      <div class="field-group">
+                        <span class="field-label">
+                          Browsing (press "Select Current Folder" to use it)
+                        </span>
+                        <div class="browsed-path-card">${this.browsedPath}</div>
+                      </div>
+                    `
+                  : ''}
+
                 ${this.selectedPath
                   ? html`
                       <div class="field-group">
@@ -246,7 +284,7 @@ export class ProjectDialog extends LitElement {
                         <md-outlined-text-field
                           label="Project Display Name"
                           .value=${this.projectName}
-                          @input=${(e: any) => (this.projectName = e.target.value)}
+                          @input=${this.handleProjectNameInput}
                         ></md-outlined-text-field>
                       </div>
                     `
@@ -270,6 +308,18 @@ export class ProjectDialog extends LitElement {
                     @folder-selected=${this.handleFolderSelected}
                   ></folder-picker>
                 </div>
+
+                ${this.cloneBrowsedPath &&
+                this.cloneBrowsedPath !== this.cloneParentPath
+                  ? html`
+                      <div class="field-group">
+                        <span class="field-label">
+                          Browsing (press "Select Current Folder" to use it)
+                        </span>
+                        <div class="browsed-path-card">${this.cloneBrowsedPath}</div>
+                      </div>
+                    `
+                  : ''}
 
                 ${this.cloneParentPath
                   ? html`

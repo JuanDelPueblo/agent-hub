@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -16,6 +16,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "esbuild": "0.25.12",
+    "jsdom": "30.0.1",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
   }

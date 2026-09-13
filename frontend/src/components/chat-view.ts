@@ -190,7 +190,7 @@ export class ChatView extends LitElement {
 
   private handleRetryConnect = () => {
     if (this.chatId) {
-      store.connectChat(this.chatId);
+      store.retryConnection(this.chatId);
     }
   };
 
@@ -209,6 +209,10 @@ export class ChatView extends LitElement {
     const connectError = store.connectErrors[this.chatId];
     const items = store.activeReducer.items;
     const configOptions = store.configOptionsByChat[this.chatId] || [];
+    // An empty list means the agent advertises no options. It does not mean
+    // that the config request is still open or that it failed.
+    const configLoaded = store.configLoadedByChat[this.chatId] === true;
+    const composerDisabled = isConnecting || !!connectError || !configLoaded;
 
     return html`
       <div class="main-chat-area">
@@ -233,6 +237,19 @@ export class ChatView extends LitElement {
                   <span class="icon" style="font-size: 48px; color: var(--md-sys-color-error);">error_outline</span>
                   <div class="connecting-title" style="color: var(--md-sys-color-error);">Connection Failed</div>
                   <div class="connecting-sub">${connectError}</div>
+                  <md-filled-button @click=${this.handleRetryConnect}>
+                    Retry Connection
+                  </md-filled-button>
+                </div>
+              `
+            : !configLoaded && items.length === 0
+            ? html`
+                <div class="error-state">
+                  <span class="icon" style="font-size: 48px; color: var(--md-sys-color-outline);">tune</span>
+                  <div class="connecting-title">Agent options not loaded</div>
+                  <div class="connecting-sub">
+                    Agent Hub cannot read the configuration of ${chat.agent} yet.
+                  </div>
                   <md-filled-button @click=${this.handleRetryConnect}>
                     Retry Connection
                   </md-filled-button>
@@ -268,7 +285,7 @@ export class ChatView extends LitElement {
           .chatId=${chat.id}
           .processState=${chat.process_state || 'STOPPED'}
           .turnState=${chat.turn_state || 'IDLE'}
-          .disabled=${isConnecting}
+          .disabled=${composerDisabled}
         ></chat-composer>
       </div>
 

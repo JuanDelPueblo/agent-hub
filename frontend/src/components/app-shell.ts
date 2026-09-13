@@ -274,7 +274,7 @@ export class AppShell extends LitElement {
   }
 
   private handleBackdropClick() {
-    store.isMobileDrawerOpen = false;
+    store.setMobileDrawerOpen(false);
   }
 
   private openProjectDialog = () => {
@@ -419,7 +419,7 @@ export class AppShell extends LitElement {
       <div class="main-wrapper">
         <!-- Mobile Header (hidden on desktop or inside active chat) -->
         <header class="mobile-header ${showMobileHeader ? 'show' : ''}">
-          <md-icon-button @click=${() => (store.isMobileDrawerOpen = true)}>
+          <md-icon-button @click=${() => store.setMobileDrawerOpen(true)}>
             <span class="icon">menu</span>
           </md-icon-button>
           <span class="mobile-title">

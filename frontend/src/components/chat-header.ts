@@ -188,7 +188,7 @@ export class ChatHeader extends LitElement {
   `;
 
   private toggleNavDrawer() {
-    store.isMobileDrawerOpen = !store.isMobileDrawerOpen;
+    store.setMobileDrawerOpen(!store.isMobileDrawerOpen);
   }
 
   private toggleConfig() {
@@ -219,7 +219,9 @@ export class ChatHeader extends LitElement {
 
   private async handleReconnect() {
     if (this.chat) {
-      await store.connectChat(this.chat.id);
+      // The store records a failure in `connectErrors`, and the chat view
+      // shows it. Do not let the rejection escape this handler.
+      await store.retryConnection(this.chat.id);
     }
   }
 

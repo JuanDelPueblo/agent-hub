@@ -18,6 +18,11 @@ export class AppStore {
   public activeProjectId: string | null = null;
   public activeChatId: string | null = null;
   public configOptionsByChat: Record<string, ConfigOption[]> = {};
+  /**
+   * True after the agent answers a config request for the chat. An empty
+   * option list means "the agent advertises no options", not "not loaded".
+   */
+  public configLoadedByChat: Record<string, boolean> = {};
   public reducersByChat: Record<string, EventReducer> = {};
   public wsStatus: 'connected' | 'connecting' | 'disconnected' = 'connecting';
   public agents: string[] = ['codex', 'claude', 'opencode', 'antigravity'];
@@ -27,7 +32,7 @@ export class AppStore {
 
   public connectingChats: Set<string> = new Set();
   public connectErrors: Record<string, string> = {};
-  private inFlightConnections: Map<string, Promise<Chat | void>> = new Map();
+  private inFlightConnections: Map<string, Promise<unknown>> = new Map();
 
   private listeners: Set<StateListener> = new Set();
   private ws: WebSocketClient;
@@ -104,6 +109,17 @@ export class AppStore {
     return this.reducersByChat[this.activeChatId];
   }
 
+  /**
+   * Open or close the modal drawer.
+   * A direct write to `isMobileDrawerOpen` does not redraw the shell, because
+   * the shell redraws only when the store notifies its listeners.
+   */
+  public setMobileDrawerOpen(open: boolean) {
+    if (this.isMobileDrawerOpen === open) return;
+    this.isMobileDrawerOpen = open;
+    this.notify();
+  }
+
   public async loadProjects() {
     try {
       this.projects = await api.fetchProjects();
@@ -132,6 +148,27 @@ export class AppStore {
     }
   }
 
+  /**
+   * Find a chat by id in every loaded project. A chat update must not depend
+   * on which project is active when the request finishes.
+   */
+  public findChat(chatId: string): Chat | null {
+    for (const chats of Object.values(this.chatsByProject)) {
+      const found = chats.find((c) => c.id === chatId);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /** Merge `patch` into the chat with this id, in every loaded project. */
+  private applyChatPatch(chatId: string, patch: Partial<Chat>) {
+    for (const projectId of Object.keys(this.chatsByProject)) {
+      this.chatsByProject[projectId] = this.chatsByProject[projectId].map((c) =>
+        c.id === chatId ? { ...c, ...patch } : c
+      );
+    }
+  }
+
   public async autoConnectActiveChat() {
     const chat = this.activeChat;
     if (!chat) return;
@@ -147,13 +184,23 @@ export class AppStore {
       } catch {
         // Handled in connectChat
       }
-    } else {
-      // Fetch current config options if already running
-      this.fetchConfig(chat.id);
+    } else if (!this.configLoadedByChat[chat.id]) {
+      // The process runs already. The config options are still required before
+      // the composer opens. Do not resume again, because resume fails while a
+      // turn is active.
+      try {
+        await this.loadChatConfig(chat.id);
+      } catch {
+        // Handled in loadChatConfig
+      }
     }
   }
 
-  public connectChat(chatId: string): Promise<Chat | void> {
+  /**
+   * Load the config options of a running chat.
+   * The chat stays in the connecting state until the agent answers.
+   */
+  public loadChatConfig(chatId: string): Promise<unknown> {
     const existing = this.inFlightConnections.get(chatId);
     if (existing) {
       return existing;
@@ -163,24 +210,11 @@ export class AppStore {
       this.connectingChats.add(chatId);
       delete this.connectErrors[chatId];
       this.notify();
-
       try {
-        const updated = await api.resumeChat(chatId);
-        if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-          this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-            this.activeProjectId
-          ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
-        }
-        delete this.connectErrors[chatId];
-        await this.fetchConfig(chatId);
-        return updated;
+        return await this.fetchConfig(chatId);
       } catch (err: any) {
-        const currentChat = this.chatsByProject[this.activeProjectId || '']?.find(
-          (c) => c.id === chatId
-        );
-        if (!currentChat || currentChat.process_state !== 'RUNNING') {
-          this.connectErrors[chatId] = err?.message || 'Failed to connect to agent';
-        }
+        this.connectErrors[chatId] =
+          err?.message || 'Failed to load agent configuration';
         throw err;
       } finally {
         this.connectingChats.delete(chatId);
@@ -193,90 +227,127 @@ export class AppStore {
     return promise;
   }
 
-  public async fetchConfig(chatId: string) {
-    try {
-      const options = await api.fetchChatConfig(chatId);
-      this.configOptionsByChat[chatId] = options;
-      this.notify();
-    } catch {
-      // ignore
+  /** Connect again after a failure. Pick the step that the chat still needs. */
+  public retryConnection(chatId: string): Promise<unknown> {
+    const chat = this.findChat(chatId);
+    if (chat && chat.process_state === 'RUNNING') {
+      return this.loadChatConfig(chatId).catch(() => {});
     }
+    return this.connectChat(chatId).catch(() => {});
+  }
+
+  public connectChat(chatId: string): Promise<Chat> {
+    const existing = this.inFlightConnections.get(chatId);
+    if (existing) {
+      return existing as Promise<Chat>;
+    }
+
+    const promise = (async () => {
+      this.connectingChats.add(chatId);
+      delete this.connectErrors[chatId];
+      this.notify();
+
+      try {
+        let updated: Chat;
+        try {
+          updated = await api.resumeChat(chatId);
+        } catch (err: any) {
+          // A live state_change event can report RUNNING even when this
+          // request fails. Do not contradict it.
+          const currentChat = this.findChat(chatId);
+          if (!currentChat || currentChat.process_state !== 'RUNNING') {
+            this.connectErrors[chatId] =
+              err?.message || 'Failed to connect to agent';
+          }
+          throw err;
+        }
+
+        this.applyChatPatch(chatId, updated);
+        delete this.connectErrors[chatId];
+
+        // The composer stays unavailable until the agent answers this request.
+        try {
+          await this.fetchConfig(chatId);
+        } catch (err: any) {
+          this.connectErrors[chatId] =
+            err?.message || 'Failed to load agent configuration';
+          throw err;
+        }
+        return updated;
+      } finally {
+        this.connectingChats.delete(chatId);
+        this.inFlightConnections.delete(chatId);
+        this.notify();
+      }
+    })();
+
+    this.inFlightConnections.set(chatId, promise);
+    return promise;
+  }
+
+  /**
+   * Load the config options for a chat.
+   * This method throws if the request fails. The caller must report the error.
+   */
+  public async fetchConfig(chatId: string): Promise<ConfigOption[]> {
+    const options = await api.fetchChatConfig(chatId);
+    this.configOptionsByChat[chatId] = options;
+    this.configLoadedByChat[chatId] = true;
+    this.notify();
+    return options;
   }
 
   public async sendPrompt(chatId: string, text: string) {
     await api.promptChat(chatId, text);
     // Optimistically update turn state to PROMPTING
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) => (c.id === chatId ? { ...c, turn_state: 'PROMPTING' } : c));
-      this.notify();
-    }
+    this.applyChatPatch(chatId, { turn_state: 'PROMPTING' });
+    this.notify();
   }
 
   public async cancelActiveTurn(chatId: string) {
     await api.cancelChat(chatId);
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) => (c.id === chatId ? { ...c, turn_state: 'CANCELLING' } : c));
-      this.notify();
-    }
+    this.applyChatPatch(chatId, { turn_state: 'CANCELLING' });
+    this.notify();
   }
 
   public async stopChatProcess(chatId: string) {
     await api.stopChat(chatId);
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) =>
-        c.id === chatId
-          ? { ...c, process_state: 'STOPPED', turn_state: 'IDLE' }
-          : c
-      );
-      this.notify();
-    }
+    this.applyChatPatch(chatId, {
+      process_state: 'STOPPED',
+      turn_state: 'IDLE',
+    });
+    this.notify();
   }
 
   public async setChatPolicy(chatId: string, policy: PermissionPolicy) {
     const updated = await api.editChat(chatId, { permission_policy: policy });
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
-      this.notify();
-    }
+    this.applyChatPatch(chatId, updated);
+    this.notify();
   }
 
   public async renameChat(chatId: string, title: string) {
     const updated = await api.editChat(chatId, { title });
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
-      this.notify();
-    }
+    this.applyChatPatch(chatId, updated);
+    this.notify();
   }
 
   public async archiveChat(chatId: string, archived: boolean) {
     const updated = await api.editChat(chatId, { archived });
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].map((c) => (c.id === chatId ? { ...c, ...updated } : c));
-      this.notify();
-    }
+    this.applyChatPatch(chatId, updated);
+    this.notify();
   }
 
   public async deleteChat(chatId: string) {
     await api.deleteChat(chatId);
-    if (this.activeProjectId && this.chatsByProject[this.activeProjectId]) {
-      this.chatsByProject[this.activeProjectId] = this.chatsByProject[
-        this.activeProjectId
-      ].filter((c) => c.id !== chatId);
+    for (const projectId of Object.keys(this.chatsByProject)) {
+      this.chatsByProject[projectId] = this.chatsByProject[projectId].filter(
+        (c) => c.id !== chatId
+      );
     }
     delete this.reducersByChat[chatId];
     delete this.configOptionsByChat[chatId];
+    delete this.configLoadedByChat[chatId];
+    delete this.connectErrors[chatId];
     if (this.activeChatId === chatId) {
       if (this.activeProjectId) {
         router.navigate(`/projects/${this.activeProjectId}`);
@@ -290,6 +361,7 @@ export class AppStore {
   public async setChatConfig(chatId: string, optionId: string, value: any) {
     const options = await api.setChatConfig(chatId, optionId, value);
     this.configOptionsByChat[chatId] = options;
+    this.configLoadedByChat[chatId] = true;
     this.notify();
   }
 
@@ -363,6 +435,7 @@ export class AppStore {
     if (payload.type === 'config_options') {
       if (session_id) {
         this.configOptionsByChat[session_id] = payload.options || [];
+        this.configLoadedByChat[session_id] = true;
         this.notify();
       }
       return;

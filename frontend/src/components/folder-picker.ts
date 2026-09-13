@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@material/web/icon/icon.js';
 import '@material/web/button/filled-button.js';
@@ -114,30 +114,60 @@ export class FolderPicker extends LitElement {
   @state() private loading = false;
   @state() private errorMessage = '';
 
+  /** Path of the directory that this picker loaded last. */
+  private loadedPath?: string;
+  /** Sequence number of the most recent load. It discards stale responses. */
+  private loadSequence = 0;
+
   connectedCallback() {
     super.connectedCallback();
     this.loadDirectory(this.initialPath);
   }
 
+  protected updated(changedProperties: PropertyValues) {
+    if (!changedProperties.has('initialPath')) return;
+    // A dialog sets initialPath after this picker connects. Browse to the new
+    // directory. Keep the current listing if the caller clears the path.
+    if (!this.initialPath) return;
+    this.browseTo(this.initialPath);
+  }
+
+  /** Browse to `path` if this picker does not already show that directory. */
+  public browseTo(path?: string) {
+    if (!path) return;
+    if (path === this.loadedPath) return;
+    return this.loadDirectory(path);
+  }
+
   public async loadDirectory(path?: string) {
+    const sequence = ++this.loadSequence;
+    this.loadedPath = path;
     this.loading = true;
     this.errorMessage = '';
     try {
-      this.currentListing = await api.fetchDirectories(path);
+      const listing = await api.fetchDirectories(path);
+      if (sequence !== this.loadSequence) return;
+      this.currentListing = listing;
+      this.loadedPath = listing.current;
       this.dispatchEvent(
         new CustomEvent('folder-browsed', {
           detail: {
-            path: this.currentListing.current,
-            name: this.currentListing.name,
+            path: listing.current,
+            name: listing.name,
           },
           bubbles: true,
           composed: true,
         })
       );
     } catch (e: any) {
+      if (sequence !== this.loadSequence) return;
+      // Forget the path so that a later call can try the same directory again.
+      this.loadedPath = this.currentListing?.current;
       this.errorMessage = e?.message || 'Failed to load directories';
     } finally {
-      this.loading = false;
+      if (sequence === this.loadSequence) {
+        this.loading = false;
+      }
     }
   }
 

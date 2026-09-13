@@ -249,11 +249,14 @@ pub fn validate_git_url(url: &str) -> anyhow::Result<()> {
     {
         anyhow::bail!("Unsafe or unsupported repository URL transport");
     }
-    let is_http_ssh = trimmed.starts_with("https://")
-        || trimmed.starts_with("http://")
-        || trimmed.starts_with("ssh://");
+    let lower = trimmed.to_ascii_lowercase();
+    // Plain HTTP sends credentials and repository content without encryption.
+    if lower.starts_with("http://") {
+        anyhow::bail!("Plain HTTP repository URLs are not allowed. Use HTTPS or SSH");
+    }
+    let is_https_ssh = lower.starts_with("https://") || lower.starts_with("ssh://");
     let is_scp_ssh = trimmed.contains('@') && trimmed.contains(':') && !trimmed.contains("://");
-    if !is_http_ssh && !is_scp_ssh {
+    if !is_https_ssh && !is_scp_ssh {
         anyhow::bail!("Repository URL must be a valid HTTPS or SSH URL");
     }
     Ok(())
@@ -271,25 +274,26 @@ pub fn derive_repo_name(url: &str) -> Option<String> {
     }
 }
 
+/// Remove the userinfo of every URL in `msg`.
+///
+/// A token can appear as the user name alone, as in `https://TOKEN@host/repo`.
+/// This function therefore redacts the complete userinfo, not only the part
+/// after the colon.
 pub fn sanitize_credentials(msg: &str) -> String {
     let mut out = String::new();
     let mut remaining = msg;
     while let Some(proto_idx) = remaining.find("://") {
         out.push_str(&remaining[..proto_idx + 3]);
         let after_proto = &remaining[proto_idx + 3..];
-        if let Some(at_idx) = after_proto.find('@') {
-            let user_info = &after_proto[..at_idx];
-            if !user_info.contains([' ', '/', '\n', '\r']) {
-                if let Some(colon_idx) = user_info.find(':') {
-                    out.push_str(&user_info[..colon_idx + 1]);
-                    out.push_str("***");
-                } else {
-                    out.push_str(user_info);
-                }
-                out.push('@');
-                remaining = &after_proto[at_idx + 1..];
-                continue;
-            }
+        // The authority ends at the path, the query, the fragment, or a space.
+        let authority_end = after_proto
+            .find(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace())
+            .unwrap_or(after_proto.len());
+        let authority = &after_proto[..authority_end];
+        if let Some(at_idx) = authority.rfind('@') {
+            out.push_str("***@");
+            remaining = &after_proto[at_idx + 1..];
+            continue;
         }
         remaining = after_proto;
     }

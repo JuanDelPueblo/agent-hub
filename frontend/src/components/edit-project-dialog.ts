@@ -1,11 +1,12 @@
 import { LitElement, html, css, PropertyValues } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import '@material/web/dialog/dialog.js';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/text-button.js';
 import '@material/web/textfield/outlined-text-field.js';
 import '@material/web/icon/icon.js';
 import './folder-picker';
+import { FolderPicker } from './folder-picker';
 import { Project } from '../api/types';
 import { store } from '../state/app-state';
 
@@ -51,6 +52,17 @@ export class EditProjectDialog extends LitElement {
       word-break: break-all;
     }
 
+    .browsed-path-card {
+      padding: 10px 14px;
+      background-color: var(--md-sys-color-surface-container-low);
+      color: var(--md-sys-color-on-surface-variant);
+      border: 1px dashed var(--md-sys-color-outline-variant);
+      border-radius: var(--md-sys-shape-corner-small);
+      font-family: var(--md-sys-typescale-code-font);
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
     .error-box {
       padding: 10px 14px;
       background-color: var(--md-sys-color-error-container);
@@ -65,21 +77,37 @@ export class EditProjectDialog extends LitElement {
   @property({ type: Object }) public project: Project | null = null;
 
   @state() private projectName = '';
+  /** Directory that the user committed with "Select Current Folder". */
   @state() private selectedPath = '';
+  /** Directory that the picker shows now. It is not a selection. */
+  @state() private browsedPath = '';
+  /** Directory that the picker must open when this dialog opens. */
+  @state() private initialPickerPath = '';
   @state() private errorMessage = '';
   @state() private saving = false;
 
+  @query('folder-picker') private picker?: FolderPicker;
+
   protected updated(changedProperties: PropertyValues) {
-    if (changedProperties.has('open') && this.open) {
-      this.projectName = this.project?.name || '';
-      this.selectedPath = this.project?.path || '';
-      this.errorMessage = '';
-      this.saving = false;
+    // The shell sets `project` and `open` together, so handle them together.
+    const opened = changedProperties.has('open') && this.open;
+    const projectChanged = changedProperties.has('project') && this.open;
+    if (opened || projectChanged) {
+      this.resetFromProject();
     }
-    if (changedProperties.has('project') && this.project) {
-      if (!this.projectName) this.projectName = this.project.name;
-      if (!this.selectedPath) this.selectedPath = this.project.path;
-    }
+  }
+
+  private resetFromProject() {
+    this.projectName = this.project?.name || '';
+    this.selectedPath = this.project?.path || '';
+    this.initialPickerPath = this.project?.path || '';
+    this.browsedPath = '';
+    this.errorMessage = '';
+    this.saving = false;
+    // Reopening the dialog for the same project does not change initialPath,
+    // so tell the picker directly to return to the project directory.
+    const path = this.initialPickerPath;
+    this.updateComplete.then(() => this.picker?.browseTo(path));
   }
 
   public close() {
@@ -97,7 +125,8 @@ export class EditProjectDialog extends LitElement {
   }
 
   private handleFolderBrowsed(e: CustomEvent) {
-    this.selectedPath = e.detail.path;
+    // Browsing only moves the picker. It does not change the project path.
+    this.browsedPath = e.detail.path;
   }
 
   private handleFolderSelected(e: CustomEvent) {
@@ -150,11 +179,22 @@ export class EditProjectDialog extends LitElement {
           <div class="field-group">
             <span class="field-label">Project Directory</span>
             <folder-picker
-              .initialPath=${this.selectedPath}
+              .initialPath=${this.initialPickerPath}
               @folder-browsed=${this.handleFolderBrowsed}
               @folder-selected=${this.handleFolderSelected}
             ></folder-picker>
           </div>
+
+          ${this.browsedPath && this.browsedPath !== this.selectedPath
+            ? html`
+                <div class="field-group">
+                  <span class="field-label">
+                    Browsing (press "Select Current Folder" to use it)
+                  </span>
+                  <div class="browsed-path-card">${this.browsedPath}</div>
+                </div>
+              `
+            : ''}
 
           ${this.selectedPath
             ? html`

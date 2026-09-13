@@ -268,7 +268,7 @@ export class NavigationDrawer extends LitElement {
   }
 
   private closeMobileDrawer() {
-    store.isMobileDrawerOpen = false;
+    store.setMobileDrawerOpen(false);
   }
 
   private handleGoHome() {
