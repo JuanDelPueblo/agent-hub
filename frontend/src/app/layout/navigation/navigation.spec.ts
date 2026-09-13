@@ -27,6 +27,24 @@ describe('NavigationComponent DOM check', () => {
             turn_state: 'IDLE',
             archived: false,
           },
+          {
+            id: 'chat-2',
+            project_id: 'proj-1',
+            agent: 'codex',
+            title: 'Stopped chat',
+            process_state: 'STOPPED',
+            turn_state: 'IDLE',
+            archived: false,
+          },
+          {
+            id: 'chat-3',
+            project_id: 'proj-1',
+            agent: 'opencode',
+            title: 'Dead chat',
+            process_state: 'DEAD',
+            turn_state: 'IDLE',
+            archived: false,
+          },
         ],
       }),
       showArchived: signal(false),
@@ -58,7 +76,13 @@ describe('NavigationComponent DOM check', () => {
     expect(badge).toBeTruthy();
     expect(badge.textContent.trim()).toBe('claude');
     expect(badge.querySelector('mat-icon')).toBeNull();
-    expect(title.closest('a')?.getAttribute('aria-label')).toContain('Process running');
+    const labels = Array.from(fixture.nativeElement.querySelectorAll('a[mat-list-item]'))
+      .map((item: unknown) => (item as Element).getAttribute('aria-label'));
+    expect(labels).toEqual(expect.arrayContaining([
+      expect.stringContaining('Process running'),
+      expect.stringContaining('Process stopped'),
+      expect.stringContaining('Process dead'),
+    ]));
   });
 });
 

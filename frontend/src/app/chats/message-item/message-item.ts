@@ -1,15 +1,12 @@
 import { Component, input } from '@angular/core';
-import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import type { DisplayError, DisplayItem, DisplayStateChange, DisplayTurn, DisplayUserMessage } from '../../core/api/types';
-import { PermissionCardComponent } from '../../permissions/permission-card/permission-card';
-import { PlanViewComponent } from '../plan-view/plan-view';
-import { ToolCallComponent } from '../tool-call/tool-call';
+import { TurnEntriesComponent } from '../turn-entries/turn-entries';
 
 @Component({
   selector: 'hub-message-item',
-  imports: [MatExpansionModule, MatIconModule, MatProgressSpinnerModule, PermissionCardComponent, PlanViewComponent, ToolCallComponent],
+  imports: [MatIconModule, MatProgressSpinnerModule, TurnEntriesComponent],
   templateUrl: './message-item.html',
   styleUrl: './message-item.scss',
 })

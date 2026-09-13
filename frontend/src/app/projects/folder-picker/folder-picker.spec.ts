@@ -1,23 +1,28 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { FolderPickerComponent } from './folder-picker';
 import { ApiService } from '../../core/api/api.service';
 
-@Component({ imports: [FolderPickerComponent], template: '<hub-folder-picker (folderSelected)="selected = $event.path" />' })
-class HostComponent { selected = ''; }
+@Component({ imports: [FolderPickerComponent], template: '<hub-folder-picker [initialPath]="initialPath()" (folderSelected)="selected = $event.path" />' })
+class HostComponent { readonly initialPath = signal(''); selected = ''; }
 
 describe('FolderPickerComponent', () => {
   let fixture: ComponentFixture<HostComponent>;
   let host: HostComponent;
+  const requestedPaths: Array<string | undefined> = [];
   const api = {
-    fetchDirectories: async (path?: string) => ({
-      current: path || '/home/tony', name: path ? 'agent-hub' : 'tony', parent: '/home', roots: ['/home'], breadcrumbs: [{ name: 'home', path: '/home' }, { name: path ? 'agent-hub' : 'tony', path: path || '/home/tony' }],
-      directories: path ? [] : [{ name: 'agent-hub', path: '/home/tony/agent-hub' }],
-    }),
+    fetchDirectories: async (path?: string) => {
+      requestedPaths.push(path);
+      return {
+        current: path || '/home/tony', name: path ? 'agent-hub' : 'tony', parent: '/home', roots: ['/home'], breadcrumbs: [{ name: 'home', path: '/home' }, { name: path ? 'agent-hub' : 'tony', path: path || '/home/tony' }],
+        directories: path ? [] : [{ name: 'agent-hub', path: '/home/tony/agent-hub' }],
+      };
+    },
   } as unknown as ApiService;
 
   beforeEach(async () => {
+    requestedPaths.length = 0;
     await TestBed.configureTestingModule({ imports: [HostComponent], providers: [{ provide: ApiService, useValue: api }] }).compileComponents();
     fixture = TestBed.createComponent(HostComponent);
     host = fixture.componentInstance;
@@ -36,5 +41,13 @@ describe('FolderPickerComponent', () => {
     const select = Array.from(fixture.nativeElement.querySelectorAll('button')).find((button: unknown) => (button as Element).textContent?.includes('Select current folder')) as HTMLButtonElement;
     select.click();
     expect(host.selected).toBe('/home/tony/agent-hub');
+  });
+
+  it('browses when the signal input changes', async () => {
+    host.initialPath.set('/home/tony/agent-hub');
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(requestedPaths).toEqual([undefined, '/home/tony/agent-hub']);
   });
 });

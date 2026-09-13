@@ -200,7 +200,25 @@ Before you add a dependency, check the cost. `cargo tree --duplicates` finds a c
 
 ---
 
-## 9. Coding Constraints & Commitments
+## 9. Angular Frontend Standards
+
+- Keep TypeScript and template checking strict and preserve zoneless compatibility.
+- Use signals for local/reactive state, `computed()` for derived state, and pure predictable transformations.
+- Declare component APIs with `input()` / `input.required()`, `output()`, and `model()` for true two-way APIs.
+- Use `inject()` for dependency injection. Constructors should contain initialization logic, not dependency parameters.
+- Use native `@if`, `@for`, and `@switch`; do not add legacy structural directives.
+- Components are standalone by default: do not set `standalone: true` or introduce NgModules.
+- Do not import `CommonModule`; import only a specific standalone pipe or directive when needed.
+- Lazy-load page and feature routes with `loadComponent` or `loadChildren`.
+- Prefer Signal Forms for new signal-based forms and Reactive Forms when integration or test reliability is clearer; do not add template-driven forms.
+- Avoid `::ng-deep` and Angular Material implementation selectors. Style owned wrappers or use supported tokens and APIs.
+- Keep templates simple, use focused components, and preserve stable `track` expressions for streamed collections.
+- Use Angular Material/CDK primitives instead of recreating existing controls.
+- Maintain WCAG AA behavior, including keyboard access, focus, contrast, accessible names, and non-color status cues.
+
+---
+
+## 10. Coding Constraints & Commitments
 
 - **No Quotas / Hermes**: Do not implement quota tracking (Codex/Claude/Antigravity), cost calculation, CodexBar, or Hermes integration unless a later milestone asks for it.
 - **No Heavy Frontend Frameworks**: Keep the frontend on Angular standalone components and standard DOM APIs.

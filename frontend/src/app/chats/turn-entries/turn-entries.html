@@ -1,0 +1,24 @@
+@for (entry of entries(); track entry.id) {
+  @switch (entry.type) {
+    @case ('message_chunk') {
+      <div class="message-text">{{ entry.text }}</div>
+    }
+    @case ('thought_chunk') {
+      <mat-expansion-panel class="thought">
+        <mat-expansion-panel-header>
+          <mat-panel-title><mat-icon>psychology</mat-icon><span>Thought process</span></mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="thought-text">{{ entry.text }}</div>
+      </mat-expansion-panel>
+    }
+    @case ('tool_call') {
+      <hub-tool-call [tool]="entry" />
+    }
+    @case ('plan') {
+      <hub-plan-view [entries]="entry.entries" />
+    }
+    @case ('permission_request') {
+      <hub-permission-card [permission]="entry" [chatId]="chatId()" />
+    }
+  }
+}
