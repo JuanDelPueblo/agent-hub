@@ -1,5 +1,6 @@
 use agent_hub::{
-    config::{parse_agents, AgentConfig, Config},
+    agents::{parse_agents, AgentDefinition, AgentRegistry},
+    config::Config,
     events::{EventLog, EventPayload},
     session::SessionManager,
     store::Store,
@@ -18,7 +19,7 @@ fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
     let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
     let history = root.join("history");
     std::fs::create_dir_all(&history).unwrap();
-    let agent = AgentConfig::codex_default()
+    let agent = AgentDefinition::codex_default()
         .with_command("python3".into())
         .with_args(vec![
             format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
@@ -26,11 +27,7 @@ fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
             if can_load { "load" } else { "no-load" }.into(),
         ])
         .with_idle_timeout(Duration::ZERO);
-    SessionManager::with_store(
-        std::collections::HashMap::from([("codex".into(), agent)]),
-        log,
-        Some(store),
-    )
+    SessionManager::with_store(Arc::new(AgentRegistry::new([agent])), log, Some(store))
 }
 
 #[tokio::test]
@@ -227,7 +224,10 @@ fn generic_configuration_is_validated() {
     let agents =
         parse_agents(r#"{"custom":{"command":"/nix/store/example/bin/acp","args":["--stdio"]}}"#)
             .unwrap();
-    assert_eq!(agents["custom"].acp_args, vec!["--stdio"]);
+    assert_eq!(
+        agents.definition("custom").unwrap().launch.args,
+        vec!["--stdio"]
+    );
     assert!(parse_agents(r#"{"bad":{"command":""}}"#).is_err());
     assert!(parse_agents(r#"{"bad":{"command":"acp","unknown":true}}"#).is_err());
     let options = json!([{"id":"model","type":"select","options":[{"group":"provider","options":[{"value":"x"}]}]},{"id":"fast","type":"boolean"}]);

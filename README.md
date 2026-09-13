@@ -118,7 +118,9 @@ Server-owned JSON definitions in `agents.json`:
 }
 ```
 
-Definitions accept optional `args` (array), `env` (object), and `idle_timeout` (seconds).
+Definitions accept optional `args` (array), `env` (object), `idle_timeout`
+(seconds), `display_name` (string), `usage_provider` (string), and `metadata`
+(object). Agent Hub never derives a usage provider from the agent name.
 
 The UI renders ACP `configOptions` dynamically (including select optgroups and switches) and listens for `config_option_update`. Selected values are saved per chat and reapplied on reconnect.
 

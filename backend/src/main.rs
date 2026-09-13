@@ -1,8 +1,5 @@
 use agent_hub::{
-    config::{parse_agents, Config},
-    events::EventLog,
-    session::SessionManager,
-    store::Store,
+    agents::parse_agents, config::Config, events::EventLog, session::SessionManager, store::Store,
     web::WebServer,
 };
 use clap::Parser;
@@ -41,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     config.web.public_origin = args.public_origin;
     config.web.project_roots = args.project_root;
     if let Some(path) = args.agents_file {
-        config.agents = parse_agents(&std::fs::read_to_string(path)?)?;
+        config.agents = Arc::new(parse_agents(&std::fs::read_to_string(path)?)?);
     }
     let manager = SessionManager::with_store(config.agents.clone(), events, Some(store));
     let web = WebServer::new(manager.clone(), Arc::new(config));

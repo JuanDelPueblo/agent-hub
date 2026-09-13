@@ -661,7 +661,7 @@ pub async fn remote_sessions(
     ))
 }
 pub async fn agents(State(s): State<AppState>) -> Json<Value> {
-    let mut agents: Vec<_> = s.config.agents.keys().cloned().collect();
-    agents.sort();
-    Json(json!(agents))
+    // Sorted ids. Richer agent metadata belongs to a later phase, because
+    // changing this payload changes the frontend contract.
+    Json(json!(s.config.agents.ids()))
 }

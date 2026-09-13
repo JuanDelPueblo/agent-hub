@@ -1,10 +1,9 @@
-use agent_hub::config::AgentConfig;
+use agent_hub::agents::{AgentDefinition, AgentRegistry};
 use agent_hub::events::EventLog;
 use agent_hub::session::SessionManager;
 use agent_hub::state::{ProcessState, TurnState};
 #[cfg(windows)]
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(windows)]
 use std::time::{Duration, Instant};
@@ -13,11 +12,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn test_session_manager_get_or_create() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
 
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let cwd = std::path::Path::new("/tmp");
     let session = mgr.get_or_create("codex", cwd).await;
@@ -30,9 +28,9 @@ async fn test_session_manager_get_or_create() {
 
 #[tokio::test]
 async fn test_session_manager_unknown_agent() {
-    let configs = HashMap::new();
+    let configs: Vec<AgentDefinition> = Vec::new();
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let result = mgr
         .get_or_create("unknown", std::path::Path::new("/tmp"))
@@ -42,11 +40,10 @@ async fn test_session_manager_unknown_agent() {
 
 #[tokio::test]
 async fn test_session_manager_different_cwd_creates_new_session() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
 
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let s1 = mgr
         .get_or_create("codex", std::path::Path::new("/tmp/a"))
@@ -62,21 +59,19 @@ async fn test_session_manager_different_cwd_creates_new_session() {
 
 #[tokio::test]
 async fn test_session_manager_has_agent() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
 
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     assert!(mgr.has_agent("codex"));
     assert!(!mgr.has_agent("unknown"));
 }
 
 #[tokio::test]
 async fn test_session_manager_get_or_create_is_atomic() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let cwd = Arc::new(std::path::PathBuf::from("/tmp"));
 
     let mut tasks = Vec::new();
@@ -99,10 +94,9 @@ async fn test_session_manager_get_or_create_is_atomic() {
 
 #[tokio::test]
 async fn test_shutdown_all_clears_session_indexes() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let session = mgr
         .get_or_create("codex", std::path::Path::new("/tmp"))
@@ -117,10 +111,9 @@ async fn test_shutdown_all_clears_session_indexes() {
 
 #[tokio::test]
 async fn test_session_initial_state() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let session = mgr
         .get_or_create("codex", std::path::Path::new("/tmp"))
@@ -133,10 +126,9 @@ async fn test_session_initial_state() {
 
 #[tokio::test]
 async fn test_session_manager_get_by_id() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     let session = mgr
         .get_or_create("codex", std::path::Path::new("/tmp"))
@@ -152,11 +144,12 @@ async fn test_session_manager_get_by_id() {
 
 #[tokio::test]
 async fn test_session_manager_list_sessions() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
-    configs.insert("gemini".to_string(), AgentConfig::gemini_default());
+    let configs = vec![
+        AgentDefinition::codex_default(),
+        AgentDefinition::gemini_default(),
+    ];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     assert!(mgr.list_sessions().await.is_empty());
 
@@ -177,10 +170,9 @@ async fn test_session_manager_list_sessions() {
 
 #[tokio::test]
 async fn test_session_manager_get_all_status() {
-    let mut configs = HashMap::new();
-    configs.insert("codex".to_string(), AgentConfig::codex_default());
+    let configs = vec![AgentDefinition::codex_default()];
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
 
     mgr.get_or_create("codex", std::path::Path::new("/tmp"))
         .await
@@ -201,22 +193,18 @@ async fn test_session_timeout_returns_promptly() {
     std::fs::write(&script_path, fake_acp_timeout_script()).unwrap();
     let prompt_file = temp.path().join("prompt-started.txt");
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     let session_for_task = session.clone();
@@ -253,22 +241,18 @@ async fn test_session_timeout_kills_acp_process_tree() {
     let pid_file = temp.path().join("grandchild-pid.txt");
     let self_pid_file = temp.path().join("self-pid.txt");
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     let result = session
@@ -331,22 +315,18 @@ async fn test_session_restarts_cleanly_after_timeout() {
     let script_path = temp.path().join("fake-acp-restart.ps1");
     std::fs::write(&script_path, fake_acp_restart_script()).unwrap();
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     let first = session
@@ -634,22 +614,18 @@ async fn test_session_shutdown_kills_grandchildren() {
     let pid_file = temp.path().join("grandchild-pid.txt");
     let self_pid_file = temp.path().join("self-pid.txt");
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     session
@@ -734,22 +710,18 @@ async fn test_dropping_session_kills_process_tree_without_explicit_shutdown() {
     let pid_file = temp.path().join("grandchild-pid.txt");
     let self_pid_file = temp.path().join("self-pid.txt");
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     session
@@ -828,22 +800,18 @@ async fn test_acp_exit_reaps_process_tree_without_session_shutdown() {
     let pid_file = temp.path().join("grandchild-pid.txt");
     let self_pid_file = temp.path().join("self-pid.txt");
 
-    let mut configs = HashMap::new();
-    configs.insert(
-        "codex".to_string(),
-        AgentConfig::codex_default()
-            .with_command("powershell".to_string())
-            .with_args(vec![
-                "-NoProfile".to_string(),
-                "-ExecutionPolicy".to_string(),
-                "Bypass".to_string(),
-                "-File".to_string(),
-                script_path.to_string_lossy().to_string(),
-            ]),
-    );
+    let configs = vec![AgentDefinition::codex_default()
+        .with_command("powershell".to_string())
+        .with_args(vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])];
 
     let event_log = Arc::new(EventLog::new(100));
-    let mgr = SessionManager::new(configs, event_log);
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
     let session = mgr.get_or_create("codex", temp.path()).await.unwrap();
 
     session

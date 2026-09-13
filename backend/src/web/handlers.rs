@@ -58,10 +58,10 @@ pub async fn api_list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<SessionListResponse>, StatusCode> {
     let project_root = FsPath::new(&state.config.web.project_root);
-    for agent in state.config.agents.keys() {
+    for agent in state.config.agents.ids() {
         state
             .session_manager
-            .get_or_create(agent, project_root)
+            .get_or_create(&agent, project_root)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
@@ -165,10 +165,10 @@ pub async fn api_permission_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AgentConfig, Config};
+    use crate::agents::{AgentDefinition, AgentRegistry};
+    use crate::config::Config;
     use crate::events::EventLog;
     use crate::session::SessionManager;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -176,10 +176,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
 
         let mut config = Config {
-            agents: HashMap::from([
-                ("codex".to_string(), AgentConfig::codex_default()),
-                ("gemini".to_string(), AgentConfig::gemini_default()),
-            ]),
+            agents: Arc::new(AgentRegistry::new([
+                AgentDefinition::codex_default(),
+                AgentDefinition::gemini_default(),
+            ])),
             ..Default::default()
         };
         config.web.project_root = temp.path().to_string_lossy().to_string();

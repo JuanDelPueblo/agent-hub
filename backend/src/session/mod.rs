@@ -1,5 +1,5 @@
 use crate::acp::AcpClient;
-use crate::config::AgentConfig;
+use crate::agents::{AgentRegistry, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
 use agent_client_protocol_schema::{PromptResponse, StopReason};
@@ -27,14 +27,14 @@ pub struct AcpSession {
     // `mark_dead` takes the client (and the spawned shutdown task races with
     // agent-hub's own exit), `shutdown` still has a root pid to sweep descendants.
     child_root_pid: RwLock<Option<u32>>,
-    config: AgentConfig,
+    runtime: Arc<AgentRuntime>,
     event_log: Arc<EventLog>,
     last_activity: RwLock<Instant>,
     turn_guard: Mutex<()>,
 }
 
 impl AcpSession {
-    pub fn new(key: SessionKey, config: AgentConfig, event_log: Arc<EventLog>) -> Self {
+    pub fn new(key: SessionKey, runtime: Arc<AgentRuntime>, event_log: Arc<EventLog>) -> Self {
         Self {
             store: None,
             id: uuid::Uuid::new_v4().to_string(),
@@ -44,7 +44,7 @@ impl AcpSession {
             client: RwLock::new(None),
             acp_session_id: RwLock::new(None),
             child_root_pid: RwLock::new(None),
-            config,
+            runtime,
             event_log,
             last_activity: RwLock::new(Instant::now()),
             turn_guard: Mutex::new(()),
@@ -137,12 +137,12 @@ impl AcpSession {
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy
         } else {
-            self.config.callback_policy.clone()
+            self.runtime.default_permission_policy.clone()
         };
         let client = match AcpClient::spawn(
-            &self.config.acp_command,
-            &self.config.acp_args,
-            &self.config.env_vars,
+            &self.runtime.launch.command,
+            &self.runtime.launch.args,
+            &self.runtime.launch.env,
             &self.key.cwd,
             policy,
             self.id.clone(),
@@ -585,18 +585,18 @@ fn stop_reason_to_string(stop_reason: StopReason) -> String {
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<AcpSession>>>,
     sessions_by_id: RwLock<HashMap<String, Arc<AcpSession>>>,
-    configs: HashMap<String, AgentConfig>,
+    agents: Arc<AgentRegistry>,
     event_log: Arc<EventLog>,
     pub store: Option<Arc<crate::store::Store>>,
 }
 
 impl SessionManager {
-    pub fn new(configs: HashMap<String, AgentConfig>, event_log: Arc<EventLog>) -> Arc<Self> {
-        Self::with_store(configs, event_log, None)
+    pub fn new(agents: Arc<AgentRegistry>, event_log: Arc<EventLog>) -> Arc<Self> {
+        Self::with_store(agents, event_log, None)
     }
 
     pub fn with_store(
-        configs: HashMap<String, AgentConfig>,
+        agents: Arc<AgentRegistry>,
         event_log: Arc<EventLog>,
         store: Option<Arc<crate::store::Store>>,
     ) -> Arc<Self> {
@@ -604,7 +604,7 @@ impl SessionManager {
             store,
             sessions: RwLock::new(HashMap::new()),
             sessions_by_id: RwLock::new(HashMap::new()),
-            configs,
+            agents,
             event_log,
         });
 
@@ -637,18 +637,21 @@ impl SessionManager {
             }
         }
 
-        let config = self
-            .configs
-            .get(agent)
-            .ok_or_else(|| anyhow::anyhow!("Unknown agent: {}", agent))?
-            .clone();
+        let runtime = self
+            .agents
+            .runtime(agent)
+            .ok_or_else(|| anyhow::anyhow!("Unknown agent: {}", agent))?;
 
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.values().find(|s| s.key == key) {
             return Ok(session.clone());
         }
 
-        let session = Arc::new(AcpSession::new(key.clone(), config, self.event_log.clone()));
+        let session = Arc::new(AcpSession::new(
+            key.clone(),
+            runtime,
+            self.event_log.clone(),
+        ));
         let mut by_id = self.sessions_by_id.write().await;
         sessions.insert(session.id.clone(), session.clone());
         by_id.insert(session.id.clone(), session.clone());
@@ -664,13 +667,13 @@ impl SessionManager {
         let store = self.store.as_ref()?;
         let chat = store.chat(session_id).ok()?;
         let project = store.project(&chat.project_id).ok()?;
-        let config = self.configs.get(&chat.agent)?.clone();
+        let runtime = self.agents.runtime(&chat.agent)?;
         let mut session = AcpSession::new(
             SessionKey {
                 agent: chat.agent,
                 cwd: project.path.into(),
             },
-            config,
+            runtime,
             self.event_log.clone(),
         );
         session.id = chat.id;
@@ -757,7 +760,7 @@ impl SessionManager {
                 continue;
             }
             let elapsed = session.last_activity().await.elapsed();
-            if elapsed > session.config.idle_timeout {
+            if elapsed > session.runtime.launch.idle_timeout {
                 to_reap.push(key.clone());
             }
         }
@@ -765,7 +768,8 @@ impl SessionManager {
         for key in to_reap {
             if let Some(session) = self.get_by_id(&key).await {
                 if let Ok(_guard) = session.turn_guard.try_lock() {
-                    if session.last_activity().await.elapsed() > session.config.idle_timeout {
+                    if session.last_activity().await.elapsed() > session.runtime.launch.idle_timeout
+                    {
                         session.shutdown().await;
                     }
                 }
@@ -778,7 +782,7 @@ impl SessionManager {
     }
 
     pub fn has_agent(&self, name: &str) -> bool {
-        self.configs.contains_key(name)
+        self.agents.contains(name)
     }
 
     pub async fn remove_session(&self, key: &str) -> Option<Arc<AcpSession>> {

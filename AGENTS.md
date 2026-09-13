@@ -50,6 +50,13 @@ Optional fields per agent:
 - `args`: Array of CLI arguments.
 - `env`: Key-value object of environment variables.
 - `idle_timeout`: Idle timeout in seconds before the process is reaped (default: 900).
+- `display_name`: Name for the user interface (default: the map key).
+- `usage_provider`: Identifier of the provider that reports quota and account
+  status. Agent Hub never infers this from the agent name, so an agent named
+  `codex` gets no provider until this field names one.
+- `metadata`: Free-form object. Agent Hub stores it and does not read it yet.
+
+The file rejects an unknown field, so a typo fails at startup.
 
 ---
 
@@ -65,8 +72,9 @@ agent-hub/
 │   │   ├── main.rs           # Binary entrypoint
 │   │   ├── lib.rs            # Library exports
 │   │   ├── acp/              # ACP protocol, callbacks, process supervision
+│   │   ├── agents/           # Agent definitions, launch config, agents.json
 │   │   ├── session/          # Chat sessions, turn locks, idle reaping
-│   │   ├── store.rs          # SQLite schema, projects, chats, activity
+│   │   ├── store/            # SQLite migrations, projects, chats, events
 │   │   ├── events.rs         # Event log and WebSocket broadcasting
 │   │   └── web/              # Axum router, REST handlers, static file serving
 │   └── fake/                 # In-memory backend for frontend development
@@ -103,12 +111,21 @@ agent-hub/
 - **Turn Locking**: Allows one turn at a time per chat.
 - **Process Management**: Reaps idle processes (900 seconds by default), stops them through `session/close`, and terminates the process tree when necessary.
 
-### 5.3. Persistence (`backend/src/store.rs`)
+### 5.3. Persistence (`backend/src/store/`)
 - **Engine**: SQLite in WAL mode, with foreign keys and a busy timeout.
+- **Migrations (`store/migrations.rs`)**: An ordered table of versioned
+  migrations. Each one runs in its own transaction and advances
+  `PRAGMA user_version` inside that transaction, so the version advances only
+  after the migration succeeds. A database from a newer build is reported, never
+  reset. Add a migration to the end of the table; never edit one that shipped.
+- **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
+  `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
+  facade controls the lock and any shared transaction.
 - **Tables**:
   - `projects`: Managed repositories, with a name and a canonical path.
   - `chats`: Chats bound to a project, an agent, a title, an ACP session ID, a permission policy, and configuration values.
-  - `events`: Session events in strict sequence order.
+  - `events`: Session events in strict sequence order, with an indexed
+    `session_id` column so chat deletion does not scan the table.
 
 ### 5.4. Event Dispatch and WebSockets (`backend/src/events.rs`)
 - **Event Log**: A thread-safe in-memory ring buffer that holds the latest 10,000 events for reconnect and replay.
