@@ -1,4 +1,4 @@
-import { Component, Input } from '@angular/core';
+import { Component, input } from '@angular/core';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -9,14 +9,13 @@ import { ToolCallComponent } from '../tool-call/tool-call';
 
 @Component({
   selector: 'hub-message-item',
-  standalone: true,
   imports: [MatExpansionModule, MatIconModule, MatProgressSpinnerModule, PermissionCardComponent, PlanViewComponent, ToolCallComponent],
   templateUrl: './message-item.html',
   styleUrl: './message-item.scss',
 })
 export class MessageItemComponent {
-  @Input({ required: true }) item!: DisplayItem;
-  @Input() chatId = '';
+  readonly item = input.required<DisplayItem>();
+  readonly chatId = input('');
   user(item: DisplayItem): DisplayUserMessage { return item as DisplayUserMessage; }
   turn(item: DisplayItem): DisplayTurn { return item as DisplayTurn; }
   error(item: DisplayItem): DisplayError { return item as DisplayError; }

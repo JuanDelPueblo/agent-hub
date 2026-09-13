@@ -1,5 +1,5 @@
-import { Component, Inject, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { Component, inject, signal } from '@angular/core';
+import { form, FormField } from '@angular/forms/signals';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -9,21 +9,19 @@ import { AppStateService } from '../../state/app-state.service';
 
 @Component({
   selector: 'hub-rename-chat-dialog',
-  standalone: true,
-  imports: [FormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  imports: [FormField, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
   templateUrl: './rename-chat-dialog.html',
   styleUrl: './rename-chat-dialog.scss',
 })
 export class RenameChatDialogComponent {
   readonly dialogRef = inject(MatDialogRef<RenameChatDialogComponent>);
+  readonly chat = inject<Chat>(MAT_DIALOG_DATA);
   private readonly state = inject(AppStateService);
-  readonly title = signal('');
+  private readonly formModel = signal({ title: this.chat.title || '' });
+  readonly renameForm = form(this.formModel);
+  readonly title = this.renameForm.title().value;
   readonly saving = signal(false);
   readonly error = signal('');
-
-  constructor(@Inject(MAT_DIALOG_DATA) readonly chat: Chat) {
-    this.title.set(chat.title || '');
-  }
 
   async save(): Promise<void> {
     const value = this.title().trim();

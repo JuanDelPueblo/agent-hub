@@ -1,5 +1,4 @@
-import { Component, Input, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { Component, computed, inject, input, signal } from '@angular/core';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -10,14 +9,16 @@ import { AppStateService } from '../../state/app-state.service';
 
 @Component({
   selector: 'hub-chat-config',
-  standalone: true,
-  imports: [FormsModule, MatDividerModule, MatFormFieldModule, MatIconModule, MatSelectModule, MatSlideToggleModule],
+  imports: [MatDividerModule, MatFormFieldModule, MatIconModule, MatSelectModule, MatSlideToggleModule],
   templateUrl: './chat-config.html',
   styleUrl: './chat-config.scss',
 })
 export class ChatConfigComponent {
-  @Input() chat: Chat | null = null;
-  @Input() options: ConfigOption[] = [];
+  readonly chat = input<Chat | null>(null);
+  readonly options = input<ConfigOption[]>([]);
+  readonly additionalOptions = computed(() =>
+    this.options().filter((option) => !this.isComposerOption(option)),
+  );
   readonly errorMessage = signal('');
   private readonly state = inject(AppStateService);
 
@@ -30,19 +31,17 @@ export class ChatConfigComponent {
       || option.name.toLowerCase() === 'model' || option.name.toLowerCase() === 'reasoning effort';
   }
 
-  hasAdditionalOptions(): boolean {
-    return this.options.some((option) => !this.isComposerOption(option));
-  }
-
   async changePolicy(policy: PermissionPolicy): Promise<void> {
-    if (!this.chat) return;
+    const chat = this.chat();
+    if (!chat) return;
     this.errorMessage.set('');
-    try { await this.state.setChatPolicy(this.chat.id, policy); } catch (error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update permission policy'); }
+    try { await this.state.setChatPolicy(chat.id, policy); } catch (error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update permission policy'); }
   }
 
   async changeOption(option: ConfigOption, value: unknown): Promise<void> {
-    if (!this.chat) return;
+    const chat = this.chat();
+    if (!chat) return;
     this.errorMessage.set('');
-    try { await this.state.setChatConfig(this.chat.id, option.id, value); } catch (error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update agent configuration'); }
+    try { await this.state.setChatConfig(chat.id, option.id, value); } catch (error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update agent configuration'); }
   }
 }

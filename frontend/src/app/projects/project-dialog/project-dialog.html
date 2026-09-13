@@ -13,7 +13,7 @@
           <div class="selected-path"><strong>Selected directory</strong><code>{{ selectedPath() }}</code></div>
           <mat-form-field appearance="outline">
             <mat-label>Project display name</mat-label>
-            <input matInput [ngModel]="projectName()" (ngModelChange)="editProjectName($event)" autocomplete="off" />
+            <input matInput [formField]="projectForm.projectName" (input)="editProjectName()" autocomplete="off" />
           </mat-form-field>
         }
       </div>
@@ -22,7 +22,7 @@
       <div class="tab-content">
         <mat-form-field appearance="outline">
           <mat-label>Git repository URL (HTTPS or SSH)</mat-label>
-          <input matInput [ngModel]="repoUrl()" (ngModelChange)="repoUrl.set($event)" placeholder="https://github.com/org/repo.git" autocomplete="off" />
+          <input matInput [formField]="projectForm.repoUrl" placeholder="https://github.com/org/repo.git" autocomplete="off" />
           <mat-hint>Plain HTTP URLs are not accepted by the server.</mat-hint>
         </mat-form-field>
         <p class="field-label">Destination parent directory</p>
@@ -33,7 +33,7 @@
         @if (cloneParentPath()) { <div class="selected-path"><strong>Parent path</strong><code>{{ cloneParentPath() }}</code></div> }
         <mat-form-field appearance="outline">
           <mat-label>Project / folder name (optional)</mat-label>
-          <input matInput [ngModel]="cloneProjectName()" (ngModelChange)="cloneProjectName.set($event)" autocomplete="off" />
+          <input matInput [formField]="projectForm.cloneProjectName" autocomplete="off" />
         </mat-form-field>
         @if (cloning()) { <mat-progress-bar mode="indeterminate" aria-label="Cloning repository" /> }
       </div>

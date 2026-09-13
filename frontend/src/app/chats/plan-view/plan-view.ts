@@ -1,17 +1,16 @@
-import { Component, Input } from '@angular/core';
+import { Component, input } from '@angular/core';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import type { PlanEntry } from '../../core/api/types';
 
 @Component({
   selector: 'hub-plan-view',
-  standalone: true,
   imports: [MatCardModule, MatIconModule],
   templateUrl: './plan-view.html',
   styleUrl: './plan-view.scss',
 })
 export class PlanViewComponent {
-  @Input() entries: PlanEntry[] = [];
+  readonly entries = input<PlanEntry[]>([]);
 
   statusIcon(status: string): string {
     if (status === 'completed') return 'check_circle';

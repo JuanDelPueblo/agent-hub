@@ -1,4 +1,4 @@
-import { Component, Input, inject, signal } from '@angular/core';
+import { Component, inject, input, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
@@ -14,14 +14,13 @@ import { AppStateService } from '../../state/app-state.service';
  */
 @Component({
   selector: 'hub-new-chat-button',
-  standalone: true,
   imports: [MatButtonModule, MatIconModule, MatMenuModule, MatProgressSpinnerModule],
   templateUrl: './new-chat-button.html',
   styleUrl: './new-chat-button.scss',
 })
 export class NewChatButtonComponent {
   /** The project that receives the new chat. */
-  @Input({ required: true }) projectId = '';
+  readonly projectId = input.required<string>();
 
   readonly state = inject(AppStateService);
   readonly creating = signal(false);
@@ -29,11 +28,11 @@ export class NewChatButtonComponent {
   private readonly snackBar = inject(MatSnackBar);
 
   async create(agent: string): Promise<void> {
-    if (!this.projectId || this.creating()) return;
+    if (!this.projectId() || this.creating()) return;
     this.creating.set(true);
     try {
-      const chat = await this.state.createChat(this.projectId, agent);
-      await this.router.navigate(['/projects', this.projectId, 'chats', chat.id]);
+      const chat = await this.state.createChat(this.projectId(), agent);
+      await this.router.navigate(['/projects', this.projectId(), 'chats', chat.id]);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to create the chat.';
       this.snackBar.open(message, 'Dismiss', { duration: 6000 });

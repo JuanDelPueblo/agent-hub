@@ -11,7 +11,7 @@ describe('MessageItemComponent', () => {
 
   it('uses the expandable thought process panel', () => {
     const message = TestBed.createComponent(MessageItemComponent);
-    message.componentInstance.item = {
+    message.componentRef.setInput('item', {
       id: 1,
       type: 'turn',
       agent: 'antigravity',
@@ -20,7 +20,7 @@ describe('MessageItemComponent', () => {
       status: 'complete',
       stopReason: null,
       entries: [{ id: 2, type: 'thought_chunk', text: 'Inspecting the repository' }],
-    };
+    });
     message.detectChanges();
 
     const thought = message.nativeElement.querySelector('.thought') as HTMLElement;

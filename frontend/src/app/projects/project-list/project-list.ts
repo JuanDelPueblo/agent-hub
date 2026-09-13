@@ -14,7 +14,6 @@ import type { Project } from '../../core/api/types';
 
 @Component({
   selector: 'hub-project-list',
-  standalone: true,
   imports: [MatButtonModule, MatCardModule, MatDialogModule, MatIconModule, MatMenuModule, MatProgressSpinnerModule, RouterLink],
   templateUrl: './project-list.html',
   styleUrl: './project-list.scss',

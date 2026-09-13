@@ -2,7 +2,7 @@
 <mat-dialog-content>
   <mat-form-field appearance="outline">
     <mat-label>Chat title</mat-label>
-    <input matInput [ngModel]="title()" (ngModelChange)="title.set($event)" (keyup.enter)="save()" autocomplete="off" />
+    <input matInput [formField]="renameForm.title" (keyup.enter)="save()" autocomplete="off" />
   </mat-form-field>
   @if (error()) { <div class="error" role="alert">{{ error() }}</div> }
 </mat-dialog-content>

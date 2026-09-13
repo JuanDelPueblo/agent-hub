@@ -12,7 +12,6 @@ import { AppStateService } from '../../state/app-state.service';
 
 @Component({
   selector: 'hub-chat-composer',
-  standalone: true,
   imports: [ReactiveFormsModule, TextFieldModule, MatButtonModule, MatIconModule, MatMenuModule, MatProgressSpinnerModule, MatTooltipModule],
   templateUrl: './chat-composer.html',
   styleUrl: './chat-composer.scss',

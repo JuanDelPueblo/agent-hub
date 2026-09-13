@@ -9,7 +9,6 @@ import { AppStateService } from '../../state/app-state.service';
  */
 @Component({
   selector: 'hub-connection-status',
-  standalone: true,
   imports: [MatTooltipModule],
   templateUrl: './connection-status.html',
   styleUrl: './connection-status.scss',

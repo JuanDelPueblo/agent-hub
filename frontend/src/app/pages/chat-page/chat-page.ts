@@ -6,7 +6,6 @@ import { ChatWorkspaceComponent } from '../../chats/chat-workspace/chat-workspac
 
 @Component({
   selector: 'hub-chat-page',
-  standalone: true,
   imports: [ChatWorkspaceComponent],
   templateUrl: './chat-page.html',
   styleUrl: './chat-page.scss',

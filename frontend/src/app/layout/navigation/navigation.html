@@ -24,12 +24,14 @@
       [matMenuTriggerFor]="projectMenu"
       aria-label="Switch project"
     >
-      <span class="switcher-icon"><mat-icon>folder</mat-icon></span>
-      <span class="switcher-text">
-        <span class="switcher-name">{{ project.name }}</span>
-        <span class="switcher-path" [title]="project.path">{{ project.path }}</span>
+      <span class="project-switcher-content">
+        <span class="switcher-icon"><mat-icon>folder</mat-icon></span>
+        <span class="switcher-text">
+          <span class="switcher-name">{{ project.name }}</span>
+          <span class="switcher-path" [title]="project.path">{{ project.path }}</span>
+        </span>
+        <mat-icon iconPositionEnd class="switcher-caret">unfold_more</mat-icon>
       </span>
-      <mat-icon iconPositionEnd class="switcher-caret">unfold_more</mat-icon>
     </button>
 
     <mat-menu #projectMenu="matMenu" class="hub-project-menu" [overlapTrigger]="false">
@@ -83,7 +85,7 @@
           [routerLink]="['/projects', chat.project_id, 'chats', chat.id]"
           routerLinkActive="selected"
           (click)="closeRequested.emit()"
-          [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
+          [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat') + '. Process ' + processStateLabel(chat)"
         >
           <span matListItemIcon class="status-slot">
             <span
@@ -91,6 +93,7 @@
               [class.running]="chat.process_state === 'RUNNING'"
               [class.dead]="chat.process_state === 'DEAD'"
             ></span>
+            <span class="visually-hidden">Process {{ processStateLabel(chat) }}</span>
           </span>
           <span matListItemTitle>{{ chat.title || 'Untitled chat' }}</span>
           <span matListItemLine>

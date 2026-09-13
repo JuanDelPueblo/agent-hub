@@ -20,7 +20,7 @@ describe('turn entry layout', () => {
 
   it('uses compact headers without Material avatar spacing', () => {
     const plan = TestBed.createComponent(PlanViewComponent);
-    plan.componentInstance.entries = [{ content: 'Read the router', status: 'completed' }];
+    plan.componentRef.setInput('entries', [{ content: 'Read the router', status: 'completed' }]);
     plan.detectChanges();
 
     const planElement = plan.nativeElement as HTMLElement;
@@ -29,7 +29,7 @@ describe('turn entry layout', () => {
     expect(planElement.querySelector('.plan-title')?.textContent?.trim()).toBe('Execution plan');
 
     const permission = TestBed.createComponent(PermissionCardComponent);
-    permission.componentInstance.permission = {
+    permission.componentRef.setInput('permission', {
       id: 1,
       type: 'permission_request',
       requestId: 'req-1',
@@ -37,7 +37,7 @@ describe('turn entry layout', () => {
       description: 'Write backend/src/web/hub.rs',
       responded: true,
       decision: 'Allowed',
-    };
+    });
     permission.detectChanges();
 
     const permissionElement = permission.nativeElement as HTMLElement;
@@ -49,11 +49,11 @@ describe('turn entry layout', () => {
 
   it('leaves vertical rhythm to the turn body instead of stacking child margins', () => {
     const plan = TestBed.createComponent(PlanViewComponent);
-    plan.componentInstance.entries = [{ content: 'Read the router', status: 'pending' }];
+    plan.componentRef.setInput('entries', [{ content: 'Read the router', status: 'pending' }]);
     plan.detectChanges();
 
     const permission = TestBed.createComponent(PermissionCardComponent);
-    permission.componentInstance.permission = {
+    permission.componentRef.setInput('permission', {
       id: 1,
       type: 'permission_request',
       requestId: 'req-1',
@@ -61,18 +61,18 @@ describe('turn entry layout', () => {
       description: 'Write backend/src/web/hub.rs',
       responded: true,
       decision: 'Allowed',
-    };
+    });
     permission.detectChanges();
 
     const tool = TestBed.createComponent(ToolCallComponent);
-    tool.componentInstance.tool = {
+    tool.componentRef.setInput('tool', {
       id: 2,
       type: 'tool_call',
       toolCallId: 'tool-1',
       title: 'Edit backend/src/web/hub.rs',
       status: 'completed',
       output: null,
-    };
+    });
     tool.detectChanges();
 
     for (const element of [plan.nativeElement, permission.nativeElement, tool.nativeElement] as HTMLElement[]) {

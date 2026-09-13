@@ -17,7 +17,6 @@ import { MessageItemComponent } from '../message-item/message-item';
 
 @Component({
   selector: 'hub-event-stream',
-  standalone: true,
   imports: [MatButtonModule, MatIconModule, MatTooltipModule, MessageItemComponent],
   templateUrl: './event-stream.html',
   styleUrl: './event-stream.scss',

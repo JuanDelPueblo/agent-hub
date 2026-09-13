@@ -3,7 +3,7 @@
   @if (errorMessage()) { <div class="error-box" role="alert">{{ errorMessage() }}</div> }
   <mat-form-field appearance="outline">
     <mat-label>Project display name</mat-label>
-    <input matInput [ngModel]="name()" (ngModelChange)="name.set($event)" autocomplete="off" />
+    <input matInput [formField]="projectForm.name" autocomplete="off" />
   </mat-form-field>
   <p class="field-label">Project directory</p>
   <hub-folder-picker [initialPath]="project.path" (folderBrowsed)="browsedPath.set($event.path)" (folderSelected)="selectedPath.set($event.path)" />

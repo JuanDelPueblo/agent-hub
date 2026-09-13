@@ -1,6 +1,6 @@
-import { Component, Inject, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import { Component, inject, signal } from '@angular/core';
+import { form, FormField } from '@angular/forms/signals';
+import { MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -13,9 +13,8 @@ import { FolderPickerComponent } from '../folder-picker/folder-picker';
 
 @Component({
   selector: 'hub-project-dialog',
-  standalone: true,
   imports: [
-    FormsModule,
+    FormField,
     FolderPickerComponent,
     MatButtonModule,
     MatDialogModule,
@@ -34,22 +33,25 @@ export class ProjectDialogComponent {
   private readonly router = inject(Router);
 
   readonly modeIndex = signal(0);
-  readonly projectName = signal('');
+  private readonly formModel = signal({
+    projectName: '',
+    repoUrl: '',
+    cloneProjectName: '',
+  });
+  readonly projectForm = form(this.formModel);
+  readonly projectName = this.projectForm.projectName().value;
   readonly selectedPath = signal('');
   readonly browsedPath = signal('');
-  readonly repoUrl = signal('');
+  readonly repoUrl = this.projectForm.repoUrl().value;
   readonly cloneParentPath = signal('');
   readonly cloneBrowsedPath = signal('');
-  readonly cloneProjectName = signal('');
+  readonly cloneProjectName = this.projectForm.cloneProjectName().value;
   readonly cloning = signal(false);
   readonly errorMessage = signal('');
   private projectNameEdited = false;
 
-  constructor(@Inject(MAT_DIALOG_DATA) _data: unknown) {}
-
-  editProjectName(value: string): void {
+  editProjectName(): void {
     this.projectNameEdited = true;
-    this.projectName.set(value);
   }
 
   folderBrowsed(event: { path: string }): void {

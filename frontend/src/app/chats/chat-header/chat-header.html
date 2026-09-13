@@ -1,8 +1,8 @@
 <header class="chat-header">
-  @if (chat) {
+  @if (chat(); as chat) {
     <div class="header-left">
       <button mat-icon-button class="nav-button" aria-label="Open navigation" matTooltip="Open navigation" (click)="toggleNavigation()"><mat-icon>menu</mat-icon></button>
-      <div class="title-area"><div class="title-line"><button mat-button class="title-button" type="button" (click)="rename()" [attr.aria-label]="'Rename chat ' + (chat.title || 'Untitled chat')">{{ chat.title || 'Untitled chat' }}</button>@if (chat.archived) { <span class="badge stopped">Archived</span> }</div><div class="badges"><span class="badge agent">{{ chat.agent }}</span>@if (chat.turn_state === 'PROMPTING') { <span class="badge thinking">Thinking…</span> }<span class="badge" [class.running]="chat.process_state === 'RUNNING'" [class.dead]="chat.process_state === 'DEAD'"><span class="status-dot"></span>{{ stateLabel(chat.process_state) }}</span></div></div>
+      <div class="title-area"><div class="title-line"><button mat-button class="title-button" type="button" (click)="rename()" [attr.aria-label]="'Rename chat ' + (chat.title || 'Untitled chat')"><span class="title-text">{{ chat.title || 'Untitled chat' }}</span></button>@if (chat.archived) { <span class="badge stopped">Archived</span> }</div><div class="badges"><span class="badge agent">{{ chat.agent }}</span>@if (chat.turn_state === 'PROMPTING') { <span class="badge thinking">Thinking…</span> }<span class="badge" [class.running]="chat.process_state === 'RUNNING'" [class.dead]="chat.process_state === 'DEAD'"><span class="status-dot"></span>{{ stateLabel(chat.process_state) }}</span></div></div>
     </div>
     <div class="header-actions">
       @if (chat.process_state === 'RUNNING') { <button mat-icon-button matTooltip="Stop process" aria-label="Stop process" (click)="stop()"><mat-icon>pause_circle</mat-icon></button> } @else { <button mat-icon-button matTooltip="Reconnect process" aria-label="Reconnect process" (click)="reconnect()"><mat-icon>play_circle</mat-icon></button> }

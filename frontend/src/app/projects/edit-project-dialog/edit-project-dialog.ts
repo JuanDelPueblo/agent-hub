@@ -1,5 +1,5 @@
-import { Component, Inject, computed, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { Component, computed, inject, signal } from '@angular/core';
+import { form, FormField } from '@angular/forms/signals';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -10,27 +10,24 @@ import { FolderPickerComponent } from '../folder-picker/folder-picker';
 
 @Component({
   selector: 'hub-edit-project-dialog',
-  standalone: true,
-  imports: [FormsModule, FolderPickerComponent, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  imports: [FormField, FolderPickerComponent, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
   templateUrl: './edit-project-dialog.html',
   styleUrl: './edit-project-dialog.scss',
 })
 export class EditProjectDialogComponent {
   readonly state = inject(AppStateService);
   readonly dialogRef = inject(MatDialogRef<EditProjectDialogComponent>);
-  readonly name = signal('');
-  readonly selectedPath = signal('');
+  readonly project = inject<Project>(MAT_DIALOG_DATA);
+  private readonly formModel = signal({ name: this.project.name });
+  readonly projectForm = form(this.formModel);
+  readonly name = this.projectForm.name().value;
+  readonly selectedPath = signal(this.project.path);
   readonly browsedPath = signal('');
   readonly saving = signal(false);
   readonly errorMessage = signal('');
   readonly canSave = computed(
     () => !!this.name().trim() && !!this.selectedPath() && !this.saving(),
   );
-
-  constructor(@Inject(MAT_DIALOG_DATA) readonly project: Project) {
-    this.name.set(project.name);
-    this.selectedPath.set(project.path);
-  }
 
   async save(): Promise<void> {
     if (!this.name().trim() || !this.selectedPath()) {

@@ -1,5 +1,5 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Injectable, inject } from '@angular/core';
+import { inject, Service } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type {
   Chat,
@@ -31,7 +31,7 @@ export class ApiError extends Error {
   }
 }
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class ApiService {
   private readonly http = inject(HttpClient);
 

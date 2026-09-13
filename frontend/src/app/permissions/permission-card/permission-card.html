@@ -1,18 +1,18 @@
-<mat-card class="permission" [class.responded]="permission.responded">
+<mat-card class="permission" [class.responded]="permission().responded">
   <div class="permission-header">
     <mat-icon>shield_person</mat-icon>
     <div class="permission-heading">
       <div class="permission-title">Permission request</div>
-      <div class="permission-method">{{ permission.method }}</div>
+      <div class="permission-method">{{ permission().method }}</div>
     </div>
   </div>
   <mat-card-content>
-    <pre>{{ permission.description || permission.method || 'Action requested' }}</pre>
+    <pre>{{ permission().description || permission().method || 'Action requested' }}</pre>
   </mat-card-content>
-  @if (permission.responded) {
+  @if (permission().responded) {
     <div class="decision">
       <mat-icon>check</mat-icon>
-      <span>Responded: {{ permission.decision || 'Handled' }}</span>
+      <span>Responded: {{ permission().decision || 'Handled' }}</span>
     </div>
   } @else {
     <mat-card-actions align="end">

@@ -4,7 +4,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { FolderPickerComponent } from './folder-picker';
 import { ApiService } from '../../core/api/api.service';
 
-@Component({ standalone: true, imports: [FolderPickerComponent], template: '<hub-folder-picker (folderSelected)="selected = $event.path" />' })
+@Component({ imports: [FolderPickerComponent], template: '<hub-folder-picker (folderSelected)="selected = $event.path" />' })
 class HostComponent { selected = ''; }
 
 describe('FolderPickerComponent', () => {

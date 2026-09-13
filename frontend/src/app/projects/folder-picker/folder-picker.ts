@@ -1,5 +1,4 @@
-import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, OnChanges, OnInit, Output, SimpleChanges, inject, signal } from '@angular/core';
+import { Component, effect, inject, input, output, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
@@ -9,15 +8,14 @@ import { Breadcrumb, DirectoryListing } from '../../core/api/types';
 
 @Component({
   selector: 'hub-folder-picker',
-  standalone: true,
-  imports: [CommonModule, MatButtonModule, MatIconModule, MatListModule, MatProgressBarModule],
+  imports: [MatButtonModule, MatIconModule, MatListModule, MatProgressBarModule],
   templateUrl: './folder-picker.html',
   styleUrl: './folder-picker.scss',
 })
-export class FolderPickerComponent implements OnInit, OnChanges {
-  @Input() initialPath = '';
-  @Output() readonly folderBrowsed = new EventEmitter<{ path: string; name: string }>();
-  @Output() readonly folderSelected = new EventEmitter<{ path: string; name: string }>();
+export class FolderPickerComponent {
+  readonly initialPath = input('');
+  readonly folderBrowsed = output<{ path: string; name: string }>();
+  readonly folderSelected = output<{ path: string; name: string }>();
 
   readonly listing = signal<DirectoryListing | null>(null);
   readonly loading = signal(false);
@@ -25,15 +23,18 @@ export class FolderPickerComponent implements OnInit, OnChanges {
   private readonly api = inject(ApiService);
   private loadedPath = '';
   private loadSequence = 0;
+  private initialized = false;
 
-  ngOnInit(): void {
-    void this.loadDirectory(this.initialPath || undefined);
-  }
-
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes['initialPath'] && !changes['initialPath'].firstChange && this.initialPath) {
-      this.browseTo(this.initialPath);
-    }
+  constructor() {
+    effect(() => {
+      const path = this.initialPath();
+      if (!this.initialized) {
+        this.initialized = true;
+        void this.loadDirectory(path || undefined);
+      } else if (path) {
+        this.browseTo(path);
+      }
+    });
   }
 
   browseTo(path: string): void {

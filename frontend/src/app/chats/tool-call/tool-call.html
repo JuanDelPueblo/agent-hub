@@ -1,7 +1,7 @@
-<mat-expansion-panel class="tool" [disabled]="!tool.output">
+<mat-expansion-panel class="tool" [disabled]="!tool().output">
   <mat-expansion-panel-header>
-    <mat-panel-title><mat-icon>build</mat-icon><span class="tool-title">{{ tool.title }}</span></mat-panel-title>
-    <mat-panel-description>{{ tool.status }}</mat-panel-description>
+    <mat-panel-title><mat-icon>build</mat-icon><span class="tool-title">{{ tool().title }}</span></mat-panel-title>
+    <mat-panel-description>{{ tool().status }}</mat-panel-description>
   </mat-expansion-panel-header>
-  @if (tool.output) { <pre>{{ tool.output }}</pre> }
+  @if (tool().output) { <pre>{{ tool().output }}</pre> }
 </mat-expansion-panel>

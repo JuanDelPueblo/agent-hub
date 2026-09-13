@@ -40,6 +40,10 @@ describe('Agent Hub routes', () => {
     router = TestBed.inject(Router);
   });
 
+  it('lazy-loads every page component', async () => {
+    expect(routes.slice(0, 3).every((route) => route.loadComponent && !route.component)).toBe(true);
+  });
+
   it('navigates the supported project and chat URLs and redirects unknown paths home', async () => {
     await router.navigateByUrl('/projects/project-1');
     expect(router.url).toBe('/projects/project-1');

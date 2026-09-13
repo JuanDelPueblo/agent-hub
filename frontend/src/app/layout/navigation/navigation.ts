@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Output, computed, inject } from '@angular/core';
+import { Component, computed, inject, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatIconModule } from '@angular/material/icon';
@@ -21,7 +21,6 @@ import { ThemeService } from '../../core/theme.service';
  */
 @Component({
   selector: 'hub-navigation',
-  standalone: true,
   imports: [
     ConnectionStatusComponent,
     MatButtonModule,
@@ -39,7 +38,7 @@ import { ThemeService } from '../../core/theme.service';
   styleUrl: './navigation.scss',
 })
 export class NavigationComponent {
-  @Output() readonly closeRequested = new EventEmitter<void>();
+  readonly closeRequested = output<void>();
   readonly state = inject(AppStateService);
   readonly theme = inject(ThemeService);
   private readonly dialog = inject(MatDialog);
@@ -48,10 +47,14 @@ export class NavigationComponent {
   /** The project overview page carries its own button, so the drawer hides one. */
   readonly showNewChat = computed(() => this.state.activeChatId() !== null);
 
-  visibleChats() {
+  readonly visibleChats = computed(() => {
     const projectId = this.state.activeProjectId();
     const chats = projectId ? this.state.chatsByProject()[projectId] ?? [] : [];
     return this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived);
+  });
+
+  processStateLabel(chat: Chat): string {
+    return (chat.process_state ?? 'STOPPED').toLowerCase();
   }
 
   /**

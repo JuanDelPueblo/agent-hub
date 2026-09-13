@@ -18,7 +18,6 @@ import { EditProjectDialogComponent } from '../../projects/edit-project-dialog/e
 
 @Component({
   selector: 'hub-project-page',
-  standalone: true,
   imports: [
     MatButtonModule,
     MatCardModule,

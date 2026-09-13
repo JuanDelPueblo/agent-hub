@@ -1,18 +1,22 @@
 import { Routes } from '@angular/router';
-import { ChatPageComponent } from './pages/chat-page/chat-page';
-import { HomePageComponent } from './pages/home-page/home-page';
-import { ProjectPageComponent } from './pages/project-page/project-page';
 
 export const routes: Routes = [
-  { path: '', component: HomePageComponent, title: 'Agent Hub' },
+  {
+    path: '',
+    loadComponent: () =>
+      import('./pages/home-page/home-page').then((module) => module.HomePageComponent),
+    title: 'Agent Hub',
+  },
   {
     path: 'projects/:projectId',
-    component: ProjectPageComponent,
+    loadComponent: () =>
+      import('./pages/project-page/project-page').then((module) => module.ProjectPageComponent),
     title: 'Project | Agent Hub',
   },
   {
     path: 'projects/:projectId/chats/:chatId',
-    component: ChatPageComponent,
+    loadComponent: () =>
+      import('./pages/chat-page/chat-page').then((module) => module.ChatPageComponent),
     title: 'Chat | Agent Hub',
   },
   { path: '**', redirectTo: '' },

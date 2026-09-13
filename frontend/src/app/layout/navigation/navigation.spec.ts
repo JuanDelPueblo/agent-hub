@@ -58,6 +58,7 @@ describe('NavigationComponent DOM check', () => {
     expect(badge).toBeTruthy();
     expect(badge.textContent.trim()).toBe('claude');
     expect(badge.querySelector('mat-icon')).toBeNull();
+    expect(title.closest('a')?.getAttribute('aria-label')).toContain('Process running');
   });
 });
 

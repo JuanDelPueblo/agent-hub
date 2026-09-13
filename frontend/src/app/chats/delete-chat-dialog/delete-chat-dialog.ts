@@ -1,4 +1,4 @@
-import { Component, Inject, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -7,7 +7,6 @@ import { AppStateService } from '../../state/app-state.service';
 
 @Component({
   selector: 'hub-delete-chat-dialog',
-  standalone: true,
   imports: [MatButtonModule, MatDialogModule, MatProgressSpinnerModule],
   templateUrl: './delete-chat-dialog.html',
   styleUrl: './delete-chat-dialog.scss',
@@ -18,7 +17,7 @@ export class DeleteChatDialogComponent {
   readonly deleting = signal(false);
   readonly error = signal('');
 
-  constructor(@Inject(MAT_DIALOG_DATA) readonly chat: Chat) {}
+  readonly chat = inject<Chat>(MAT_DIALOG_DATA);
 
   async remove(): Promise<void> {
     this.deleting.set(true);

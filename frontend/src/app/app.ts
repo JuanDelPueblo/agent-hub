@@ -18,7 +18,6 @@ import { NavigationComponent } from './layout/navigation/navigation';
  */
 @Component({
   selector: 'hub-root',
-  standalone: true,
   imports: [
     ConnectionStatusComponent,
     MatButtonModule,

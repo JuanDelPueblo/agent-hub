@@ -1,13 +1,14 @@
 import { DOCUMENT } from '@angular/common';
-import { effect, Injectable, Inject, signal } from '@angular/core';
+import { effect, inject, Service, signal } from '@angular/core';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class ThemeService {
+  private readonly document = inject(DOCUMENT);
   readonly mode = signal<ThemeMode>(this.readMode());
 
-  constructor(@Inject(DOCUMENT) private readonly document: Document) {
+  constructor() {
     effect(() => {
       const mode = this.mode();
       this.document.documentElement.dataset['theme'] = mode;

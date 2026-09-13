@@ -1,11 +1,11 @@
-import { Injectable, OnDestroy, signal } from '@angular/core';
+import { OnDestroy, Service, signal } from '@angular/core';
 import { Subject } from 'rxjs';
 import type { SessionEvent } from './api/types';
 
 export type SocketStatus = 'connecting' | 'connected' | 'disconnected';
 
 /** Owns only the browser transport; application meaning is handled by state. */
-@Injectable({ providedIn: 'root' })
+@Service()
 export class EventSocketService implements OnDestroy {
   readonly status = signal<SocketStatus>('connecting');
   readonly events = new Subject<SessionEvent>();
