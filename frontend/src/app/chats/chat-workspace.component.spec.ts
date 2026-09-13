@@ -6,6 +6,8 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Chat } from '../core/api/types';
 import { AppStateService } from '../state/app-state.service';
 import { ChatWorkspaceComponent } from './chat-workspace.component';
+import { EventReducer } from '../state/event-reducer';
+import type { SessionEvent } from '../core/api/types';
 
 const chat: Chat = {
   id: 'chat-1',
@@ -91,5 +93,72 @@ describe('ChatWorkspaceComponent', () => {
       .find((button: unknown) => (button as Element).textContent?.includes('Retry connection')) as HTMLButtonElement;
     retry.click();
     expect(state.retryConnection).toHaveBeenCalledWith('chat-1');
+  });
+});
+
+describe('ChatWorkspaceComponent live stream', () => {
+  let fixture: ComponentFixture<ChatWorkspaceComponent>;
+  let reducer: EventReducer;
+
+  const event = (seq: number, type: string, extra: Record<string, unknown> = {}): SessionEvent =>
+    ({
+      seq,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: '2026-09-13T12:00:00Z',
+      payload: { type, ...extra },
+    }) as SessionEvent;
+
+  beforeEach(async () => {
+    reducer = new EventReducer();
+    const stateValue = {
+      connectingChats: signal(new Set<string>()),
+      connectErrors: signal<Record<string, string>>({}),
+      configLoadedByChat: signal({ 'chat-1': true }),
+      reducersByChat: signal<Record<string, EventReducer>>({ 'chat-1': reducer }),
+      configOptionsByChat: signal<Record<string, never>>({}),
+      findChat: (id: string) => (id === chat.id ? chat : null),
+      retryConnection: vi.fn(async () => undefined),
+      setMobileDrawerOpen: vi.fn(),
+      stopChatProcess: vi.fn(async () => undefined),
+      cancelActiveTurn: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      respondPermission: vi.fn(async () => undefined),
+      setChatPolicy: vi.fn(async () => undefined),
+      setChatConfig: vi.fn(async () => undefined),
+      renameChat: vi.fn(async () => undefined),
+      archiveChat: vi.fn(async () => undefined),
+      deleteChat: vi.fn(async () => undefined),
+    } as unknown as AppStateService;
+
+    await TestBed.configureTestingModule({
+      imports: [ChatWorkspaceComponent],
+      providers: [
+        { provide: AppStateService, useValue: stateValue },
+        { provide: BreakpointObserver, useValue: { observe: () => of({ matches: false }) } },
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ChatWorkspaceComponent);
+    fixture.componentRef.setInput('chatId', 'chat-1');
+    await fixture.whenStable();
+  });
+
+  // The reducer list and the reducer map keep their identity across a streamed
+  // chunk unless the reducer rebuilds them, so this fails whenever the display
+  // list is mutated in place.
+  it('renders a sent message and the streamed reply without a manual redraw', async () => {
+    reducer.ingest(event(1, 'user_message', { text: 'Inspect this repository' }));
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Inspect this repository');
+
+    reducer.ingest(event(2, 'message_chunk', { text: 'Reading ' }));
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Reading');
+
+    // A second chunk appends to the open turn without adding a display item.
+    reducer.ingest(event(3, 'message_chunk', { text: 'the manifest.' }));
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Reading the manifest.');
   });
 });

@@ -47,7 +47,7 @@ import { Breadcrumb, DirectoryListing } from '../core/api/types';
 
         <div class="picker-actions">
           <span class="current-path" [title]="current.current">{{ current.current }}</span>
-          <button mat-flat-button color="primary" type="button" (click)="selectCurrent()">
+          <button mat-flat-button type="button" (click)="selectCurrent()">
             <mat-icon>check</mat-icon>
             Select current folder
           </button>
@@ -60,16 +60,16 @@ import { Breadcrumb, DirectoryListing } from '../core/api/types';
   styles: `
     :host { display: block; }
     .picker { display: flex; flex-direction: column; gap: 12px; }
-    .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 12px; background: var(--mat-sys-surface-container-low); color: var(--mat-sys-on-surface-variant); }
+    .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container-low); color: var(--mat-sys-on-surface-variant); }
     .breadcrumbs .crumb { min-width: 0; padding-inline: 7px; }
-    .directory-list { min-height: 170px; max-height: 250px; overflow: auto; border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; }
+    .directory-list { min-height: 170px; max-height: 250px; overflow: auto; border: 1px solid var(--mat-sys-outline-variant); border-radius: var(--mat-sys-corner-medium); }
     .directory-list mat-progress-bar { position: sticky; top: 0; z-index: 1; }
     .directory-list button { width: 100%; text-align: left; }
-    .empty { padding: 32px 16px; margin: 0; color: var(--mat-sys-outline); text-align: center; }
+    .empty { padding: 32px 16px; margin: 0; color: var(--mat-sys-on-surface-variant); text-align: center; }
     .loading { min-height: 170px; display: grid; align-content: center; }
     .picker-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .current-path { min-width: 0; overflow: hidden; color: var(--mat-sys-on-surface-variant); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
-    .error-box { padding: 12px 16px; border-radius: 12px; background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
+    .current-path { min-width: 0; overflow: hidden; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); text-overflow: ellipsis; white-space: nowrap; }
+    .error-box { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
     @media (max-width: 599px) { .picker-actions { align-items: stretch; flex-direction: column; } .current-path { white-space: normal; overflow-wrap: anywhere; } }
   `,
 })

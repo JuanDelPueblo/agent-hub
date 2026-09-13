@@ -70,7 +70,7 @@ import { ThemeService } from '../core/theme.service';
             <span [title]="project.path">{{ project.path }}</span>
           </div>
 
-          <button mat-flat-button color="primary" class="new-chat-button" (click)="newChat()">
+          <button mat-flat-button class="new-chat-button" (click)="newChat()">
             <mat-icon>add_comment</mat-icon>
             New chat
           </button>
@@ -113,31 +113,31 @@ import { ThemeService } from '../core/theme.service';
     .navigation-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 18px 16px 12px; }
     .brand { display: inline-flex; align-items: center; gap: 12px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
     .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 16px 16px 16px 4px; background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
-    .brand-name { font-size: 1.25rem; font-weight: 600; }
+    .brand-name { font: var(--mat-sys-title-large); }
     .navigation-body { flex: 1; overflow: auto; padding: 8px 12px 20px; }
-    .section-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; color: var(--mat-sys-on-surface-variant); font-size: .8rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-large); letter-spacing: .06em; text-transform: uppercase; }
     .section-heading button { flex: 0 0 auto; }
     mat-nav-list { padding: 0; }
-    mat-list-item { margin: 2px 0; border-radius: 12px; }
+    mat-list-item { margin: 2px 0; border-radius: var(--mat-sys-corner-full); }
     mat-list-item.selected { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); }
-    .empty-navigation { padding: 12px; color: var(--mat-sys-outline); font-size: .875rem; text-align: center; }
+    .empty-navigation { padding: 12px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-medium); text-align: center; }
     .active-project { margin-top: 20px; }
-    .project-summary { display: flex; flex-direction: column; gap: 2px; padding: 12px; margin-bottom: 10px; border-radius: 12px; background: var(--mat-sys-surface-container); }
-    .project-summary a { color: inherit; font-weight: 600; text-decoration: none; }
-    .project-summary span { overflow: hidden; color: var(--mat-sys-on-surface-variant); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+    .project-summary { display: flex; flex-direction: column; gap: 2px; padding: 12px; margin-bottom: 10px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container); }
+    .project-summary a { color: inherit; font: var(--mat-sys-title-small); text-decoration: none; }
+    .project-summary span { overflow: hidden; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-overflow: ellipsis; white-space: nowrap; }
     .new-chat-button { width: 100%; margin: 2px 0 16px; }
     .chats-heading { padding-right: 0; }
     .archive-toggle { min-width: 0; }
     .chat-status { width: 8px; height: 8px; margin: 0 16px 0 8px; border-radius: 50%; background: var(--hub-status-stopped); }
     .chat-status.running { background: var(--hub-status-running); }
     .chat-status.dead { background: var(--hub-status-dead); }
-    .agent-label { margin-left: auto; color: var(--mat-sys-on-surface-variant); font-size: .72rem; text-transform: lowercase; }
-    .navigation-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--mat-sys-outline-variant); color: var(--mat-sys-on-surface-variant); font-size: .75rem; }
+    .agent-label { margin-left: auto; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-transform: lowercase; }
+    .navigation-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--mat-sys-outline-variant); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
     .socket-state { display: inline-flex; align-items: center; gap: 6px; text-transform: capitalize; }
     .socket-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hub-status-dead); }
     .socket-dot.connected { background: var(--hub-status-running); }
     .socket-dot.connecting { background: var(--hub-status-starting); }
-    @media (min-width: 840px) { :host > .navigation-header > button:last-child { visibility: hidden; } }
+    @media (min-width: 840px) { :host > .navigation-header > button:last-child { display: none; } }
   `,
 })
 export class NavigationComponent {

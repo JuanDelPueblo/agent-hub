@@ -13,7 +13,7 @@
             pname = "agent-hub-frontend";
             version = "0.2.0";
             src = ./frontend;
-            npmDepsHash = "sha256-Uz0McjnDAbC/0YNc8bcb4MXGnQl/tMU26xVnIz5BUDg=";
+            npmDepsHash = "sha256-pEc9sI4L7g72EtzKvfxA4bLNIThZ14kx6jNWSkv2VB8=";
             preBuild = ''
               export NG_CLI_ANALYTICS=false
             '';

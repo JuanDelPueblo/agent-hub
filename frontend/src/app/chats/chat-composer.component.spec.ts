@@ -14,7 +14,10 @@ describe('ChatComposerComponent', () => {
     await TestBed.configureTestingModule({ imports: [ChatComposerComponent], providers: [{ provide: AppStateService, useValue: { sendPrompt, cancelActiveTurn: async () => undefined } }] }).compileComponents();
     fixture = TestBed.createComponent(ChatComposerComponent);
     component = fixture.componentInstance;
-    component.chatId = 'chat-1'; component.processState = 'RUNNING'; component.turnState = 'IDLE'; component.disabled = false;
+    fixture.componentRef.setInput('chatId', 'chat-1');
+    fixture.componentRef.setInput('processState', 'RUNNING');
+    fixture.componentRef.setInput('turnState', 'IDLE');
+    fixture.componentRef.setInput('disabled', false);
     fixture.detectChanges();
   });
 

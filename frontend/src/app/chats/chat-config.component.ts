@@ -64,8 +64,8 @@ import { AppStateService } from '../state/app-state.service';
     }
   `,
   styles: `
-    :host { display: block; } .config { display: flex; flex-direction: column; gap: 18px; } h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.05rem; } h2 mat-icon { color: var(--mat-sys-primary); }
-    .config-item { display: flex; flex-direction: column; gap: 6px; } mat-form-field { width: 100%; } p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: .83rem; line-height: 1.45; } .no-options { font-style: italic; } .boolean-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; } .boolean-item strong { display: block; } .unsupported { padding: 12px; border-radius: 10px; background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface-variant); font-size: .82rem; } .error-box { padding: 12px 16px; border-radius: 12px; background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); }
+    :host { display: block; } .config { display: flex; flex-direction: column; gap: 18px; } h2 { display: flex; align-items: center; gap: 8px; font: var(--mat-sys-title-medium); } h2 mat-icon { color: var(--mat-sys-primary); }
+    .config-item { display: flex; flex-direction: column; gap: 6px; } mat-form-field { width: 100%; } p { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); } .no-options { font-style: italic; } .boolean-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; } .boolean-item strong { display: block; } .unsupported { padding: 12px; border-radius: var(--mat-sys-corner-small); background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); } .error-box { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); }
   `,
 })
 export class ChatConfigComponent {

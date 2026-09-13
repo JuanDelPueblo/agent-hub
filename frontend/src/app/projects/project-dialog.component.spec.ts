@@ -68,7 +68,7 @@ describe('ProjectDialogComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(component.selectedPath).toBe('');
+    expect(component.selectedPath()).toBe('');
     const select = Array.from(fixture.nativeElement.querySelectorAll('hub-folder-picker button'))
       .find((button: unknown) => (button as Element).textContent?.includes('Select current folder')) as HTMLButtonElement;
     select.click();
@@ -87,9 +87,9 @@ describe('ProjectDialogComponent', () => {
   });
 
   it('passes the clone workflow to the same application state boundary', async () => {
-    component.repoUrl = 'https://example.com/repository.git';
-    component.cloneParentPath = '/home/tony';
-    component.cloneProjectName = 'repository';
+    component.repoUrl.set('https://example.com/repository.git');
+    component.cloneParentPath.set('/home/tony');
+    component.cloneProjectName.set('repository');
 
     await component.cloneRepository();
 

@@ -24,13 +24,33 @@ import { RenameChatDialogComponent } from './rename-chat-dialog.component';
           @if (chat.process_state === 'RUNNING') { <button mat-icon-button matTooltip="Stop process" aria-label="Stop process" (click)="stop()"><mat-icon>pause_circle</mat-icon></button> } @else { <button mat-icon-button matTooltip="Reconnect process" aria-label="Reconnect process" (click)="reconnect()"><mat-icon>play_circle</mat-icon></button> }
           <button mat-icon-button matTooltip="Chat configuration" aria-label="Chat configuration" (click)="configRequested.emit()"><mat-icon>tune</mat-icon></button>
           <button mat-icon-button [matMenuTriggerFor]="actions" aria-label="Chat actions"><mat-icon>more_vert</mat-icon></button>
-          <mat-menu #actions="matMenu"><button mat-menu-item type="button" (click)="rename()"><mat-icon>edit</mat-icon><span>Rename chat</span></button>@if (chat.process_state === 'RUNNING') { <button mat-menu-item type="button" (click)="stop()"><mat-icon>pause</mat-icon><span>Stop process</span></button> } @else { <button mat-menu-item type="button" (click)="reconnect()"><mat-icon>play_arrow</mat-icon><span>Reconnect ACP</span></button> }<button mat-menu-item type="button" (click)="archive()"><mat-icon>{{ chat.archived ? 'unarchive' : 'archive' }}</mat-icon><span>{{ chat.archived ? 'Unarchive chat' : 'Archive chat' }}</span></button><button mat-menu-item type="button" (click)="remove()"><mat-icon color="warn">delete</mat-icon><span>Delete chat</span></button></mat-menu>
+          <mat-menu #actions="matMenu"><button mat-menu-item type="button" (click)="rename()"><mat-icon>edit</mat-icon><span>Rename chat</span></button>@if (chat.process_state === 'RUNNING') { <button mat-menu-item type="button" (click)="stop()"><mat-icon>pause</mat-icon><span>Stop process</span></button> } @else { <button mat-menu-item type="button" (click)="reconnect()"><mat-icon>play_arrow</mat-icon><span>Reconnect ACP</span></button> }<button mat-menu-item type="button" (click)="archive()"><mat-icon>{{ chat.archived ? 'unarchive' : 'archive' }}</mat-icon><span>{{ chat.archived ? 'Unarchive chat' : 'Archive chat' }}</span></button><button mat-menu-item type="button" (click)="remove()"><mat-icon class="destructive-icon">delete</mat-icon><span>Delete chat</span></button></mat-menu>
         </div>
       } @else { <span class="no-chat">No chat selected</span> }
     </header>
   `,
   styles: `
-    :host { display: block; flex: 0 0 auto; } .chat-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 72px; padding: 10px max(16px, calc((100% - 1120px) / 2)); border-bottom: 1px solid var(--mat-sys-outline-variant); background: var(--mat-sys-surface); } .header-left, .header-actions, .title-line, .badges { display: flex; align-items: center; } .header-left { min-width: 0; flex: 1; gap: 12px; } .header-actions { gap: 2px; } .title-area { min-width: 0; } .title-line { min-width: 0; gap: 8px; } .title-button { min-width: 0; overflow: hidden; max-width: min(50vw, 560px); padding-inline: 4px; color: var(--mat-sys-on-surface); font-family: inherit; font-size: 1.15rem; font-weight: 600; line-height: 1.3; text-align: left; text-overflow: ellipsis; white-space: nowrap; } .title-button:hover { text-decoration: underline; } .badges { flex-wrap: wrap; gap: 6px; margin-top: 5px; } .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface-variant); font-size: .72rem; } .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); } .badge.running { background: var(--hub-status-running-container); color: var(--hub-status-running); } .badge.dead { background: var(--hub-status-dead-container); color: var(--hub-status-dead); } .badge.thinking { background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); } .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; } .nav-button { display: none; } .no-chat { color: var(--mat-sys-on-surface-variant); } @media (max-width: 839px) { .nav-button { display: inline-flex; } } @media (max-width: 599px) { .chat-header { padding-inline: 8px; } .header-actions > button:first-child { display: none; } .title-button { max-width: 42vw; } }
+    .destructive-icon { color: var(--mat-sys-error); }
+    :host { display: block; flex: 0 0 auto; padding-inline: max(var(--hub-gutter), calc((100% - var(--hub-measure)) / 2)); border-bottom: 1px solid var(--mat-sys-outline-variant); background: var(--mat-sys-surface); }
+    .chat-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 72px; max-width: var(--hub-measure); margin: 0 auto; padding-block: 10px; }
+    .header-left, .header-actions, .title-line, .badges { display: flex; align-items: center; }
+    .header-left { min-width: 0; flex: 1; gap: 12px; }
+    .header-actions { flex: 0 0 auto; gap: 2px; }
+    .title-area { min-width: 0; }
+    .title-line { min-width: 0; gap: 8px; }
+    .title-button { min-width: 0; overflow: hidden; max-width: min(50vw, 560px); padding-inline: 0; color: var(--mat-sys-on-surface); font: var(--mat-sys-title-medium); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+    .title-button:hover { text-decoration: underline; }
+    .badges { flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
+    .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); }
+    .badge.running { background: var(--hub-status-running-container); color: var(--hub-status-running); }
+    .badge.dead { background: var(--hub-status-dead-container); color: var(--hub-status-dead); }
+    .badge.thinking { background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .nav-button { display: none; }
+    .no-chat { color: var(--mat-sys-on-surface-variant); }
+    @media (max-width: 839px) { .nav-button { display: inline-flex; } }
+    @media (max-width: 599px) { :host { padding-inline: 16px; } .header-actions > button:first-child { display: none; } .title-button { max-width: 42vw; } }
   `,
 })
 export class ChatHeaderComponent {

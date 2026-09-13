@@ -75,12 +75,12 @@ describe('AppStateService', () => {
     expect(state.chatsByProject()['project-1']).toHaveLength(2);
 
     events.next({ seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:00Z', payload: { type: 'permission_request', id: 'permission-1', method: 'terminal/run_command', description: 'Run tests' } });
-    expect(state.activeReducer().items[0]).toMatchObject({ type: 'turn' });
+    expect(state.activeReducer().items()[0]).toMatchObject({ type: 'turn' });
     await state.respondPermission('chat-1', 'permission-1', true);
     expect(permissionCalls).toEqual([{ chatId: 'chat-1', requestId: 'permission-1', granted: true }]);
 
     events.next({ seq: 2, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:01Z', payload: { type: 'permission_response', id: 'permission-1', granted: true } });
-    const turn = state.activeReducer().items[0];
+    const turn = state.activeReducer().items()[0];
     expect(turn).toMatchObject({ type: 'turn' });
     if (turn.type === 'turn') expect(turn.entries[0]).toMatchObject({ responded: true, decision: 'Allowed' });
 

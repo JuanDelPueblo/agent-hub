@@ -1,4 +1,4 @@
-import { Component, Inject, inject } from '@angular/core';
+import { Component, Inject, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
@@ -28,20 +28,20 @@ import { FolderPickerComponent } from './folder-picker.component';
   template: `
     <h2 mat-dialog-title>New project</h2>
     <mat-dialog-content>
-      @if (errorMessage) { <div class="error-box" role="alert">{{ errorMessage }}</div> }
-      <mat-tab-group [(selectedIndex)]="modeIndex">
+      @if (errorMessage()) { <div class="error-box" role="alert">{{ errorMessage() }}</div> }
+      <mat-tab-group [selectedIndex]="modeIndex()" (selectedIndexChange)="modeIndex.set($event)">
         <mat-tab label="Existing folder">
           <div class="tab-content">
             <p class="help">Choose a directory already available on the server.</p>
             <hub-folder-picker (folderBrowsed)="folderBrowsed($event)" (folderSelected)="folderSelected($event)" />
-            @if (browsedPath && browsedPath !== selectedPath) {
-              <div class="path-note">Browsing: <code>{{ browsedPath }}</code><br />Select the current folder to use it.</div>
+            @if (browsedPath() && browsedPath() !== selectedPath()) {
+              <div class="path-note">Browsing: <code>{{ browsedPath() }}</code><br />Select the current folder to use it.</div>
             }
-            @if (selectedPath) {
-              <div class="selected-path"><strong>Selected directory</strong><code>{{ selectedPath }}</code></div>
+            @if (selectedPath()) {
+              <div class="selected-path"><strong>Selected directory</strong><code>{{ selectedPath() }}</code></div>
               <mat-form-field appearance="outline">
                 <mat-label>Project display name</mat-label>
-                <input matInput [(ngModel)]="projectName" (ngModelChange)="projectNameEdited = true" autocomplete="off" />
+                <input matInput [ngModel]="projectName()" (ngModelChange)="editProjectName($event)" autocomplete="off" />
               </mat-form-field>
             }
           </div>
@@ -50,30 +50,30 @@ import { FolderPickerComponent } from './folder-picker.component';
           <div class="tab-content">
             <mat-form-field appearance="outline">
               <mat-label>Git repository URL (HTTPS or SSH)</mat-label>
-              <input matInput [(ngModel)]="repoUrl" placeholder="https://github.com/org/repo.git" autocomplete="off" />
+              <input matInput [ngModel]="repoUrl()" (ngModelChange)="repoUrl.set($event)" placeholder="https://github.com/org/repo.git" autocomplete="off" />
               <mat-hint>Plain HTTP URLs are not accepted by the server.</mat-hint>
             </mat-form-field>
             <p class="field-label">Destination parent directory</p>
-            <hub-folder-picker (folderBrowsed)="cloneFolderBrowsed($event)" (folderSelected)="cloneFolderSelected($event)" />
-            @if (cloneBrowsedPath && cloneBrowsedPath !== cloneParentPath) {
-              <div class="path-note">Browsing: <code>{{ cloneBrowsedPath }}</code><br />Select the current folder to use it.</div>
+            <hub-folder-picker (folderBrowsed)="cloneBrowsedPath.set($event.path)" (folderSelected)="cloneParentPath.set($event.path)" />
+            @if (cloneBrowsedPath() && cloneBrowsedPath() !== cloneParentPath()) {
+              <div class="path-note">Browsing: <code>{{ cloneBrowsedPath() }}</code><br />Select the current folder to use it.</div>
             }
-            @if (cloneParentPath) { <div class="selected-path"><strong>Parent path</strong><code>{{ cloneParentPath }}</code></div> }
+            @if (cloneParentPath()) { <div class="selected-path"><strong>Parent path</strong><code>{{ cloneParentPath() }}</code></div> }
             <mat-form-field appearance="outline">
               <mat-label>Project / folder name (optional)</mat-label>
-              <input matInput [(ngModel)]="cloneProjectName" autocomplete="off" />
+              <input matInput [ngModel]="cloneProjectName()" (ngModelChange)="cloneProjectName.set($event)" autocomplete="off" />
             </mat-form-field>
-            @if (cloning) { <mat-progress-bar mode="indeterminate" aria-label="Cloning repository" /> }
+            @if (cloning()) { <mat-progress-bar mode="indeterminate" aria-label="Cloning repository" /> }
           </div>
         </mat-tab>
       </mat-tab-group>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button type="button" (click)="dialogRef.close()" [disabled]="cloning">Cancel</button>
-      @if (modeIndex === 0) {
-        <button mat-flat-button color="primary" type="button" (click)="createFromFolder()" [disabled]="!selectedPath || !projectName.trim()">Create project</button>
+      <button mat-button type="button" (click)="dialogRef.close()" [disabled]="cloning()">Cancel</button>
+      @if (modeIndex() === 0) {
+        <button mat-flat-button type="button" (click)="createFromFolder()" [disabled]="!selectedPath() || !projectName().trim()">Create project</button>
       } @else {
-        <button mat-flat-button color="primary" type="button" (click)="cloneRepository()" [disabled]="!repoUrl.trim() || !cloneParentPath || cloning">Clone & create</button>
+        <button mat-flat-button type="button" (click)="cloneRepository()" [disabled]="!repoUrl().trim() || !cloneParentPath() || cloning()">Clone &amp; create</button>
       }
     </mat-dialog-actions>
   `,
@@ -81,12 +81,12 @@ import { FolderPickerComponent } from './folder-picker.component';
     mat-dialog-content { min-width: min(600px, calc(100vw - 48px)); max-height: min(680px, 70vh); }
     .tab-content { display: flex; flex-direction: column; gap: 14px; padding: 22px 4px 8px; }
     mat-form-field { width: 100%; }
-    .help, .field-label { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: .9rem; }
-    .field-label { font-weight: 600; }
-    .path-note, .selected-path { padding: 10px 12px; border-radius: 10px; background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface-variant); font-size: .82rem; }
+    .help { color: var(--mat-sys-on-surface-variant); }
+    .field-label { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-title-small); }
+    .path-note, .selected-path { padding: 10px 12px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
     .selected-path { display: flex; flex-direction: column; gap: 4px; }
-    code { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .error-box { padding: 12px 16px; border-radius: 12px; background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
+    code { overflow-wrap: anywhere; }
+    .error-box { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
     @media (max-width: 599px) { mat-dialog-content { min-width: 0; } }
   `,
 })
@@ -94,58 +94,69 @@ export class ProjectDialogComponent {
   readonly state = inject(AppStateService);
   readonly dialogRef = inject(MatDialogRef<ProjectDialogComponent>);
   private readonly router = inject(Router);
-  modeIndex = 0;
-  projectName = '';
-  projectNameEdited = false;
-  selectedPath = '';
-  browsedPath = '';
-  repoUrl = '';
-  cloneParentPath = '';
-  cloneBrowsedPath = '';
-  cloneProjectName = '';
-  cloning = false;
-  errorMessage = '';
+
+  readonly modeIndex = signal(0);
+  readonly projectName = signal('');
+  readonly selectedPath = signal('');
+  readonly browsedPath = signal('');
+  readonly repoUrl = signal('');
+  readonly cloneParentPath = signal('');
+  readonly cloneBrowsedPath = signal('');
+  readonly cloneProjectName = signal('');
+  readonly cloning = signal(false);
+  readonly errorMessage = signal('');
+  private projectNameEdited = false;
 
   constructor(@Inject(MAT_DIALOG_DATA) _data: unknown) {}
 
-  folderBrowsed(event: { path: string }): void { this.browsedPath = event.path; }
-  folderSelected(event: { path: string; name: string }): void {
-    this.selectedPath = event.path;
-    if (!this.projectNameEdited) this.projectName = event.name;
+  editProjectName(value: string): void {
+    this.projectNameEdited = true;
+    this.projectName.set(value);
   }
-  cloneFolderBrowsed(event: { path: string }): void { this.cloneBrowsedPath = event.path; }
-  cloneFolderSelected(event: { path: string }): void { this.cloneParentPath = event.path; }
+
+  folderBrowsed(event: { path: string }): void {
+    this.browsedPath.set(event.path);
+  }
+
+  folderSelected(event: { path: string; name: string }): void {
+    this.selectedPath.set(event.path);
+    if (!this.projectNameEdited) this.projectName.set(event.name);
+  }
 
   async createFromFolder(): Promise<void> {
-    if (!this.selectedPath || !this.projectName.trim()) {
-      this.errorMessage = 'Please select a folder and specify a project name.';
+    if (!this.selectedPath() || !this.projectName().trim()) {
+      this.errorMessage.set('Please select a folder and specify a project name.');
       return;
     }
     try {
-      this.errorMessage = '';
-      const project = await this.state.createProject(this.projectName.trim(), this.selectedPath);
+      this.errorMessage.set('');
+      const project = await this.state.createProject(this.projectName().trim(), this.selectedPath());
       this.dialogRef.close(project);
       await this.router.navigate(['/projects', project.id]);
     } catch (error: unknown) {
-      this.errorMessage = error instanceof Error ? error.message : 'Failed to create project';
+      this.errorMessage.set(error instanceof Error ? error.message : 'Failed to create project');
     }
   }
 
   async cloneRepository(): Promise<void> {
-    if (!this.repoUrl.trim() || !this.cloneParentPath) {
-      this.errorMessage = 'Please provide repository URL and destination parent directory.';
+    if (!this.repoUrl().trim() || !this.cloneParentPath()) {
+      this.errorMessage.set('Please provide repository URL and destination parent directory.');
       return;
     }
-    this.cloning = true;
-    this.errorMessage = '';
+    this.cloning.set(true);
+    this.errorMessage.set('');
     try {
-      const project = await this.state.cloneProject({ url: this.repoUrl.trim(), parent_path: this.cloneParentPath, name: this.cloneProjectName.trim() || undefined });
+      const project = await this.state.cloneProject({
+        url: this.repoUrl().trim(),
+        parent_path: this.cloneParentPath(),
+        name: this.cloneProjectName().trim() || undefined,
+      });
       this.dialogRef.close(project);
       await this.router.navigate(['/projects', project.id]);
     } catch (error: unknown) {
-      this.errorMessage = error instanceof Error ? error.message : 'Failed to clone repository';
+      this.errorMessage.set(error instanceof Error ? error.message : 'Failed to clone repository');
     } finally {
-      this.cloning = false;
+      this.cloning.set(false);
     }
   }
 }

@@ -20,14 +20,14 @@ import type { Project } from '../core/api/types';
     <section class="projects-page" aria-labelledby="projects-title">
       <div class="page-header">
         <div><h1 id="projects-title">Projects</h1><p>Manage code repositories and active ACP agent sessions.</p></div>
-        <button mat-flat-button color="primary" type="button" (click)="newProject()"><mat-icon>add</mat-icon> New project</button>
+        <button mat-flat-button type="button" (click)="newProject()"><mat-icon>add</mat-icon> New project</button>
       </div>
       @if (state.loadingProjects()) {
         <div class="loading" role="status"><mat-spinner diameter="36" /><span>Loading projects…</span></div>
       } @else if (state.projectsError()) {
         <div class="error-box" role="alert">{{ state.projectsError() }}</div>
       } @else if (state.projects().length === 0) {
-        <mat-card class="empty-card"><mat-icon>folder_open</mat-icon><h2>No projects yet</h2><p>Create a project from an existing server directory or clone a Git repository.</p><button mat-flat-button color="primary" type="button" (click)="newProject()"><mat-icon>add</mat-icon> Create your first project</button></mat-card>
+        <mat-card class="empty-card"><mat-icon>folder_open</mat-icon><h2>No projects yet</h2><p>Create a project from an existing server directory or clone a Git repository.</p><button mat-flat-button type="button" (click)="newProject()"><mat-icon>add</mat-icon> Create your first project</button></mat-card>
       } @else {
         <div class="project-grid">
           @for (project of state.projects(); track project.id) {
@@ -45,25 +45,26 @@ import type { Project } from '../core/api/types';
       <mat-menu #projectMenu="matMenu">
         <ng-template matMenuContent let-project="project">
           <button mat-menu-item type="button" (click)="edit(project)"><mat-icon>edit</mat-icon><span>Edit project</span></button>
-          <button mat-menu-item type="button" (click)="remove(project)"><mat-icon color="warn">delete</mat-icon><span>Delete project</span></button>
+          <button mat-menu-item type="button" (click)="remove(project)"><mat-icon class="destructive-icon">delete</mat-icon><span>Delete project</span></button>
         </ng-template>
       </mat-menu>
-      <button mat-fab extended color="primary" class="mobile-fab" type="button" (click)="newProject()"><mat-icon>add</mat-icon> New project</button>
+      <button mat-fab extended class="mobile-fab" type="button" (click)="newProject()"><mat-icon>add</mat-icon> New project</button>
     </section>
   `,
   styles: `
-    :host { display: block; height: 100%; overflow: auto; }
+    .destructive-icon { color: var(--mat-sys-error); }
+    :host { display: block; min-height: 0; flex: 1; overflow: auto; }
     .projects-page { max-width: 1120px; margin: 0 auto; padding: 40px 32px 72px; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
-    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.1; } .page-header p { margin: 10px 0 0; color: var(--mat-sys-on-surface-variant); font-size: 1.05rem; }
+    h1 { font: var(--mat-sys-display-small); letter-spacing: var(--mat-sys-display-small-tracking); } .page-header p { margin-top: 10px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-large); }
     .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
     .project-card { position: relative; min-height: 190px; padding: 20px; transition: box-shadow 160ms ease, transform 160ms ease; } .project-card:hover { transform: translateY(-2px); box-shadow: var(--mat-sys-level2); }
     .card-link { display: block; padding-right: 34px; color: inherit; text-decoration: none; } .project-card > button { position: absolute; top: 12px; right: 12px; }
     .project-icon { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 16px; border-radius: 16px 16px 16px 4px; background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
     mat-card-header { padding: 0; } mat-card-title, mat-card-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .card-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 28px; color: var(--mat-sys-on-surface-variant); font-size: .78rem; } .card-meta span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; } .card-meta mat-icon { width: 17px; height: 17px; font-size: 17px; }
+    .card-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 28px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); } .card-meta span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; } .card-meta mat-icon { width: 17px; height: 17px; font-size: 17px; }
     .empty-card { display: grid; justify-items: center; gap: 12px; padding: 64px 24px; text-align: center; } .empty-card > mat-icon { width: 48px; height: 48px; font-size: 48px; color: var(--mat-sys-primary); } .empty-card h2, .empty-card p { margin: 0; } .empty-card p { max-width: 440px; color: var(--mat-sys-on-surface-variant); }
-    .loading { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 72px; color: var(--mat-sys-on-surface-variant); } .error-box { padding: 16px; border-radius: 14px; background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
+    .loading { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 72px; color: var(--mat-sys-on-surface-variant); } .error-box { padding: 16px; border-radius: var(--mat-sys-corner-large); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
     .mobile-fab { display: none; } @media (max-width: 599px) { .projects-page { padding: 24px 16px 96px; } .page-header { flex-direction: column; } .page-header > button { width: 100%; } .project-grid { grid-template-columns: 1fr; } .mobile-fab { display: inline-flex; position: fixed; right: 20px; bottom: 20px; z-index: 4; } }
   `,
 })

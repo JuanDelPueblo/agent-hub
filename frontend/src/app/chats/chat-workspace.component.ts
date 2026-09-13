@@ -30,9 +30,9 @@ import { EventStreamComponent } from './event-stream.component';
         } @else if (connecting()) {
           <section class="status-state"><mat-spinner diameter="44" /><h1>Connecting to {{ chat()!.agent }}…</h1><p>Initializing the ACP session and loading agent options.</p></section>
         } @else if (connectError()) {
-          <section class="status-state error-state" role="alert"><mat-icon>error_outline</mat-icon><h1>Connection failed</h1><p>{{ connectError() }}</p><button mat-flat-button color="primary" type="button" (click)="retry()">Retry connection</button></section>
+          <section class="status-state error-state" role="alert"><mat-icon>error_outline</mat-icon><h1>Connection failed</h1><p>{{ connectError() }}</p><button mat-flat-button type="button" (click)="retry()">Retry connection</button></section>
         } @else if (!configLoaded() && !items().length) {
-          <section class="status-state error-state" role="alert"><mat-icon>tune</mat-icon><h1>Agent options not loaded</h1><p>Agent Hub cannot read the configuration of {{ chat()!.agent }} yet.</p><button mat-flat-button color="primary" type="button" (click)="retry()">Retry connection</button></section>
+          <section class="status-state error-state" role="alert"><mat-icon>tune</mat-icon><h1>Agent options not loaded</h1><p>Agent Hub cannot read the configuration of {{ chat()!.agent }} yet.</p><button mat-flat-button type="button" (click)="retry()">Retry connection</button></section>
         } @else if (!items().length) {
           <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
         } @else { <hub-event-stream [items]="items()" [chatId]="chatId" /> }
@@ -41,7 +41,24 @@ import { EventStreamComponent } from './event-stream.component';
     </mat-drawer-container>
   `,
   styles: `
-    :host { display: block; min-height: 0; flex: 1; } .chat-layout { height: 100%; min-height: calc(100vh - 1px); } .chat-content { display: flex; min-height: 0; flex-direction: column; } mat-drawer { width: 380px; max-width: 90vw; } .config-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--mat-sys-outline-variant); } .config-header h2 { margin: 0; font-size: 1.1rem; } .config-body { overflow: auto; height: calc(100% - 68px); padding: 20px; } .status-state { display: grid; justify-items: center; align-content: center; gap: 12px; min-height: 320px; padding: 40px 20px; color: var(--mat-sys-on-surface-variant); text-align: center; } .status-state mat-icon { width: 48px; height: 48px; font-size: 48px; color: var(--mat-sys-primary); } .status-state h1, .status-state p { margin: 0; } .status-state h1 { color: var(--mat-sys-on-surface); font-size: 1.35rem; } .error-state mat-icon { color: var(--mat-sys-error); } .error-state h1 { color: var(--mat-sys-error); } .welcome { display: flex; justify-content: center; overflow: auto; flex: 1; padding: 28px max(20px, calc((100% - 920px) / 2)); } .welcome mat-card { width: 100%; max-width: 920px; align-self: flex-start; } .welcome-heading { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; } .welcome-heading h1, .welcome-heading p { margin: 0; } .welcome-heading p { margin-top: 4px; color: var(--mat-sys-on-surface-variant); } .avatar { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px 16px 16px 4px; background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); font-weight: 700; text-transform: uppercase; }
+    :host { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+    .chat-layout { height: 100%; min-height: 0; flex: 1; }
+    .chat-content { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
+    mat-drawer { display: flex; width: 380px; max-width: 90vw; flex-direction: column; border-left: 1px solid var(--mat-sys-outline-variant); }
+    .config-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; padding: 14px 16px; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+    .config-header h2 { font: var(--mat-sys-title-medium); }
+    .config-body { min-height: 0; flex: 1; overflow: auto; padding: 20px; }
+    .status-state { display: grid; justify-items: center; align-content: center; gap: 12px; min-height: 0; flex: 1; padding: 40px 20px; color: var(--mat-sys-on-surface-variant); text-align: center; }
+    .status-state mat-icon { width: 48px; height: 48px; font-size: 48px; color: var(--mat-sys-primary); }
+    .status-state h1 { font: var(--mat-sys-headline-small); color: var(--mat-sys-on-surface); }
+    .error-state mat-icon, .error-state h1 { color: var(--mat-sys-error); }
+    .welcome { display: flex; justify-content: center; min-height: 0; overflow: auto; flex: 1; padding: 28px max(var(--hub-gutter), calc((100% - var(--hub-measure)) / 2)); }
+    .welcome mat-card { width: 100%; max-width: var(--hub-measure); align-self: flex-start; }
+    .welcome-heading { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+    .welcome-heading h1 { font: var(--mat-sys-headline-small); }
+    .welcome-heading p { margin-top: 4px; color: var(--mat-sys-on-surface-variant); }
+    .avatar { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 auto; border-radius: 16px 16px 16px 4px; background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); font-weight: 700; text-transform: uppercase; }
+    @media (max-width: 599px) { .welcome { padding-inline: 16px; } }
   `,
 })
 export class ChatWorkspaceComponent {
@@ -54,7 +71,7 @@ export class ChatWorkspaceComponent {
   private readonly breakpointObserver = inject(BreakpointObserver);
   private readonly destroyRef = inject(DestroyRef);
   readonly chat = computed<Chat | null>(() => this.chatIdState() ? this.state.findChat(this.chatIdState()) : null);
-  readonly items = computed(() => this.chatIdState() ? this.state.reducersByChat()[this.chatIdState()]?.items ?? [] : []);
+  readonly items = computed(() => (this.chatIdState() ? this.state.reducersByChat()[this.chatIdState()]?.items() ?? [] : []));
   readonly options = computed(() => this.chatIdState() ? this.state.configOptionsByChat()[this.chatIdState()] ?? [] : []);
   readonly connecting = computed(() => this.chatIdState() ? this.state.connectingChats().has(this.chatIdState()) : false);
   readonly connectError = computed(() => this.chatIdState() ? this.state.connectErrors()[this.chatIdState()] ?? '' : '');

@@ -27,7 +27,7 @@ interface AgentPickerData { projectId: string; }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button mat-button type="button" (click)="dialogRef.close()" [disabled]="creating()">Cancel</button>
-      <button mat-flat-button color="primary" type="button" (click)="create()" [disabled]="!selectedAgent() || creating()">
+      <button mat-flat-button type="button" (click)="create()" [disabled]="!selectedAgent() || creating()">
         @if (creating()) { <mat-spinner diameter="18" /> } @else { Start chat }
       </button>
     </mat-dialog-actions>
@@ -35,11 +35,11 @@ interface AgentPickerData { projectId: string; }
   styles: `
     mat-dialog-content { min-width: min(480px, calc(100vw - 48px)); }
     .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 12px 0; }
-    .agent-option { min-height: 112px; display: flex; flex-direction: column; gap: 8px; justify-content: center; border-radius: 16px; text-transform: capitalize; }
+    .agent-option { min-height: 112px; display: flex; flex-direction: column; gap: 8px; justify-content: center; border-radius: var(--mat-sys-corner-large); text-transform: capitalize; }
     .agent-option mat-icon { color: var(--mat-sys-primary); font-size: 30px; width: 30px; height: 30px; }
-    .agent-option.selected { background: var(--mat-sys-primary-container); border-color: var(--mat-sys-primary); }
-    .empty { grid-column: 1 / -1; color: var(--mat-sys-outline); text-align: center; }
-    .error-box { padding: 12px 16px; border-radius: 12px; background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
+    .agent-option.selected { background: var(--mat-sys-primary-container); border-color: var(--mat-sys-primary); color: var(--mat-sys-on-primary-container); }
+    .empty { grid-column: 1 / -1; padding: 24px 0; color: var(--mat-sys-on-surface-variant); text-align: center; }
+    .error-box { padding: 12px 16px; border-radius: var(--mat-sys-corner-medium); background: var(--mat-sys-error-container); color: var(--mat-sys-on-error-container); white-space: pre-wrap; }
     @media (max-width: 599px) { mat-dialog-content { min-width: 0; } }
   `,
 })

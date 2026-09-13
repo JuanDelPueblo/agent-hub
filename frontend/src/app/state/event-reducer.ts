@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import type {
   DisplayError,
   DisplayItem,
@@ -9,11 +10,19 @@ import type {
   TurnEntryTool,
 } from '../core/api/types';
 
+/**
+ * Aggregates session events into the display list.
+ *
+ * Every update replaces the item, the turn and the entry array instead of
+ * mutating them. The application runs zoneless, so a consumer only re-renders
+ * when the identity of the value it reads changes.
+ */
 export class EventReducer {
   private nextId = 1;
   private readonly seenSeqs = new Set<number>();
-  readonly items: DisplayItem[] = [];
-  currentTurn: DisplayTurn | null = null;
+  private readonly itemList = signal<DisplayItem[]>([]);
+  readonly items = this.itemList.asReadonly();
+  private currentTurnId: number | null = null;
 
   constructor(initialEvents: SessionEvent[] = []) {
     for (const event of initialEvents) this.ingest(event);
@@ -29,57 +38,104 @@ export class EventReducer {
     if (!payload) return null;
 
     if (this.isTurnScoped(payload.type)) {
-      const turn = this.ensureCurrentTurn(event);
-      this.mergeTurnEvent(turn, event);
-      if (payload.type === 'turn_complete') {
-        turn.status = 'complete';
-        turn.completedAt = event.timestamp;
-        turn.stopReason = this.stringValue(payload.stop_reason ?? payload.stopReason) ?? null;
-        this.currentTurn = null;
-      }
-      return turn;
+      return this.ingestTurnEvent(event);
     }
 
     if (payload.type === 'user_message') {
-      if (this.currentTurn) {
-        this.currentTurn.status = 'complete';
-        this.currentTurn = null;
-      }
-      const item: DisplayUserMessage = {
+      this.closeCurrentTurn();
+      return this.append<DisplayUserMessage>({
         id: this.nextId++,
         type: 'user_message',
         text: this.stringValue(payload.text) ?? '',
         timestamp: event.timestamp,
-      };
-      this.items.push(item);
-      return item;
+      });
     }
 
     if (payload.type === 'error') {
-      const item: DisplayError = {
+      return this.append<DisplayError>({
         id: this.nextId++,
         type: 'error',
         message: this.stringValue(payload.message) ?? 'Unknown error',
         timestamp: event.timestamp,
-      };
-      this.items.push(item);
-      return item;
+      });
     }
 
     if (payload.type === 'state_change') {
       if (!this.shouldDisplayStateChange(payload)) return null;
-      const item: DisplayStateChange = {
+      return this.append<DisplayStateChange>({
         id: this.nextId++,
         type: 'state_change',
         process: this.stringValue(payload.process) ?? '',
         turn: this.stringValue(payload.turn) ?? '',
         timestamp: event.timestamp,
-      };
-      this.items.push(item);
-      return item;
+      });
     }
 
     return null;
+  }
+
+  private append<T extends DisplayItem>(item: T): T {
+    this.itemList.update((items) => [...items, item]);
+    return item;
+  }
+
+  /** Marks an open turn complete without emitting a stop reason. */
+  private closeCurrentTurn(): void {
+    const open = this.openTurn();
+    if (!open) return;
+    const closed: DisplayTurn = { ...open, status: 'complete' };
+    this.itemList.update((items) => items.map((item) => (item.id === closed.id ? closed : item)));
+    this.currentTurnId = null;
+  }
+
+  private openTurn(): DisplayTurn | null {
+    if (this.currentTurnId === null) return null;
+    const found = this.itemList().find((item) => item.id === this.currentTurnId);
+    return found && found.type === 'turn' ? found : null;
+  }
+
+  private ingestTurnEvent(event: SessionEvent): DisplayItem {
+    const payload = event.payload;
+    const open = this.openTurn();
+    const isNew = open === null;
+    const base: DisplayTurn = open ?? {
+      id: this.nextId++,
+      type: 'turn',
+      agent: event.agent || 'Agent',
+      timestamp: event.timestamp,
+      completedAt: null,
+      status: 'in_progress',
+      stopReason: null,
+      entries: [],
+    };
+
+    let turn = this.applyTurnEvent(base, event);
+    const handledHere = turn !== base;
+
+    if (payload.type === 'turn_complete') {
+      turn = {
+        ...turn,
+        status: 'complete',
+        completedAt: event.timestamp,
+        stopReason: this.stringValue(payload.stop_reason ?? payload.stopReason) ?? null,
+      };
+    }
+
+    const next = turn;
+    this.itemList.update((items) => {
+      const merged = isNew
+        ? [...items, next]
+        : items.map((item) => (item.id === next.id ? next : item));
+
+      // A permission response can resolve a request raised in an earlier turn.
+      if (payload.type === 'permission_response' && !handledHere) {
+        return this.markPermissionInItems(merged, next.id, payload);
+      }
+      return merged;
+    });
+
+    this.currentTurnId = payload.type === 'turn_complete' ? null : next.id;
+    return next;
   }
 
   private isTurnScoped(type: string): boolean {
@@ -102,131 +158,161 @@ export class EventReducer {
     );
   }
 
-  private ensureCurrentTurn(event: SessionEvent): DisplayTurn {
-    if (this.currentTurn) return this.currentTurn;
-    const turn: DisplayTurn = {
-      id: this.nextId++,
-      type: 'turn',
-      agent: event.agent || 'Agent',
-      timestamp: event.timestamp,
-      completedAt: null,
-      status: 'in_progress',
-      stopReason: null,
-      entries: [],
-    };
-    this.items.push(turn);
-    this.currentTurn = turn;
-    return turn;
-  }
-
-  private mergeTurnEvent(turn: DisplayTurn, event: SessionEvent): void {
+  /** Returns a new turn when the event applies to it, otherwise the same turn. */
+  private applyTurnEvent(turn: DisplayTurn, event: SessionEvent): DisplayTurn {
     const payload = event.payload;
-    const last = turn.entries[turn.entries.length - 1];
+    const entries = turn.entries;
+    const last = entries[entries.length - 1];
 
     if (payload.type === 'message_chunk' || payload.type === 'thought_chunk') {
       const text = this.stringValue(payload.text) ?? '';
       if (last && last.type === payload.type) {
-        last.text += text;
-      } else {
-        turn.entries.push({
-          id: this.nextId++,
-          type: payload.type,
-          text,
-        });
+        const merged: TurnEntry = { ...last, text: last.text + text };
+        return { ...turn, entries: [...entries.slice(0, -1), merged] };
       }
-      return;
+      return {
+        ...turn,
+        entries: [...entries, { id: this.nextId++, type: payload.type, text }],
+      };
     }
 
     if (payload.type === 'tool_call') {
       const toolId =
         this.stringValue(payload.id ?? payload.toolCallId ?? payload.tool_call_id) ??
         String(this.nextId);
-      turn.entries.push({
-        id: this.nextId++,
-        type: 'tool_call',
-        toolCallId: toolId,
-        title: this.stringValue(payload.title) ?? 'Tool Call',
-        status: this.stringValue(payload.status) ?? 'in_progress',
-        output: null,
-      });
-      return;
+      return {
+        ...turn,
+        entries: [
+          ...entries,
+          {
+            id: this.nextId++,
+            type: 'tool_call',
+            toolCallId: toolId,
+            title: this.stringValue(payload.title) ?? 'Tool Call',
+            status: this.stringValue(payload.status) ?? 'in_progress',
+            output: null,
+          },
+        ],
+      };
     }
 
     if (payload.type === 'tool_call_update') {
       const toolId =
         this.stringValue(payload.id ?? payload.toolCallId ?? payload.tool_call_id) ?? '';
-      const tool = this.findToolCall(turn, toolId);
-      if (tool) {
+      const index = this.findToolCallIndex(entries, toolId);
+      if (index >= 0) {
+        const tool = entries[index] as TurnEntryTool;
         const status = this.stringValue(payload.status);
-        if (status) tool.status = status;
-        if (payload.output !== undefined && payload.output !== null) {
-          tool.output = (tool.output || '') + String(payload.output);
-        }
-      } else {
-        turn.entries.push({
-          id: this.nextId++,
-          type: 'tool_call',
-          toolCallId: toolId,
-          title: this.stringValue(payload.title) ?? 'Tool Call',
-          status: this.stringValue(payload.status) ?? 'in_progress',
-          output: payload.output == null ? null : String(payload.output),
-        });
+        const updated: TurnEntryTool = {
+          ...tool,
+          status: status ?? tool.status,
+          output:
+            payload.output !== undefined && payload.output !== null
+              ? (tool.output || '') + String(payload.output)
+              : tool.output,
+        };
+        const nextEntries = [...entries];
+        nextEntries[index] = updated;
+        return { ...turn, entries: nextEntries };
       }
-      return;
+      return {
+        ...turn,
+        entries: [
+          ...entries,
+          {
+            id: this.nextId++,
+            type: 'tool_call',
+            toolCallId: toolId,
+            title: this.stringValue(payload.title) ?? 'Tool Call',
+            status: this.stringValue(payload.status) ?? 'in_progress',
+            output: payload.output == null ? null : String(payload.output),
+          },
+        ],
+      };
     }
 
     if (payload.type === 'plan') {
-      const entries = Array.isArray(payload.entries) ? payload.entries : [];
-      const planEntries = entries as Array<{ content: string; status: string }>;
-      const lastEntry = turn.entries[turn.entries.length - 1];
-      if (lastEntry?.type === 'plan') {
-        lastEntry.entries = planEntries;
-      } else {
-        turn.entries.push({ id: this.nextId++, type: 'plan', entries: planEntries });
+      const entryList = Array.isArray(payload.entries) ? payload.entries : [];
+      const planEntries = entryList as Array<{ content: string; status: string }>;
+      if (last?.type === 'plan') {
+        const merged: TurnEntry = { ...last, entries: planEntries };
+        return { ...turn, entries: [...entries.slice(0, -1), merged] };
       }
-      return;
+      return {
+        ...turn,
+        entries: [...entries, { id: this.nextId++, type: 'plan', entries: planEntries }],
+      };
     }
 
     if (payload.type === 'permission_request') {
-      turn.entries.push({
-        id: this.nextId++,
-        type: 'permission_request',
-        requestId: this.stringValue(payload.id) ?? '',
-        method: this.stringValue(payload.method) ?? '',
-        description: this.stringValue(payload.description) ?? '',
-        responded: false,
-      });
-      return;
+      return {
+        ...turn,
+        entries: [
+          ...entries,
+          {
+            id: this.nextId++,
+            type: 'permission_request',
+            requestId: this.stringValue(payload.id) ?? '',
+            method: this.stringValue(payload.method) ?? '',
+            description: this.stringValue(payload.description) ?? '',
+            responded: false,
+          },
+        ],
+      };
     }
 
     if (payload.type === 'permission_response') {
-      const permissionId = this.stringValue(payload.id);
-      const markEntry = (entries: TurnEntry[]): boolean => {
-        for (const entry of entries) {
-          if (
-            entry.type === 'permission_request' &&
-            (!permissionId || entry.requestId === permissionId)
-          ) {
-            entry.responded = true;
-            entry.decision = payload.granted ? 'Allowed' : 'Denied';
-            return true;
-          }
-        }
-        return false;
-      };
-
-      if (markEntry(turn.entries)) return;
-      for (const item of this.items) {
-        if (item.type === 'turn' && markEntry(item.entries)) return;
-      }
+      const marked = this.markPermission(entries, payload);
+      return marked ? { ...turn, entries: marked } : turn;
     }
+
+    return turn;
   }
 
-  private findToolCall(turn: DisplayTurn, id: string): TurnEntryTool | undefined {
-    return turn.entries
-      .slice()
-      .reverse()
-      .find((entry): entry is TurnEntryTool => entry.type === 'tool_call' && entry.toolCallId === id);
+  /** Returns new entries with the first matching permission resolved, else null. */
+  private markPermission(
+    entries: readonly TurnEntry[],
+    payload: SessionEvent['payload'],
+  ): TurnEntry[] | null {
+    const permissionId = this.stringValue(payload.id);
+    const index = entries.findIndex(
+      (entry) =>
+        entry.type === 'permission_request' &&
+        (!permissionId || entry.requestId === permissionId),
+    );
+    if (index < 0) return null;
+    const next = [...entries];
+    next[index] = {
+      ...next[index],
+      responded: true,
+      decision: payload.granted ? 'Allowed' : 'Denied',
+    } as TurnEntry;
+    return next;
+  }
+
+  private markPermissionInItems(
+    items: DisplayItem[],
+    skipTurnId: number,
+    payload: SessionEvent['payload'],
+  ): DisplayItem[] {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item.type !== 'turn' || item.id === skipTurnId) continue;
+      const marked = this.markPermission(item.entries, payload);
+      if (!marked) continue;
+      const next = [...items];
+      next[index] = { ...item, entries: marked };
+      return next;
+    }
+    return items;
+  }
+
+  private findToolCallIndex(entries: readonly TurnEntry[], id: string): number {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (entry.type === 'tool_call' && entry.toolCallId === id) return index;
+    }
+    return -1;
   }
 
   private stringValue(value: unknown): string | undefined {

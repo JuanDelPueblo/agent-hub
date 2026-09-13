@@ -54,14 +54,14 @@ import { NavigationComponent } from './layout/navigation.component';
     </mat-sidenav-container>
   `,
   styles: `
-    :host { display: block; min-height: 100vh; }
-    .hub-shell { min-height: 100vh; }
-    mat-sidenav { width: 304px; max-width: 86vw; }
-    mat-sidenav-content { display: flex; min-height: 100vh; flex-direction: column; }
-    .top-bar { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; border-bottom: 1px solid var(--mat-sys-outline-variant); }
-    .top-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    :host { display: block; height: 100dvh; }
+    .hub-shell { height: 100%; }
+    mat-sidenav { width: 304px; max-width: 86vw; border-right: 1px solid var(--mat-sys-outline-variant); }
+    mat-sidenav-content { display: flex; height: 100%; min-height: 0; flex-direction: column; }
+    .top-bar { flex: 0 0 auto; gap: 8px; border-bottom: 1px solid var(--mat-sys-outline-variant); background: var(--mat-sys-surface); }
+    .top-title { overflow: hidden; font: var(--mat-sys-title-medium); text-overflow: ellipsis; white-space: nowrap; }
     .toolbar-spacer { flex: 1; }
-    .socket-summary { display: inline-flex; align-items: center; gap: 7px; color: var(--mat-sys-on-surface-variant); font-size: .78rem; text-transform: capitalize; }
+    .socket-summary { display: inline-flex; align-items: center; gap: 7px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); text-transform: capitalize; }
     .socket-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hub-status-dead); }
     .socket-dot.connected { background: var(--hub-status-running); }
     .socket-dot.connecting { background: var(--hub-status-starting); }
