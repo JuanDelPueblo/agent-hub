@@ -9,10 +9,11 @@ import './folder-picker';
 import { FolderPicker } from './folder-picker';
 import { Project } from '../api/types';
 import { store } from '../state/app-state';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('edit-project-dialog')
 export class EditProjectDialog extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
     }
@@ -20,9 +21,9 @@ export class EditProjectDialog extends LitElement {
     .dialog-content {
       display: flex;
       flex-direction: column;
-      gap: 16px;
-      min-width: 320px;
-      max-width: 540px;
+      gap: var(--hub-space-5);
+      min-width: min(320px, calc(100vw - 48px));
+      max-width: 560px;
     }
 
     @media (min-width: 600px) {
@@ -34,44 +35,45 @@ export class EditProjectDialog extends LitElement {
     .field-group {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: var(--hub-space-2);
     }
 
     .field-label {
-      font-size: 0.8rem;
-      font-weight: 500;
+      font-size: var(--md-sys-typescale-label-medium-font-size);
+      line-height: var(--md-sys-typescale-label-medium-line-height);
+      font-weight: var(--md-sys-typescale-label-medium-font-weight);
       color: var(--md-sys-color-on-surface-variant);
     }
 
     .selected-path-card {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container);
       border-radius: var(--md-sys-shape-corner-small);
       font-family: var(--md-sys-typescale-code-font);
-      font-size: 0.8rem;
+      font-size: var(--md-sys-typescale-code-font-size);
       word-break: break-all;
     }
 
     .browsed-path-card {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container-low);
       color: var(--md-sys-color-on-surface-variant);
       border: 1px dashed var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-small);
       font-family: var(--md-sys-typescale-code-font);
-      font-size: 0.8rem;
+      font-size: var(--md-sys-typescale-code-font-size);
       word-break: break-all;
     }
 
     .error-box {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       white-space: pre-wrap;
     }
-  `;
+  `];
 
   @property({ type: Boolean }) public open = false;
   @property({ type: Object }) public project: Project | null = null;

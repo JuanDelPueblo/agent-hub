@@ -2,31 +2,38 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@material/web/icon/icon.js';
 import { TurnEntryTool } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('tool-call-view')
 export class ToolCallView extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      margin: 4px 0;
+      margin: var(--hub-space-2) 0;
     }
 
     .tool-card {
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-small);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 55%, transparent);
+      border-radius: var(--md-sys-shape-corner-medium);
       background-color: var(--md-sys-color-surface-container-low);
       overflow: hidden;
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
     }
 
     .tool-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
+      width: 100%;
+      border: 0;
+      text-align: left;
+      padding: var(--hub-space-3) var(--hub-space-4);
       cursor: pointer;
       user-select: none;
       background-color: var(--md-sys-color-surface-container);
+      color: var(--md-sys-color-on-surface);
+      font: inherit;
+      transition: background-color var(--hub-duration-short3) var(--hub-easing-standard);
     }
 
     .tool-header:hover {
@@ -36,22 +43,33 @@ export class ToolCallView extends LitElement {
     .tool-title {
       display: flex;
       align-items: center;
-      gap: 8px;
-      font-weight: 500;
+      gap: var(--hub-space-2);
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
       color: var(--md-sys-color-on-surface);
     }
 
     .tool-title md-icon {
-      font-size: 18px;
+      --hub-icon-size: 20px;
       color: var(--md-sys-color-primary);
     }
 
+    .tool-meta {
+      display: flex;
+      align-items: center;
+      gap: var(--hub-space-2);
+    }
+
+    .tool-header:disabled {
+      cursor: default;
+      opacity: 1;
+    }
+
     .status-badge {
-      font-size: 0.7rem;
-      padding: 2px 8px;
-      border-radius: 999px;
-      text-transform: uppercase;
-      font-weight: 600;
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      line-height: var(--md-sys-typescale-label-small-line-height);
+      padding: 3px 8px;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-weight: var(--md-sys-typescale-label-small-font-weight);
     }
 
     .status-in_progress {
@@ -70,28 +88,29 @@ export class ToolCallView extends LitElement {
     }
 
     .tool-output {
-      padding: 10px 12px;
+      padding: var(--hub-space-4);
       font-family: var(--md-sys-typescale-code-font);
-      font-size: 0.8rem;
+      font-size: var(--md-sys-typescale-code-font-size);
+      line-height: var(--md-sys-typescale-code-line-height);
       white-space: pre-wrap;
       word-break: break-all;
       background-color: var(--md-sys-color-surface-container-lowest);
-      border-top: 1px solid var(--md-sys-color-outline-variant);
+      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 50%, transparent);
       max-height: 250px;
       overflow-y: auto;
       color: var(--md-sys-color-on-surface);
     }
 
     .chevron {
-      transition: transform 0.2s ease;
-      font-size: 18px;
+      transition: transform var(--hub-duration-short4) var(--hub-easing-standard);
+      --hub-icon-size: 20px;
       color: var(--md-sys-color-outline);
     }
 
     .chevron.expanded {
       transform: rotate(180deg);
     }
-  `;
+  `];
 
   @property({ type: Object }) tool!: TurnEntryTool;
   @state() private expanded = false;
@@ -104,8 +123,11 @@ export class ToolCallView extends LitElement {
 
     return html`
       <div class="tool-card">
-        <div
+        <button
           class="tool-header"
+          type="button"
+          ?disabled=${!hasOutput}
+          aria-expanded=${hasOutput ? this.expanded : 'false'}
           @click=${() => (hasOutput ? (this.expanded = !this.expanded) : null)}
         >
           <div class="tool-title">
@@ -113,7 +135,7 @@ export class ToolCallView extends LitElement {
             <span>${this.tool.title}</span>
           </div>
 
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="tool-meta">
             <span class="status-badge ${statusClass}">
               ${this.tool.status}
             </span>
@@ -125,7 +147,7 @@ export class ToolCallView extends LitElement {
                 `
               : ''}
           </div>
-        </div>
+        </button>
 
         ${hasOutput && this.expanded
           ? html`<div class="tool-output">${this.tool.output}</div>`

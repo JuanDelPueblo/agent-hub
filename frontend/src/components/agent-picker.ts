@@ -7,10 +7,11 @@ import '@material/web/icon/icon.js';
 import { api } from '../api/client';
 import { store } from '../state/app-state';
 import { router } from '../router';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('agent-picker')
 export class AgentPicker extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
     }
@@ -18,8 +19,8 @@ export class AgentPicker extends LitElement {
     .agent-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
-      margin-top: 12px;
+      gap: var(--hub-space-3);
+      margin-top: var(--hub-space-3);
     }
 
     .agent-card {
@@ -27,47 +28,53 @@ export class AgentPicker extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 20px 16px;
-      border-radius: var(--md-sys-shape-corner-medium);
+      padding: var(--hub-space-6) var(--hub-space-4);
+      border-radius: var(--md-sys-shape-corner-large);
       background-color: var(--md-sys-color-surface-container-low);
-      border: 2px solid transparent;
+      border: 1px solid transparent;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: background-color var(--hub-duration-short4) var(--hub-easing-standard),
+        box-shadow var(--hub-duration-short4) var(--hub-easing-standard),
+        transform var(--hub-duration-short3) var(--hub-easing-standard);
       text-align: center;
-      gap: 8px;
+      gap: var(--hub-space-2);
+      color: var(--md-sys-color-on-surface);
     }
 
     .agent-card:hover {
       background-color: var(--md-sys-color-surface-container);
+      box-shadow: var(--md-sys-elevation-level1);
       transform: translateY(-2px);
     }
 
     .agent-card.selected {
       background-color: var(--md-sys-color-primary-container);
       border-color: var(--md-sys-color-primary);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .agent-card md-icon {
-      font-size: 32px;
+      --hub-icon-size: 32px;
       color: var(--md-sys-color-primary);
     }
 
     .agent-card .name {
-      font-weight: 600;
-      font-size: 0.95rem;
+      font-weight: var(--md-sys-typescale-title-medium-font-weight);
+      font-size: var(--md-sys-typescale-title-medium-font-size);
+      line-height: var(--md-sys-typescale-title-medium-line-height);
       text-transform: capitalize;
       color: var(--md-sys-color-on-surface);
     }
 
     .error-box {
-      padding: 8px 12px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
-      border-radius: 6px;
-      font-size: 0.85rem;
-      margin-bottom: 12px;
+      border-radius: var(--md-sys-shape-corner-medium);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      margin-bottom: var(--hub-space-3);
     }
-  `;
+  `];
 
   @property({ type: String }) projectId = '';
   @property({ type: Boolean }) public open = false;
@@ -141,22 +148,17 @@ export class AgentPicker extends LitElement {
           <div class="agent-grid">
             ${store.agents.map(
               (agent) => html`
-                <div
+                <button
                   class="agent-card ${this.selectedAgent === agent ? 'selected' : ''}"
+                  type="button"
+                  aria-pressed=${this.selectedAgent === agent ? 'true' : 'false'}
                   @click=${() => (this.selectedAgent = agent)}
-                  role="button"
-                  tabindex="0"
-                  @keydown=${(e: KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      this.selectedAgent = agent;
-                    }
-                  }}
                 >
                   <md-icon class="material-symbols-outlined">
                     ${this.agentIcon(agent)}
                   </md-icon>
                   <span class="name">${agent}</span>
-                </div>
+                </button>
               `
             )}
           </div>

@@ -10,10 +10,11 @@ import './folder-picker';
 import { api } from '../api/client';
 import { store } from '../state/app-state';
 import { router } from '../router';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('project-dialog')
 export class ProjectDialog extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
     }
@@ -21,9 +22,9 @@ export class ProjectDialog extends LitElement {
     .dialog-content {
       display: flex;
       flex-direction: column;
-      gap: 16px;
-      min-width: 320px;
-      max-width: 540px;
+      gap: var(--hub-space-5);
+      min-width: min(320px, calc(100vw - 48px));
+      max-width: 560px;
     }
 
     @media (min-width: 600px) {
@@ -36,70 +37,74 @@ export class ProjectDialog extends LitElement {
       display: flex;
       border-radius: var(--md-sys-shape-corner-full);
       background-color: var(--md-sys-color-surface-container-high);
-      padding: 4px;
-      gap: 4px;
+      padding: var(--hub-space-1);
+      gap: var(--hub-space-1);
     }
 
     .tab-btn {
       flex: 1;
-      padding: 8px 12px;
+      padding: 10px var(--hub-space-4);
       border: none;
       background: none;
       cursor: pointer;
       border-radius: var(--md-sys-shape-corner-full);
-      font-weight: 500;
-      font-size: 0.85rem;
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
+      font-size: var(--md-sys-typescale-label-large-font-size);
+      line-height: var(--md-sys-typescale-label-large-line-height);
       color: var(--md-sys-color-on-surface-variant);
-      transition: all 0.2s ease;
+      transition: background-color var(--hub-duration-short4) var(--hub-easing-standard),
+        color var(--hub-duration-short4) var(--hub-easing-standard),
+        box-shadow var(--hub-duration-short4) var(--hub-easing-standard);
     }
 
     .tab-btn.active {
       background-color: var(--md-sys-color-surface);
       color: var(--md-sys-color-primary);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .field-group {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: var(--hub-space-2);
     }
 
     .field-label {
-      font-size: 0.8rem;
-      font-weight: 500;
+      font-size: var(--md-sys-typescale-label-medium-font-size);
+      line-height: var(--md-sys-typescale-label-medium-line-height);
+      font-weight: var(--md-sys-typescale-label-medium-font-weight);
       color: var(--md-sys-color-on-surface-variant);
     }
 
     .selected-path-card {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container);
       border-radius: var(--md-sys-shape-corner-small);
       font-family: var(--md-sys-typescale-code-font);
-      font-size: 0.8rem;
+      font-size: var(--md-sys-typescale-code-font-size);
       word-break: break-all;
     }
 
     .browsed-path-card {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container-low);
       color: var(--md-sys-color-on-surface-variant);
       border: 1px dashed var(--md-sys-color-outline-variant);
       border-radius: var(--md-sys-shape-corner-small);
       font-family: var(--md-sys-typescale-code-font);
-      font-size: 0.8rem;
+      font-size: var(--md-sys-typescale-code-font-size);
       word-break: break-all;
     }
 
     .error-box {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       white-space: pre-wrap;
     }
-  `;
+  `];
 
   @property({ type: Boolean }) public open = false;
   @state() private mode: 'folder' | 'clone' = 'folder';
@@ -235,12 +240,16 @@ export class ProjectDialog extends LitElement {
           <div class="mode-tabs">
             <button
               class="tab-btn ${this.mode === 'folder' ? 'active' : ''}"
+              type="button"
+              aria-pressed=${this.mode === 'folder' ? 'true' : 'false'}
               @click=${() => (this.mode = 'folder')}
             >
               Existing Folder
             </button>
             <button
               class="tab-btn ${this.mode === 'clone' ? 'active' : ''}"
+              type="button"
+              aria-pressed=${this.mode === 'clone' ? 'true' : 'false'}
               @click=${() => (this.mode = 'clone')}
             >
               Clone Repository

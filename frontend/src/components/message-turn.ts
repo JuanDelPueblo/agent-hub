@@ -7,6 +7,7 @@ import {
   DisplayStateChange,
   DisplayItem,
 } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 import './tool-call';
 import './plan-view';
 import './permission-card';
@@ -19,28 +20,29 @@ export class MessageTurn extends LitElement {
   @property({ type: String })
   chatId: string = '';
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      margin-bottom: 20px;
+      margin-bottom: var(--hub-space-7);
+      animation: message-enter var(--hub-duration-medium2) var(--hub-easing-emphasized-decelerate) both;
     }
 
     .user-container {
       display: flex;
       flex-direction: column;
       align-items: flex-end;
-      margin-left: 20%;
+      margin-left: 18%;
     }
 
     .user-bubble {
       background-color: var(--md-sys-color-primary-container);
       color: var(--md-sys-color-on-primary-container);
-      padding: 12px 16px;
-      border-radius: 16px 16px 4px 16px;
+      padding: var(--hub-space-4) var(--hub-space-5);
+      border-radius: var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-large);
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 0.9375rem;
-      line-height: 1.5;
+      font-size: var(--md-sys-typescale-body-large-font-size);
+      line-height: var(--md-sys-typescale-body-large-line-height);
       max-width: 100%;
       box-shadow: var(--md-sys-elevation-level1);
     }
@@ -49,52 +51,63 @@ export class MessageTurn extends LitElement {
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      margin-right: 5%;
+      margin-right: 3%;
       max-width: 100%;
     }
 
     .assistant-header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
-      font-size: 0.8125rem;
+      gap: var(--hub-space-2);
+      margin-bottom: var(--hub-space-3);
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       color: var(--md-sys-color-on-surface-variant);
     }
 
     .agent-avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--md-sys-shape-corner-medium) var(--md-sys-shape-corner-medium) var(--md-sys-shape-corner-medium) var(--md-sys-shape-corner-extra-small);
       background-color: var(--md-sys-color-secondary-container);
       color: var(--md-sys-color-on-secondary-container);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 600;
-      font-size: 0.75rem;
+      font-weight: var(--md-sys-typescale-label-medium-font-weight);
+      font-size: var(--md-sys-typescale-label-medium-font-size);
       text-transform: uppercase;
     }
 
     .agent-name {
-      font-weight: 600;
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
       color: var(--md-sys-color-on-surface);
       text-transform: capitalize;
     }
 
     .timestamp {
-      font-size: 0.75rem;
+      font-size: var(--md-sys-typescale-body-small-font-size);
       color: var(--md-sys-color-outline);
+    }
+
+    .user-timestamp {
+      margin-top: var(--hub-space-1);
+      padding-right: var(--hub-space-1);
+    }
+
+    .error-icon {
+      --hub-icon-size: 20px;
     }
 
     .status-badge {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 0.6875rem;
-      font-weight: 500;
+      gap: var(--hub-space-1);
+      padding: 3px 8px;
+      border-radius: var(--md-sys-shape-corner-full);
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      line-height: var(--md-sys-typescale-label-small-line-height);
+      font-weight: var(--md-sys-typescale-label-small-font-weight);
     }
 
     .status-badge.in_progress {
@@ -104,28 +117,27 @@ export class MessageTurn extends LitElement {
 
     .assistant-body {
       background-color: var(--md-sys-color-surface-container-low);
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: 4px 16px 16px 16px;
-      padding: 16px;
+      border-radius: var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large);
+      padding: var(--hub-space-5);
       width: 100%;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: var(--hub-space-4);
     }
 
     .thought-details {
       background-color: var(--md-sys-color-surface-container);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 0.875rem;
+      border-radius: var(--md-sys-shape-corner-medium);
+      padding: var(--hub-space-3) var(--hub-space-4);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       color: var(--md-sys-color-on-surface-variant);
       border: 1px dashed var(--md-sys-color-outline-variant);
     }
 
     .thought-summary {
       cursor: pointer;
-      font-weight: 500;
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -133,56 +145,52 @@ export class MessageTurn extends LitElement {
     }
 
     .thought-content {
-      margin-top: 8px;
+      margin-top: var(--hub-space-2);
       white-space: pre-wrap;
       word-break: break-word;
       font-family: inherit;
       line-height: 1.5;
       font-style: italic;
       color: var(--md-sys-color-on-surface-variant);
-      border-top: 1px solid var(--md-sys-color-outline-variant);
-      padding-top: 8px;
+      border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 45%, transparent);
+      padding-top: var(--hub-space-2);
     }
 
     .text-content {
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 0.9375rem;
-      line-height: 1.6;
+      font-size: var(--md-sys-typescale-body-large-font-size);
+      line-height: 1.65;
       color: var(--md-sys-color-on-surface);
     }
 
     .error-container {
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
-      padding: 12px 16px;
-      border-radius: 12px;
-      font-size: 0.875rem;
+      padding: var(--hub-space-4) var(--hub-space-5);
+      border-radius: var(--md-sys-shape-corner-medium);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: var(--hub-space-3);
     }
 
     .state-change {
       display: flex;
       justify-content: center;
-      margin: 8px 0;
+      margin: var(--hub-space-3) 0;
     }
 
     .state-pill {
-      font-size: 0.75rem;
-      padding: 4px 10px;
+      font-size: var(--md-sys-typescale-label-small-font-size);
+      padding: 5px 10px;
       background-color: var(--md-sys-color-surface-variant);
       color: var(--md-sys-color-on-surface-variant);
-      border-radius: 12px;
+      border-radius: var(--md-sys-shape-corner-full);
     }
 
     .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 16px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
+      --hub-icon-size: 18px;
       display: inline-block;
     }
 
@@ -198,7 +206,26 @@ export class MessageTurn extends LitElement {
         transform: rotate(360deg);
       }
     }
-  `;
+
+    @keyframes message-enter {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 599px) {
+      .user-container {
+        margin-left: 8%;
+      }
+
+      .assistant-container {
+        margin-right: 0;
+      }
+
+      .assistant-body {
+        padding: var(--hub-space-4);
+      }
+    }
+  `];
 
   private formatTime(ts: string) {
     if (!ts) return '';
@@ -217,7 +244,7 @@ export class MessageTurn extends LitElement {
     return html`
       <div class="user-container">
         <div class="user-bubble">${item.text}</div>
-        <div class="timestamp" style="margin-top: 4px; padding-right: 4px;">
+        <div class="timestamp user-timestamp">
           ${this.formatTime(item.timestamp)}
         </div>
       </div>
@@ -282,7 +309,7 @@ export class MessageTurn extends LitElement {
   private renderError(item: DisplayError) {
     return html`
       <div class="error-container">
-        <span class="icon" style="font-size: 20px;">error</span>
+        <span class="icon error-icon">error</span>
         <span>${item.message}</span>
       </div>
     `;

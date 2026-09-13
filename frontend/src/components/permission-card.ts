@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { TurnEntryPermission } from '../api/types';
 import { store } from '../state/app-state';
+import { sharedStyles } from '../styles/shared';
 import '@material/web/button/filled-button.js';
 import '@material/web/button/outlined-button.js';
 import '@material/web/button/text-button.js';
@@ -14,20 +15,21 @@ export class PermissionCard extends LitElement {
   @property({ type: String })
   chatId: string = '';
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      margin: 12px 0;
+      margin: var(--hub-space-4) 0;
     }
 
     .card {
-      background-color: var(--md-sys-color-surface-container-high);
-      border: 1.5px solid var(--md-sys-color-error);
-      border-radius: var(--md-sys-shape-corner-medium, 12px);
-      padding: 16px;
+      background-color: var(--md-sys-color-error-container);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 52%, transparent);
+      border-radius: var(--md-sys-shape-corner-large);
+      padding: var(--hub-space-5);
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: var(--hub-space-4);
+      box-shadow: var(--md-sys-elevation-level1);
     }
 
     .card.responded {
@@ -40,29 +42,25 @@ export class PermissionCard extends LitElement {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-weight: 600;
+      font-weight: var(--md-sys-typescale-title-medium-font-weight);
       color: var(--md-sys-color-error);
-      font-size: 0.9375rem;
+      font-size: var(--md-sys-typescale-title-medium-font-size);
+      line-height: var(--md-sys-typescale-title-medium-line-height);
     }
 
     .card.responded .header {
       color: var(--md-sys-color-on-surface-variant);
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 20px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
-    }
+    .icon { --hub-icon-size: 22px; --hub-icon-fill: 1; }
 
     .tool-details {
-      font-size: 0.875rem;
-      background-color: var(--md-sys-color-surface-container-lowest);
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-family: monospace;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
+      background-color: color-mix(in srgb, var(--md-sys-color-surface-container-lowest) 78%, transparent);
+      border-radius: var(--md-sys-shape-corner-medium);
+      padding: var(--hub-space-4);
+      font-family: var(--md-sys-typescale-code-font);
       color: var(--md-sys-color-on-surface);
       white-space: pre-wrap;
       word-break: break-word;
@@ -71,23 +69,27 @@ export class PermissionCard extends LitElement {
     .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: var(--hub-space-2);
       justify-content: flex-end;
-      margin-top: 4px;
+      margin-top: var(--hub-space-1);
     }
 
     .decision-badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      font-size: 0.8125rem;
-      padding: 4px 10px;
-      border-radius: 6px;
+      gap: var(--hub-space-2);
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      padding: 5px 10px;
+      border-radius: var(--md-sys-shape-corner-small);
       background-color: var(--md-sys-color-surface-container-highest);
       color: var(--md-sys-color-on-surface-variant);
-      font-weight: 500;
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
     }
-  `;
+
+    .decision-icon {
+      --hub-icon-size: 18px;
+    }
+  `];
 
   private handleRespond(granted: boolean) {
     if (!this.chatId || !this.permission.requestId) return;
@@ -113,7 +115,7 @@ export class PermissionCard extends LitElement {
         ${responded
           ? html`
               <div class="decision-badge">
-                <span class="icon" style="font-size: 16px;">check</span>
+                <span class="icon decision-icon">check</span>
                 <span>Responded: ${decision || 'Handled'}</span>
               </div>
             `

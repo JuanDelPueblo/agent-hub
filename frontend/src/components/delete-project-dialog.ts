@@ -5,10 +5,11 @@ import '@material/web/button/filled-button.js';
 import '@material/web/button/text-button.js';
 import { Project } from '../api/types';
 import { store } from '../state/app-state';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('delete-project-dialog')
 export class DeleteProjectDialog extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
     }
@@ -16,23 +17,23 @@ export class DeleteProjectDialog extends LitElement {
     .dialog-content {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      min-width: 280px;
+      gap: var(--hub-space-4);
+      min-width: min(280px, calc(100vw - 48px));
       max-width: 480px;
     }
 
     .warning-text {
-      font-size: 0.9375rem;
+      font-size: var(--md-sys-typescale-body-large-font-size);
       color: var(--md-sys-color-on-surface);
-      line-height: 1.4;
+      line-height: var(--md-sys-typescale-body-large-line-height);
     }
 
     .error-box {
-      padding: 10px 14px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       white-space: pre-wrap;
     }
 
@@ -40,7 +41,12 @@ export class DeleteProjectDialog extends LitElement {
       --md-filled-button-container-color: var(--md-sys-color-error);
       --md-filled-button-label-text-color: var(--md-sys-color-on-error);
     }
-  `;
+
+    .project-files-note {
+      color: var(--md-sys-color-on-surface-variant);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+    }
+  `];
 
   @property({ type: Boolean }) public open = false;
   @property({ type: Object }) public project: Project | null = null;
@@ -102,7 +108,7 @@ export class DeleteProjectDialog extends LitElement {
             Are you sure you want to remove project
             <strong>"${this.project.name}"</strong> from Agent Hub?
           </p>
-          <p class="warning-text" style="color: var(--md-sys-color-outline); font-size: 0.85rem;">
+          <p class="warning-text project-files-note">
             Project files on disk will <strong>not</strong> be deleted.
           </p>
         </div>

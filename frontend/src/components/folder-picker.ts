@@ -6,15 +6,15 @@ import '@material/web/button/text-button.js';
 import '@material/web/progress/circular-progress.js';
 import { api } from '../api/client';
 import { DirectoryListing } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('folder-picker')
 export class FolderPicker extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      font-family: var(--md-sys-typescale-body-font);
+      gap: var(--hub-space-3);
       max-height: 400px;
     }
 
@@ -22,11 +22,11 @@ export class FolderPicker extends LitElement {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 4px;
-      padding: 8px 12px;
+      gap: var(--hub-space-1);
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container-low);
       border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-small-font-size);
     }
 
     .crumb-btn {
@@ -34,9 +34,9 @@ export class FolderPicker extends LitElement {
       border: none;
       color: var(--md-sys-color-primary);
       cursor: pointer;
-      font-size: 0.85rem;
-      padding: 2px 4px;
-      border-radius: 4px;
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      padding: var(--hub-space-1) var(--hub-space-2);
+      border-radius: var(--md-sys-shape-corner-small);
     }
 
     .crumb-btn:hover {
@@ -51,8 +51,8 @@ export class FolderPicker extends LitElement {
     .folder-list {
       flex: 1;
       overflow-y: auto;
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-small);
+      border: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 55%, transparent);
+      border-radius: var(--md-sys-shape-corner-medium);
       min-height: 180px;
       max-height: 250px;
       background-color: var(--md-sys-color-surface);
@@ -61,13 +61,20 @@ export class FolderPicker extends LitElement {
     .folder-item {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
+      gap: var(--hub-space-3);
+      padding: var(--hub-space-3) var(--hub-space-4);
       cursor: pointer;
-      border-bottom: 1px solid var(--md-sys-color-surface-container-high);
-      transition: background-color 0.15s;
-      font-size: 0.9rem;
+      border-bottom: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 36%, transparent);
+      transition: background-color var(--hub-duration-short3) var(--hub-easing-standard);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       color: var(--md-sys-color-on-surface);
+      width: 100%;
+      background: transparent;
+      border-left: 0;
+      border-right: 0;
+      border-top: 0;
+      text-align: left;
+      font: inherit;
     }
 
     .folder-item:hover {
@@ -76,14 +83,14 @@ export class FolderPicker extends LitElement {
 
     .folder-item md-icon {
       color: var(--md-sys-color-primary);
-      font-size: 20px;
+      --hub-icon-size: 22px;
     }
 
     .empty-state {
-      padding: 32px;
+      padding: var(--hub-space-8);
       text-align: center;
       color: var(--md-sys-color-outline);
-      font-size: 0.85rem;
+      font-size: var(--md-sys-typescale-body-small-font-size);
     }
 
     .loading-container {
@@ -94,20 +101,20 @@ export class FolderPicker extends LitElement {
     }
 
     .error-container {
-      padding: 12px;
+      padding: var(--hub-space-4);
       background-color: var(--md-sys-color-error-container);
       color: var(--md-sys-color-on-error-container);
-      border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.85rem;
+      border-radius: var(--md-sys-shape-corner-medium);
+      font-size: var(--md-sys-typescale-body-small-font-size);
     }
 
     .actions {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      margin-top: 8px;
+      gap: var(--hub-space-2);
+      margin-top: var(--hub-space-2);
     }
-  `;
+  `];
 
   @property({ type: String }) initialPath?: string;
   @state() private currentListing: DirectoryListing | null = null;
@@ -197,8 +204,9 @@ export class FolderPicker extends LitElement {
             <div class="breadcrumbs">
               ${this.currentListing.parent
                 ? html`
-                    <button
-                      class="crumb-btn"
+                      <button
+                        class="crumb-btn"
+                        type="button"
                       @click=${() => this.loadDirectory(this.currentListing!.parent!)}
                       title="Go up one level"
                     >
@@ -211,6 +219,7 @@ export class FolderPicker extends LitElement {
                 (b, idx) => html`
                   <button
                     class="crumb-btn"
+                    type="button"
                     @click=${() => this.loadDirectory(b.path)}
                   >
                     ${b.name}
@@ -236,13 +245,14 @@ export class FolderPicker extends LitElement {
           ? html`<div class="empty-state">No subdirectories found</div>`
           : this.currentListing?.directories.map(
               (d) => html`
-                <div
+                <button
                   class="folder-item"
+                  type="button"
                   @click=${() => this.loadDirectory(d.path)}
                 >
                   <md-icon class="material-symbols-outlined">folder</md-icon>
                   <span>${d.name}</span>
-                </div>
+                </button>
               `
             )}
       </div>

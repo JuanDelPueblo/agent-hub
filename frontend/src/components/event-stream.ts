@@ -1,6 +1,7 @@
 import { LitElement, html, css, PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { DisplayItem } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 import './message-turn';
 import '@material/web/fab/fab.js';
 
@@ -17,20 +18,20 @@ export class EventStream extends LitElement {
 
   private isAutoScrollEnabled = true;
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
       position: relative;
       height: 100%;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 16px 20px;
+      padding: var(--hub-space-7) var(--hub-page-gutter);
       box-sizing: border-box;
       scroll-behavior: smooth;
     }
 
     .stream-container {
-      max-width: 860px;
+      max-width: var(--hub-chat-max-width);
       margin: 0 auto;
       display: flex;
       flex-direction: column;
@@ -40,11 +41,11 @@ export class EventStream extends LitElement {
 
     .scroll-fab-container {
       position: sticky;
-      bottom: 24px;
+      bottom: var(--hub-space-6);
       display: flex;
       justify-content: center;
       pointer-events: none;
-      margin-top: -56px;
+      margin-top: -64px;
       z-index: 10;
     }
 
@@ -52,31 +53,35 @@ export class EventStream extends LitElement {
       pointer-events: auto;
       background-color: var(--md-sys-color-primary-container);
       color: var(--md-sys-color-on-primary-container);
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: 20px;
-      padding: 8px 16px;
+      border: 1px solid transparent;
+      border-radius: var(--md-sys-shape-corner-full);
+      padding: 10px var(--hub-space-5);
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 0.8125rem;
-      font-weight: 500;
+      gap: var(--hub-space-2);
+      font-size: var(--md-sys-typescale-label-medium-font-size);
+      line-height: var(--md-sys-typescale-label-medium-line-height);
+      font-weight: var(--md-sys-typescale-label-medium-font-weight);
       cursor: pointer;
       box-shadow: var(--md-sys-elevation-level2);
-      transition: opacity 0.2s ease, transform 0.2s ease;
+      transition: opacity var(--hub-duration-short4) var(--hub-easing-standard),
+        transform var(--hub-duration-short4) var(--hub-easing-standard),
+        background-color var(--hub-duration-short4) var(--hub-easing-standard);
     }
 
     .scroll-btn:hover {
       background-color: var(--md-sys-color-surface-container-high);
+      transform: translateY(-2px);
     }
 
-    .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 18px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
+    .icon { --hub-icon-size: 20px; }
+
+    @media (max-width: 599px) {
+      :host {
+        padding: var(--hub-space-5) var(--hub-page-gutter-compact);
+      }
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();

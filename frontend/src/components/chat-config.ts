@@ -7,57 +7,61 @@ import '@material/web/divider/divider.js';
 import '@material/web/icon/icon.js';
 import { Chat, ConfigOption, PermissionPolicy } from '../api/types';
 import { store } from '../state/app-state';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('chat-config')
 export class ChatConfig extends LitElement {
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: flex;
       flex-direction: column;
-      gap: 16px;
-      font-family: var(--md-sys-typescale-body-font);
+      gap: var(--hub-space-5);
     }
 
     .config-title {
-      font-size: 0.95rem;
-      font-weight: 600;
+      font-family: var(--md-sys-typescale-title-medium-font-family);
+      font-size: var(--md-sys-typescale-title-medium-font-size);
+      line-height: var(--md-sys-typescale-title-medium-line-height);
+      font-weight: var(--md-sys-typescale-title-medium-font-weight);
       color: var(--md-sys-color-on-surface);
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--hub-space-2);
     }
 
     .config-item {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: var(--hub-space-2);
     }
 
     .config-boolean-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 6px 0;
+      gap: var(--hub-space-3);
+      padding: var(--hub-space-2) 0;
     }
 
     .item-label {
-      font-size: 0.85rem;
-      font-weight: 500;
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
       color: var(--md-sys-color-on-surface);
     }
 
     .item-desc {
-      font-size: 0.75rem;
+      font-size: var(--md-sys-typescale-body-small-font-size);
+      line-height: var(--md-sys-typescale-body-small-line-height);
       color: var(--md-sys-color-on-surface-variant);
       line-height: 1.3;
     }
 
     .unsupported-type {
-      padding: 8px 12px;
+      padding: var(--hub-space-3) var(--hub-space-4);
       background-color: var(--md-sys-color-surface-container);
-      border-radius: var(--md-sys-shape-corner-small);
-      font-size: 0.8rem;
+      border-radius: var(--md-sys-shape-corner-medium);
+      font-size: var(--md-sys-typescale-body-small-font-size);
       color: var(--md-sys-color-outline);
     }
 
@@ -66,10 +70,10 @@ export class ChatConfig extends LitElement {
       -webkit-appearance: none;
       background-color: var(--md-sys-color-surface-container-high);
       border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-small);
+      border-radius: var(--md-sys-shape-corner-medium);
       color: var(--md-sys-color-on-surface);
-      padding: 8px 12px;
-      font-size: 0.85rem;
+      padding: var(--hub-space-3) var(--hub-space-4);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
       cursor: pointer;
       width: 100%;
       outline: none;
@@ -77,8 +81,17 @@ export class ChatConfig extends LitElement {
 
     select.native-select:focus {
       border-color: var(--md-sys-color-primary);
+      box-shadow: var(--hub-focus-ring);
     }
-  `;
+
+    .config-column {
+      flex: 1;
+    }
+
+    .no-options {
+      font-style: italic;
+    }
+  `];
 
   @property({ type: Object }) chat: Chat | null = null;
   @property({ type: Array }) options: ConfigOption[] = [];
@@ -136,7 +149,7 @@ export class ChatConfig extends LitElement {
       <!-- ACP Dynamically Advertised Config Options -->
       ${this.options.length === 0
         ? html`
-            <div class="item-desc" style="font-style: italic;">
+            <div class="item-desc no-options">
               No additional agent configuration options advertised.
             </div>
           `
@@ -187,7 +200,7 @@ export class ChatConfig extends LitElement {
             if (opt.type === 'boolean') {
               return html`
                 <div class="config-boolean-item">
-                  <div style="flex: 1;">
+                  <div class="config-column">
                     <div class="item-label">${opt.name}</div>
                     ${opt.description
                       ? html`<div class="item-desc">${opt.description}</div>`

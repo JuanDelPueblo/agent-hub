@@ -1,35 +1,35 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { PlanEntry } from '../api/types';
+import { sharedStyles } from '../styles/shared';
 
 @customElement('plan-view')
 export class PlanView extends LitElement {
   @property({ type: Array })
   entries: PlanEntry[] = [];
 
-  static styles = css`
+  static styles = [sharedStyles, css`
     :host {
       display: block;
-      margin: 8px 0;
+      margin: var(--hub-space-3) 0;
     }
 
     .plan-card {
-      background-color: var(--md-sys-color-surface-container);
-      border: 1px solid var(--md-sys-color-outline-variant);
-      border-radius: var(--md-sys-shape-corner-medium, 12px);
-      padding: 12px 16px;
+      background-color: var(--md-sys-color-tertiary-container);
+      color: var(--md-sys-color-on-tertiary-container);
+      border-radius: var(--md-sys-shape-corner-large);
+      padding: var(--hub-space-4) var(--hub-space-5);
     }
 
     .plan-header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-      font-size: 0.8125rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--md-sys-color-primary);
+      gap: var(--hub-space-2);
+      margin-bottom: var(--hub-space-4);
+      font-size: var(--md-sys-typescale-label-large-font-size);
+      line-height: var(--md-sys-typescale-label-large-line-height);
+      font-weight: var(--md-sys-typescale-label-large-font-weight);
+      color: var(--md-sys-color-on-tertiary-container);
     }
 
     .plan-list {
@@ -44,34 +44,31 @@ export class PlanView extends LitElement {
     .plan-item {
       display: flex;
       align-items: flex-start;
-      gap: 10px;
-      font-size: 0.875rem;
+      gap: var(--hub-space-3);
+      font-size: var(--md-sys-typescale-body-medium-font-size);
+      line-height: var(--md-sys-typescale-body-medium-line-height);
       line-height: 1.4;
       color: var(--md-sys-color-on-surface);
     }
 
     .icon {
-      font-family: 'Material Symbols Outlined';
-      font-size: 18px;
-      font-style: normal;
-      font-weight: normal;
-      line-height: 1;
+      --hub-icon-size: 20px;
       display: inline-block;
       margin-top: 1px;
       flex-shrink: 0;
     }
 
     .icon.completed {
-      color: var(--hub-status-running, #34a853);
+      color: var(--status-running);
     }
 
     .icon.in_progress {
-      color: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-tertiary-container);
       animation: spin 1.5s linear infinite;
     }
 
     .icon.pending {
-      color: var(--md-sys-color-outline);
+      color: color-mix(in srgb, var(--md-sys-color-on-tertiary-container) 58%, transparent);
     }
 
     .content.completed {
@@ -87,7 +84,7 @@ export class PlanView extends LitElement {
         transform: rotate(360deg);
       }
     }
-  `;
+  `];
 
   private renderStatusIcon(status: string) {
     if (status === 'completed') {
