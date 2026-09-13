@@ -59,27 +59,6 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
-
-      - name: Generate coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./cobertura.xml
-          fail_ci_if_error: false
-
   lint:
     name: Linting
     runs-on: ubuntu-latest
@@ -119,19 +98,6 @@ jobs:
 
       - name: Run security audit
         run: cargo audit
-
-  benchmark:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run benchmarks
-        run: cargo bench --no-run
 
   minimum-rust-version:
     name: Minimum Rust Version

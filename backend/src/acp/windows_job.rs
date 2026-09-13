@@ -7,7 +7,7 @@
 //! a plain job with only KILL_ON_JOB_CLOSE, AssignProcessToJobObject, and
 //! resume — verified to terminate the whole tree.
 //!
-//! Setting `CCGONEXT_WIN_JOB_DEBUG=1` adds verbose per-spawn diagnostics:
+//! Setting `AGENT_HUB_WIN_JOB_DEBUG=1` adds verbose per-spawn diagnostics:
 //! T0..T4 markers, periodic `JobObjectBasicProcessIdList` dumps, and member
 //! snapshots around start_kill/Drop.
 #![cfg(windows)]
@@ -46,7 +46,7 @@ use windows_sys::Win32::System::Threading::{
 
 use super::process::AcpProcess;
 
-pub const VERBOSE_ENV_FLAG: &str = "CCGONEXT_WIN_JOB_DEBUG";
+pub const VERBOSE_ENV_FLAG: &str = "AGENT_HUB_WIN_JOB_DEBUG";
 
 fn verbose() -> bool {
     std::env::var(VERBOSE_ENV_FLAG)
