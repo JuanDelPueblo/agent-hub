@@ -1,0 +1,25 @@
+<mat-card class="permission" [class.responded]="permission.responded">
+  <div class="permission-header">
+    <mat-icon>shield_person</mat-icon>
+    <div class="permission-heading">
+      <div class="permission-title">Permission request</div>
+      <div class="permission-method">{{ permission.method }}</div>
+    </div>
+  </div>
+  <mat-card-content>
+    <pre>{{ permission.description || permission.method || 'Action requested' }}</pre>
+  </mat-card-content>
+  @if (permission.responded) {
+    <div class="decision">
+      <mat-icon>check</mat-icon>
+      <span>Responded: {{ permission.decision || 'Handled' }}</span>
+    </div>
+  } @else {
+    <mat-card-actions align="end">
+      <button mat-stroked-button type="button" (click)="respond(false)" [disabled]="responding()">Deny</button>
+      <button mat-flat-button type="button" (click)="respond(true)" [disabled]="responding()">
+        @if (responding()) { <mat-spinner diameter="18" /> } @else { Allow }
+      </button>
+    </mat-card-actions>
+  }
+</mat-card>

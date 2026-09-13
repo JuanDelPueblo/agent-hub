@@ -1,0 +1,10 @@
+<span
+  class="status-chip"
+  [class]="state.wsStatus()"
+  role="status"
+  [matTooltip]="tooltip()"
+  [attr.aria-label]="'Event stream ' + state.wsStatus()"
+>
+  <span class="status-dot"></span>
+  <span class="status-label">{{ state.wsStatus() }}</span>
+</span>

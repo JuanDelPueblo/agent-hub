@@ -1,0 +1,124 @@
+<header class="drawer-header">
+  <a class="brand" routerLink="/" aria-label="Agent Hub home" (click)="closeRequested.emit()">
+    <span class="brand-mark"><mat-icon>hub</mat-icon></span>
+    <span class="brand-name">Agent Hub</span>
+  </a>
+  <span class="header-spacer"></span>
+  <button
+    mat-icon-button
+    class="drawer-close"
+    matTooltip="Close navigation"
+    aria-label="Close navigation"
+    (click)="closeRequested.emit()"
+  >
+    <mat-icon>close</mat-icon>
+  </button>
+</header>
+
+<div class="drawer-body">
+  @if (state.activeProject(); as project) {
+    <button
+      mat-button
+      type="button"
+      class="project-switcher"
+      [matMenuTriggerFor]="projectMenu"
+      aria-label="Switch project"
+    >
+      <span class="switcher-icon"><mat-icon>folder</mat-icon></span>
+      <span class="switcher-text">
+        <span class="switcher-name">{{ project.name }}</span>
+        <span class="switcher-path" [title]="project.path">{{ project.path }}</span>
+      </span>
+      <mat-icon iconPositionEnd class="switcher-caret">unfold_more</mat-icon>
+    </button>
+
+    <mat-menu #projectMenu="matMenu" class="hub-project-menu" [overlapTrigger]="false">
+      <div class="menu-heading" role="presentation">Projects</div>
+      @for (item of state.projects(); track item.id) {
+        <button
+          mat-menu-item
+          type="button"
+          [class.current]="item.id === project.id"
+          (click)="openProject(item.id)"
+        >
+          <mat-icon>{{ item.id === project.id ? 'folder_open' : 'folder' }}</mat-icon>
+          <span>{{ item.name }}</span>
+        </button>
+      }
+      <mat-divider />
+      <button mat-menu-item type="button" (click)="goHome()">
+        <mat-icon>grid_view</mat-icon><span>All projects</span>
+      </button>
+      <button mat-menu-item type="button" (click)="newProject()">
+        <mat-icon>create_new_folder</mat-icon><span>New project</span>
+      </button>
+    </mat-menu>
+
+    @if (showNewChat()) {
+      <hub-new-chat-button class="drawer-new-chat" [projectId]="project.id" />
+    }
+
+    <div class="list-subheader">
+      <span id="chats-heading">Chats</span>
+      <span class="count">{{ visibleChats().length }}</span>
+      <span class="subheader-spacer"></span>
+      <button
+        mat-icon-button
+        class="archive-toggle"
+        [class.on]="state.showArchived()"
+        [matTooltip]="state.showArchived() ? 'Hide archived chats' : 'Show archived chats'"
+        [attr.aria-pressed]="state.showArchived()"
+        aria-label="Show archived chats"
+        (click)="state.setShowArchived(!state.showArchived())"
+      >
+        <mat-icon>inventory_2</mat-icon>
+      </button>
+    </div>
+
+    <mat-nav-list aria-labelledby="chats-heading">
+      @for (chat of visibleChats(); track chat.id) {
+        <a
+          mat-list-item
+          lines="2"
+          [routerLink]="['/projects', chat.project_id, 'chats', chat.id]"
+          routerLinkActive="selected"
+          (click)="closeRequested.emit()"
+          [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
+        >
+          <span matListItemIcon class="status-slot">
+            <span
+              class="status-dot"
+              [class.running]="chat.process_state === 'RUNNING'"
+              [class.dead]="chat.process_state === 'DEAD'"
+            ></span>
+          </span>
+          <span matListItemTitle>{{ chat.title || 'Untitled chat' }}</span>
+          <span matListItemLine>
+            <span class="chat-meta">
+              <span class="agent-badge">{{ chat.agent }}</span>
+              @if (chat.archived) { <span class="archived-tag">Archived</span> }
+            </span>
+          </span>
+        </a>
+      } @empty {
+        <p class="drawer-empty">
+          {{ state.showArchived() ? 'No archived chats.' : 'No chats yet.' }}
+        </p>
+      }
+    </mat-nav-list>
+  }
+</div>
+
+<footer class="drawer-footer">
+  <hub-connection-status />
+  <span class="footer-spacer"></span>
+  <span class="version">v0.2.0</span>
+  <button
+    mat-icon-button
+    [matTooltip]="theme.label()"
+    [attr.aria-label]="theme.label()"
+    (click)="theme.cycle()"
+  >
+    <mat-icon>{{ theme.icon() }}</mat-icon>
+  </button>
+</footer>

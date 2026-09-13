@@ -1,0 +1,59 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { describe, expect, it, beforeEach } from 'vitest';
+import { ChatHeaderComponent } from './chat-header';
+import { AppStateService } from '../../state/app-state.service';
+import type { Chat } from '../../core/api/types';
+
+describe('ChatHeaderComponent', () => {
+  let fixture: ComponentFixture<ChatHeaderComponent>;
+
+  const mockChat: Chat = {
+    id: 'chat-1',
+    project_id: 'proj-1',
+    agent: 'claude',
+    title: 'Review the WebSocket replay path',
+    acp_session_id: 'acp-1',
+    created_at: '2026-09-13T12:00:00Z',
+    updated_at: '2026-09-13T12:00:00Z',
+    archived: false,
+    permission_policy: 'ask',
+    config_values: {},
+    process_state: 'RUNNING',
+    turn_state: 'IDLE',
+  };
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [ChatHeaderComponent],
+      providers: [
+        {
+          provide: AppStateService,
+          useValue: {
+            isMobileDrawerOpen: () => false,
+            setMobileDrawerOpen: () => undefined,
+            stopChatProcess: async () => undefined,
+            retryConnection: async () => undefined,
+            archiveChat: async () => undefined,
+          },
+        },
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ChatHeaderComponent);
+    fixture.componentRef.setInput('chat', mockChat);
+    fixture.detectChanges();
+  });
+
+  it('renders the agent badge without icon', () => {
+    const badge = fixture.nativeElement.querySelector('.badge.agent');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent.trim()).toBe('claude');
+    expect(badge.querySelector('mat-icon')).toBeNull();
+  });
+
+  it('renders the title button with title text', () => {
+    const titleBtn = fixture.nativeElement.querySelector('.title-button');
+    expect(titleBtn).toBeTruthy();
+    expect(titleBtn.textContent).toContain('Review the WebSocket replay path');
+  });
+});

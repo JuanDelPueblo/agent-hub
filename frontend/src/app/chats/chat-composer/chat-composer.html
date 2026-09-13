@@ -1,0 +1,55 @@
+<div class="composer-column">
+  <form class="composer" (submit)="$event.preventDefault(); send()">
+    <textarea
+      class="message-input"
+      [formControl]="message"
+      cdkTextareaAutosize
+      [cdkAutosizeMinRows]="1"
+      [cdkAutosizeMaxRows]="8"
+      [placeholder]="placeholder()"
+      (keydown)="keyDown($event)"
+      [attr.aria-label]="placeholder()"
+    ></textarea>
+    <div class="composer-footer">
+      <div class="selectors">
+        @if (modelOption(); as model) {
+          <button mat-button class="selector" type="button" [matMenuTriggerFor]="modelMenu" [disabled]="!canConfigure()" [attr.aria-label]="'Model: ' + optionLabel(model)">
+            <span>{{ optionLabel(model) }}</span><mat-icon>expand_more</mat-icon>
+          </button>
+          <mat-menu #modelMenu="matMenu">
+            @for (choice of model.options ?? []; track $index) {
+              @if (isGroup(choice)) {
+                <div class="menu-heading">{{ choice.group }}</div>
+                @for (child of choice.options; track $index) {
+                  <button mat-menu-item type="button" (click)="changeOption(model, child.value)">{{ child.name }}</button>
+                }
+              } @else {
+                <button mat-menu-item type="button" (click)="changeOption(model, choice.value)">{{ choice.name }}</button>
+              }
+            }
+          </mat-menu>
+        }
+        @if (reasoningOption(); as reasoning) {
+          <button mat-button class="selector" type="button" [matMenuTriggerFor]="reasoningMenu" [disabled]="!canConfigure()" [attr.aria-label]="'Reasoning effort: ' + optionLabel(reasoning)">
+            <span>{{ reasoning.name }}: {{ optionLabel(reasoning) }}</span><mat-icon>expand_more</mat-icon>
+          </button>
+          <mat-menu #reasoningMenu="matMenu">
+            @for (choice of reasoning.options ?? []; track $index) {
+              @if (!isGroup(choice)) { <button mat-menu-item type="button" (click)="changeOption(reasoning, choice.value)">{{ choice.name }}</button> }
+            }
+          </mat-menu>
+        }
+      </div>
+      @if (prompting() || cancelling()) {
+        <button matFab class="action cancel" type="button" matTooltip="Cancel active turn" aria-label="Cancel active turn" (click)="cancel()" [disabled]="cancelling()">
+          @if (cancelling()) { <mat-spinner diameter="22" /> } @else { <mat-icon>stop</mat-icon> }
+        </button>
+      } @else {
+        <button matFab class="action" type="submit" matTooltip="Send message (Ctrl+Enter)" aria-label="Send message" [disabled]="!canSend()">
+          <mat-icon>arrow_upward</mat-icon>
+        </button>
+      }
+    </div>
+  </form>
+  <p class="hint">Press Ctrl+Enter or Cmd+Enter to send</p>
+</div>

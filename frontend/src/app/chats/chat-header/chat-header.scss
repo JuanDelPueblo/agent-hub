@@ -1,0 +1,22 @@
+.destructive-icon { color: var(--mat-sys-error); }
+:host { display: block; flex: 0 0 auto; padding-inline: max(var(--hub-gutter), calc((100% - var(--hub-measure)) / 2)); border-bottom: 1px solid var(--mat-sys-outline-variant); background: var(--mat-sys-surface); }
+.chat-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 72px; max-width: var(--hub-measure); margin: 0 auto; padding-block: 10px; }
+.header-left, .header-actions, .title-line, .badges { display: flex; align-items: center; }
+.header-left { min-width: 0; flex: 1; gap: 12px; }
+.header-actions { flex: 0 0 auto; gap: 2px; }
+.title-area { min-width: 0; }
+.title-line { min-width: 0; gap: 8px; }
+.title-button { --mat-button-text-label-text-color: var(--mat-sys-on-surface); justify-content: flex-start; min-width: 0; overflow: hidden; max-width: min(50vw, 560px); padding-inline: 12px; margin-left: -12px; font: var(--mat-sys-title-medium); letter-spacing: var(--mat-sys-title-medium-tracking); text-align: left; }
+.title-button ::ng-deep .mdc-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.title-button:hover { text-decoration: underline; }
+.badges { flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
+.badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); text-transform: lowercase; }
+.badge.running { background: var(--hub-status-running-container); color: var(--hub-status-running); }
+.badge.dead { background: var(--hub-status-dead-container); color: var(--hub-status-dead); }
+.badge.thinking { background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.nav-button { display: none; }
+.no-chat { color: var(--mat-sys-on-surface-variant); }
+@media (max-width: 839px) { .nav-button { display: inline-flex; } }
+@media (max-width: 599px) { :host { padding-inline: 16px; } .header-actions > button:first-child { display: none; } .title-button { max-width: 42vw; } }

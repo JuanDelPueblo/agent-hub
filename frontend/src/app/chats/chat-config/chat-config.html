@@ -1,0 +1,49 @@
+@if (chat) {
+  <section class="config" aria-labelledby="config-heading">
+    <h2 id="config-heading"><mat-icon>tune</mat-icon> Configuration & permissions</h2>
+    @if (errorMessage()) { <div class="error-box" role="alert">{{ errorMessage() }}</div> }
+    <div class="config-item">
+      <mat-form-field appearance="outline">
+        <mat-label>Permission policy</mat-label>
+        <mat-select [value]="chat.permission_policy" (selectionChange)="changePolicy($event.value)">
+          <mat-option value="ask">Ask every time</mat-option>
+          <mat-option value="read-only">Read-only (deny writes)</mat-option>
+          <mat-option value="auto-approve">Auto-approve all permissions</mat-option>
+          <mat-option value="deny-all">Deny all actions</mat-option>
+        </mat-select>
+      </mat-form-field>
+      <p>Controls whether the agent must ask before running commands or editing files.</p>
+    </div>
+    <mat-divider />
+    @if (!hasAdditionalOptions()) {
+      <p class="no-options">No additional agent configuration options advertised.</p>
+    } @else {
+      @for (option of options; track option.id) {
+        @if (!isComposerOption(option) && option.type === 'select') {
+          <div class="config-item">
+            <mat-form-field appearance="outline">
+              <mat-label>{{ option.name }}</mat-label>
+              <mat-select [value]="option.currentValue" (selectionChange)="changeOption(option, $event.value)">
+                @for (item of option.options ?? []; track $index) {
+                  @if (isGroup(item)) {
+                    <mat-optgroup [label]="item.group">
+                      @for (child of item.options; track $index) { <mat-option [value]="child.value">{{ child.name }}</mat-option> }
+                    </mat-optgroup>
+                  } @else { <mat-option [value]="item.value">{{ item.name }}</mat-option> }
+                }
+              </mat-select>
+            </mat-form-field>
+            @if (option.description) { <p>{{ option.description }}</p> }
+          </div>
+        } @else if (!isComposerOption(option) && option.type === 'boolean') {
+          <div class="boolean-item">
+            <div><strong>{{ option.name }}</strong>@if (option.description) { <p>{{ option.description }}</p> }</div>
+            <mat-slide-toggle [checked]="!!option.currentValue" (change)="changeOption(option, $event.checked)" [attr.aria-label]="option.name" />
+          </div>
+        } @else if (!isComposerOption(option)) {
+          <div class="config-item"><strong>{{ option.name }}</strong><div class="unsupported">{{ option.currentValue }} (type: {{ option.type }})</div></div>
+        }
+      }
+    }
+  </section>
+}

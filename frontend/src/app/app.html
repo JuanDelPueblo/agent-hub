@@ -1,0 +1,37 @@
+<mat-sidenav-container class="hub-shell" [class.no-drawer]="!showDrawer()">
+  @if (showDrawer()) {
+    <mat-sidenav
+      [mode]="compact() ? 'over' : 'side'"
+      [opened]="!compact() || state.isMobileDrawerOpen()"
+      aria-label="Project and chat navigation"
+      (openedChange)="onDrawerChange($event)"
+    >
+      <hub-navigation (closeRequested)="closeDrawer()" />
+    </mat-sidenav>
+  }
+
+  <mat-sidenav-content>
+    @if (!showDrawer()) {
+      <mat-toolbar class="top-bar">
+        <div class="top-bar-inner">
+        <a class="brand" routerLink="/" aria-label="Agent Hub home">
+          <span class="brand-mark"><mat-icon>hub</mat-icon></span>
+          <span class="brand-name">Agent Hub</span>
+        </a>
+        <span class="toolbar-spacer"></span>
+        <hub-connection-status />
+        <button
+          mat-icon-button
+          [matTooltip]="theme.label()"
+          [attr.aria-label]="theme.label()"
+          (click)="theme.cycle()"
+        >
+          <mat-icon>{{ theme.icon() }}</mat-icon>
+        </button>
+        </div>
+      </mat-toolbar>
+    }
+
+    <main class="page-content"><router-outlet /></main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

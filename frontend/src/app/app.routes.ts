@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
-import { ChatPageComponent } from './pages/chat-page.component';
-import { HomePageComponent } from './pages/home-page.component';
-import { ProjectPageComponent } from './pages/project-page.component';
+import { ChatPageComponent } from './pages/chat-page/chat-page';
+import { HomePageComponent } from './pages/home-page/home-page';
+import { ProjectPageComponent } from './pages/project-page/project-page';
 
 export const routes: Routes = [
   { path: '', component: HomePageComponent, title: 'Agent Hub' },

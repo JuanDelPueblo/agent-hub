@@ -1,9 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { AppStateService } from '../state/app-state.service';
-import { PermissionCardComponent } from '../permissions/permission-card.component';
-import { PlanViewComponent } from './plan-view.component';
-import { ToolCallComponent } from './tool-call.component';
+import { PermissionCardComponent } from '../permissions/permission-card/permission-card';
+import { PlanViewComponent } from './plan-view/plan-view';
+import { ToolCallComponent } from './tool-call/tool-call';
 
 describe('turn entry layout', () => {
   beforeEach(async () => {

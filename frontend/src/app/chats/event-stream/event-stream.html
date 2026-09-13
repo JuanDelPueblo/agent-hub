@@ -1,0 +1,14 @@
+<div #viewport class="stream" (scroll)="onScroll()" aria-live="polite">
+  <div class="stream-content">
+    @for (item of items(); track item.id) {
+      <hub-message-item [item]="item" [chatId]="chatId()" />
+    }
+  </div>
+</div>
+@if (showScrollButton()) {
+  <div class="scroll-control">
+    <button matFab extended type="button" matTooltip="Scroll to latest message" (click)="scrollToBottom(true)">
+      <mat-icon>arrow_downward</mat-icon> Latest
+    </button>
+  </div>
+}
