@@ -144,7 +144,7 @@ describe('NavigationComponent project switching', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
-    return Array.from(document.querySelectorAll<HTMLElement>('.hub-project-menu .mat-mdc-menu-item'));
+    return Array.from(document.querySelectorAll<HTMLElement>('.hub-project-menu .project-menu-item'));
   }
 
   function itemByText(items: HTMLElement[], text: string): HTMLElement {

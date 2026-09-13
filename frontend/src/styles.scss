@@ -144,7 +144,7 @@ mat-icon {
     text-transform: capitalize;
   }
 
-  .mat-mdc-menu-item.current {
+  .current {
     background: var(--mat-sys-secondary-container);
     color: var(--mat-sys-on-secondary-container);
   }

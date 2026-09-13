@@ -15,7 +15,10 @@
         <mat-card appearance="outlined" class="project-card">
           <a class="card-link" [routerLink]="['/projects', project.id]" [attr.aria-label]="'Open project ' + project.name">
             <div class="project-icon"><mat-icon>folder</mat-icon></div>
-            <mat-card-header><mat-card-title>{{ project.name }}</mat-card-title><mat-card-subtitle [title]="project.path">{{ project.path }}</mat-card-subtitle></mat-card-header>
+            <div class="card-heading">
+              <h2 class="project-name">{{ project.name }}</h2>
+              <span class="project-path" [title]="project.path">{{ project.path }}</span>
+            </div>
           </a>
           <button mat-icon-button [matMenuTriggerFor]="projectMenu" [matMenuTriggerData]="{ project }" [attr.aria-label]="'Actions for ' + project.name"><mat-icon>more_vert</mat-icon></button>
           <div class="card-meta"><span><mat-icon>chat</mat-icon>{{ chatCount(project) }} chats</span><span>Updated {{ formatDate(project.updated_at) }}</span></div>

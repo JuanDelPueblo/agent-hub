@@ -4,7 +4,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { ApiService } from '../../core/api/api.service';
-import { Breadcrumb, DirectoryListing } from '../../core/api/types';
+import { DirectoryListing } from '../../core/api/types';
 
 @Component({
   selector: 'hub-folder-picker',
