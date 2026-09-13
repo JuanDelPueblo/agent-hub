@@ -36,10 +36,18 @@ pub enum EventPayload {
         id: String,
         title: String,
         status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
     },
     ToolCallUpdate {
         id: String,
         status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
         output: Option<String>,
     },
     Plan {
@@ -49,6 +57,10 @@ pub enum EventPayload {
         id: String,
         method: String,
         description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
     },
     PermissionResponse {
         id: String,

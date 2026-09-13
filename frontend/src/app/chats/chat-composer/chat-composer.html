@@ -39,7 +39,18 @@
             }
           </mat-menu>
         }
+        @if (isStopped()) {
+          <button mat-stroked-button class="resume-button" type="button" (click)="resume()" [disabled]="resuming()" aria-label="Resume agent">
+            @if (resuming()) {
+              <mat-spinner diameter="16" />
+            } @else {
+              <mat-icon>play_arrow</mat-icon>
+            }
+            <span>Resume agent</span>
+          </button>
+        }
       </div>
+
       @if (prompting() || cancelling()) {
         <button matFab class="action cancel" type="button" matTooltip="Cancel active turn" aria-label="Cancel active turn" (click)="cancel()" [disabled]="cancelling()">
           @if (cancelling()) { <mat-spinner diameter="22" /> } @else { <mat-icon>stop</mat-icon> }

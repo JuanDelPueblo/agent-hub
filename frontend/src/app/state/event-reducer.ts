@@ -180,6 +180,8 @@ export class EventReducer {
       const toolId =
         this.stringValue(payload.id ?? payload.toolCallId ?? payload.tool_call_id) ??
         String(this.nextId);
+      const kind = this.stringValue(payload['kind']);
+      const parentId = this.stringValue(payload['parent_id'] ?? payload['parentId']);
       return {
         ...turn,
         entries: [
@@ -191,6 +193,8 @@ export class EventReducer {
             title: this.stringValue(payload.title) ?? 'Tool Call',
             status: this.stringValue(payload.status) ?? 'in_progress',
             output: null,
+            kind,
+            parentId,
           },
         ],
       };
@@ -203,8 +207,12 @@ export class EventReducer {
       if (index >= 0) {
         const tool = entries[index] as TurnEntryTool;
         const status = this.stringValue(payload.status);
+        const title = this.stringValue(payload.title);
+        const kind = this.stringValue(payload['kind']);
         const updated: TurnEntryTool = {
           ...tool,
+          title: title ?? tool.title,
+          kind: kind ?? tool.kind,
           status: status ?? tool.status,
           output:
             payload.output !== undefined && payload.output !== null
@@ -226,6 +234,8 @@ export class EventReducer {
             title: this.stringValue(payload.title) ?? 'Tool Call',
             status: this.stringValue(payload.status) ?? 'in_progress',
             output: payload.output == null ? null : String(payload.output),
+            kind: this.stringValue(payload['kind']),
+            parentId: this.stringValue(payload['parent_id'] ?? payload['parentId']),
           },
         ],
       };
@@ -255,11 +265,14 @@ export class EventReducer {
             requestId: this.stringValue(payload.id) ?? '',
             method: this.stringValue(payload.method) ?? '',
             description: this.stringValue(payload.description) ?? '',
+            title: this.stringValue(payload['title']),
+            kind: this.stringValue(payload['kind']),
             responded: false,
           },
         ],
       };
     }
+
 
     if (payload.type === 'permission_response') {
       const marked = this.markPermission(entries, payload);

@@ -16,6 +16,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function scenarioFor(text) {
   const lower = text.toLowerCase();
   if (lower.includes('error')) return 'error';
+  if (lower.includes('plan-approve')) return 'plan-approve';
   if (lower.includes('permission')) return 'permission';
   if (lower.includes('plan')) return 'plan';
   if (lower.includes('tool')) return 'tools';
@@ -100,6 +101,51 @@ async function runTurn(state, chat, text, latency, turn) {
     return;
   }
 
+  if (scenario === 'plan-approve') {
+    const steps = [
+      { content: 'Inspect existing codebase architecture', status: 'completed' },
+      { content: 'Implement plan approval dialog & markdown rendering', status: 'in_progress' },
+      { content: 'Verify with integration tests', status: 'pending' },
+    ];
+    emit({ type: 'plan', entries: steps });
+    await pause(300);
+
+    const requestId = randomUUID();
+    turn.permissionId = requestId;
+    const answered = new Promise((resolve) => {
+      turn.resolvePermission = resolve;
+    });
+
+    state.emit(chat.id, chat.agent, {
+      type: 'permission_request',
+      id: requestId,
+      method: 'session/request_permission',
+      title: 'Approve Plan',
+      kind: 'switch_mode',
+      description: '### Proposed Implementation Plan\n\n1. **Inspect Codebase**: Check backend ACP handlers and session timeouts.\n2. **Frontend Updates**: Render plans with rich markdown and provide dedicated approve/reject actions.\n3. **Validation**: Run end-to-end and unit test suites.',
+    });
+
+    const granted = await answered;
+    turn.permissionId = null;
+    turn.resolvePermission = null;
+
+    state.emit(chat.id, chat.agent, {
+      type: 'permission_response',
+      id: requestId,
+      granted,
+    });
+    await pause(200);
+
+    if (!granted) {
+      await stream('message_chunk', 'Plan was rejected. Please provide feedback on what to change.');
+      emit({ type: 'turn_complete', stop_reason: 'refusal' });
+      return;
+    }
+    await stream('message_chunk', 'Plan approved! Starting implementation now.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
   if (scenario !== 'tools') {
     await stream(
       'thought_chunk',
@@ -128,17 +174,19 @@ async function runTurn(state, chat, text, latency, turn) {
 
   if (scenario !== 'plan') {
     const reads = [
-      { title: 'Read backend/src/web/mod.rs', output: '203 lines. The router lists every route.' },
-      { title: 'Grep "api/chats" backend/src/', output: '7 matches in backend/src/web/hub.rs' },
+      { title: 'Read backend/src/web/mod.rs', kind: 'read', output: '203 lines. The router lists every route.' },
+      { title: 'Grep "api/chats" backend/src/', kind: 'search', output: '7 matches in backend/src/web/hub.rs' },
     ];
     for (const read of reads) {
       if (turn.cancelled) return finishCancelled(emit);
       const toolId = randomUUID();
-      emit({ type: 'tool_call', id: toolId, title: read.title, status: 'in_progress' });
+      emit({ type: 'tool_call', id: toolId, title: read.title, kind: read.kind, status: 'in_progress' });
       await pause(500);
       emit({
         type: 'tool_call_update',
         id: toolId,
+        title: read.title,
+        kind: read.kind,
         status: 'completed',
         output: read.output,
       });
@@ -158,11 +206,13 @@ async function runTurn(state, chat, text, latency, turn) {
     }
 
     const toolId = randomUUID();
-    emit({ type: 'tool_call', id: toolId, title: 'Edit backend/backend/src/web/hub.rs', status: 'in_progress' });
+    emit({ type: 'tool_call', id: toolId, title: 'Edit backend/src/web/hub.rs', kind: 'edit', status: 'in_progress' });
     await pause(600);
     emit({
       type: 'tool_call_update',
       id: toolId,
+      title: 'Edit backend/src/web/hub.rs',
+      kind: 'edit',
       status: 'completed',
       output: '+18 -2',
     });
@@ -174,7 +224,7 @@ async function runTurn(state, chat, text, latency, turn) {
   const answer =
     scenario === 'long'
       ? LONG_ANSWER
-      : 'I added the route and its handler. The handler validates the path against the configured project roots, and the integration test covers the rejected case.';
+      : 'I added the route and its handler.\n\n### Summary of Changes\n- The handler validates the path against configured project roots.\n- Integration tests cover the rejected case.\n- Stored procedures and schema migrations updated.';
   await stream('message_chunk', answer);
 
   if (turn.cancelled) return finishCancelled(emit);
@@ -208,8 +258,11 @@ async function requestPermission(state, chat, turn, pause) {
     type: 'permission_request',
     id: requestId,
     method: 'fs/write_text_file',
-    description: 'Write backend/backend/src/web/hub.rs',
+    title: 'Write backend/src/web/hub.rs',
+    kind: 'edit',
+    description: 'Write backend/src/web/hub.rs',
   });
+
 
   const granted = await answered;
   turn.permissionId = null;

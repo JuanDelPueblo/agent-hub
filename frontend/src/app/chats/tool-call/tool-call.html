@@ -1,7 +1,14 @@
-<mat-expansion-panel class="tool" [disabled]="!tool().output">
+<mat-expansion-panel class="tool" [class.subagent-tool]="isSubagentChild()" [disabled]="!cleanOutput()">
   <mat-expansion-panel-header>
-    <mat-panel-title><mat-icon>build</mat-icon><span class="tool-title">{{ tool().title }}</span></mat-panel-title>
+    <mat-panel-title>
+      <mat-icon>{{ icon() }}</mat-icon>
+      <span class="tool-title">{{ tool().title }}</span>
+      @if (isSubagentChild()) {
+        <span class="subagent-badge">Subagent</span>
+      }
+    </mat-panel-title>
     <mat-panel-description>{{ tool().status }}</mat-panel-description>
   </mat-expansion-panel-header>
-  @if (tool().output) { <pre>{{ tool().output }}</pre> }
+  @if (cleanOutput()) { <pre>{{ cleanOutput() }}</pre> }
 </mat-expansion-panel>
+

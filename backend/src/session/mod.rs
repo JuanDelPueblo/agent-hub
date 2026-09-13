@@ -278,9 +278,39 @@ impl AcpSession {
 
         let prompt_future = client.prompt(&sid, &message);
         tokio::pin!(prompt_future);
-        let attempt = tokio::select! {
-            result = &mut prompt_future => PromptAttempt::Completed(result),
-            _ = tokio::time::sleep(timeout) => PromptAttempt::TimedOut
+
+        let mut event_rx = self.event_log.subscribe();
+        let session_id = self.id.clone();
+        let mut sleep_future = Box::pin(tokio::time::sleep(timeout));
+
+        let attempt = loop {
+            tokio::select! {
+                result = &mut prompt_future => {
+                    break PromptAttempt::Completed(result);
+                }
+                event = event_rx.recv() => {
+                    match event {
+                        Ok(evt) if evt.session_id == session_id => {
+                            self.touch().await;
+                            sleep_future = Box::pin(tokio::time::sleep(timeout));
+                        }
+                        _ => {}
+                    }
+                }
+                _ = &mut sleep_future => {
+                    let has_pending_perm = !client
+                        .callback_handler()
+                        .pending_permissions
+                        .read()
+                        .await
+                        .is_empty();
+                    if has_pending_perm {
+                        sleep_future = Box::pin(tokio::time::sleep(timeout));
+                    } else {
+                        break PromptAttempt::TimedOut;
+                    }
+                }
+            }
         };
 
         match attempt {

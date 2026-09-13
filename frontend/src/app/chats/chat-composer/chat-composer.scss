@@ -10,6 +10,9 @@
 .selector mat-icon { width: 20px; height: 20px; margin-left: 2px; font-size: 20px; }
 .menu-heading { padding: 8px 16px 4px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
 .action { width: 48px; height: 48px; min-width: 48px; flex: 0 0 48px; padding: 0; }
+.resume-button { min-height: 36px; border-radius: 18px; gap: 4px; font: var(--mat-sys-label-medium); color: var(--mat-sys-primary); border-color: var(--mat-sys-outline); }
+.resume-button mat-icon { width: 18px; height: 18px; font-size: 18px; }
 .cancel { --mat-fab-container-color: var(--mat-sys-error-container); --mat-fab-icon-color: var(--mat-sys-on-error-container); --mat-fab-state-layer-color: var(--mat-sys-on-error-container); }
+
 .hint { padding: 6px 4px 0; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
 @media (max-width: 599px) { :host { padding-inline: 16px; } .composer { padding-left: 14px; } .selector { padding-inline: 6px; } .hint { display: none; } }

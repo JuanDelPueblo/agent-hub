@@ -95,6 +95,8 @@ export interface TurnEntryTool {
   title: string;
   status: string;
   output?: string | null;
+  kind?: string;
+  parentId?: string;
 }
 
 export interface TurnEntryPlan {
@@ -111,6 +113,8 @@ export interface TurnEntryPermission {
   description: string;
   responded?: boolean;
   decision?: string;
+  title?: string;
+  kind?: string;
 }
 
 export type TurnEntry =

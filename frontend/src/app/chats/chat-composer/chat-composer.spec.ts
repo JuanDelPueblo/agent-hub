@@ -7,12 +7,23 @@ import type { ConfigOption } from '../../core/api/types';
 describe('ChatComposerComponent', () => {
   let fixture: ComponentFixture<ChatComposerComponent>;
   let component: ChatComposerComponent;
+  let resumed: string[] = [];
   const sendPrompt = async (_id: string, text: string) => sent.push(text);
+  const connectChat = async (id: string) => { resumed.push(id); };
   const sent: string[] = [];
 
   beforeEach(async () => {
     sent.length = 0;
-    await TestBed.configureTestingModule({ imports: [ChatComposerComponent], providers: [{ provide: AppStateService, useValue: { sendPrompt, cancelActiveTurn: async () => undefined } }] }).compileComponents();
+    resumed = [];
+    await TestBed.configureTestingModule({
+      imports: [ChatComposerComponent],
+      providers: [
+        {
+          provide: AppStateService,
+          useValue: { sendPrompt, connectChat, cancelActiveTurn: async () => undefined },
+        },
+      ],
+    }).compileComponents();
     fixture = TestBed.createComponent(ChatComposerComponent);
     component = fixture.componentInstance;
     fixture.componentRef.setInput('chatId', 'chat-1');
@@ -33,11 +44,26 @@ describe('ChatComposerComponent', () => {
     expect(component.message.value).toBe('');
   });
 
+  it('allows typing and displays resume button when agent is stopped', async () => {
+    fixture.componentRef.setInput('processState', 'STOPPED');
+    fixture.detectChanges();
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.placeholder).toContain('resume');
+
+    const resumeBtn = fixture.nativeElement.querySelector('.resume-button') as HTMLButtonElement;
+    expect(resumeBtn).not.toBeNull();
+    resumeBtn.click();
+    await fixture.whenStable();
+    expect(resumed).toEqual(['chat-1']);
+  });
+
   it('disables the textarea while the agent is not ready', () => {
     fixture.componentRef.setInput('disabled', true);
     fixture.detectChanges();
     expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
   });
+
 
   it('places model and reasoning selectors in the composer footer', () => {
     const options: ConfigOption[] = [

@@ -4,5 +4,22 @@ mat-panel-title, mat-panel-description { display: flex; align-items: center; gap
 mat-panel-title { flex: 1 1 auto; min-width: 0; }
 mat-panel-title mat-icon { flex: 0 0 24px; color: var(--mat-sys-primary); }
 .tool-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-badge {
+  flex: 0 0 auto;
+  font: var(--mat-sys-label-small);
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+  padding: 2px 6px;
+  border-radius: 9999px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.5px;
+}
+.subagent-tool {
+  margin-left: 16px;
+  border-left: 3px solid var(--mat-sys-secondary);
+}
 mat-panel-description { flex: 0 0 auto; justify-content: flex-end; margin-left: 16px; font: var(--mat-sys-label-medium); }
 pre { max-height: 260px; overflow: auto; margin: 0; padding: 14px; border-radius: var(--mat-sys-corner-small); background: var(--mat-sys-surface-container-lowest); white-space: pre-wrap; overflow-wrap: anywhere; font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+

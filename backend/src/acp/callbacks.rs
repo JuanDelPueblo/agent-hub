@@ -148,7 +148,13 @@ impl CallbackHandler {
         Ok(())
     }
 
-    async fn request_user_permission(&self, method: &str, description: String) -> bool {
+    async fn request_user_permission(
+        &self,
+        method: &str,
+        description: String,
+        title: Option<String>,
+        kind: Option<String>,
+    ) -> bool {
         let perm_id = uuid::Uuid::new_v4().to_string();
 
         let (tx, rx) = oneshot::channel();
@@ -164,6 +170,8 @@ impl CallbackHandler {
                 id: perm_id.clone(),
                 method: method.to_string(),
                 description,
+                title,
+                kind,
             },
         );
 
@@ -201,7 +209,10 @@ impl CallbackHandler {
             ),
             CallbackPolicy::AutoApprove => Ok(()),
             CallbackPolicy::Ask => {
-                if self.request_user_permission(method, description).await {
+                if self
+                    .request_user_permission(method, description, None, None)
+                    .await
+                {
                     Ok(())
                 } else {
                     Err(agent_client_protocol_schema::Error::new(
@@ -291,11 +302,9 @@ impl CallbackHandler {
                 }
             }
             CallbackPolicy::Ask => {
+                let (title, description, kind) = format_permission_tool_call(&req.tool_call);
                 let granted = self
-                    .request_user_permission(
-                        "session/request_permission",
-                        format!("{:?}", req.tool_call),
-                    )
+                    .request_user_permission("session/request_permission", description, title, kind)
                     .await;
 
                 if granted {
@@ -607,6 +616,116 @@ async fn supervise_terminal(
     terminal.exit_notify.notify_waiters();
 }
 
+fn format_permission_tool_call(
+    tool_call: &agent_client_protocol_schema::ToolCallUpdate,
+) -> (Option<String>, String, Option<String>) {
+    let kind_str = tool_call.fields.kind.map(|k| {
+        serde_json::to_value(k)
+            .ok()
+            .and_then(|v| v.as_str().map(ToOwned::to_owned))
+            .unwrap_or_else(|| format!("{:?}", k).to_lowercase())
+    });
+    let title_opt = tool_call.fields.title.clone();
+
+    let is_plan = title_opt.as_deref() == Some("Approve Plan")
+        || tool_call
+            .meta
+            .as_ref()
+            .and_then(|m| serde_json::to_value(m).ok())
+            .and_then(|v| {
+                v.pointer("/claudeCode/toolName")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s == "ExitPlanMode")
+            })
+            .unwrap_or(false)
+        || tool_call
+            .fields
+            .raw_input
+            .as_ref()
+            .and_then(|i| i.get("plan"))
+            .is_some();
+
+    if is_plan {
+        let plan_text = tool_call
+            .fields
+            .raw_input
+            .as_ref()
+            .and_then(|i| i.get("plan"))
+            .and_then(|p| p.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                tool_call.fields.content.as_ref().and_then(|content| {
+                    content.iter().find_map(|item| match item {
+                        agent_client_protocol_schema::ToolCallContent::Content(c) => {
+                            match &c.content {
+                                agent_client_protocol_schema::ContentBlock::Text(t) => {
+                                    Some(t.text.clone())
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    })
+                })
+            })
+            .unwrap_or_else(|| "Plan ready for approval".to_string());
+
+        return (
+            Some("Approve Plan".to_string()),
+            plan_text,
+            Some("switch_mode".to_string()),
+        );
+    }
+
+    let description = if let Some(raw_input) = &tool_call.fields.raw_input {
+        if let Some(cmd) = raw_input.get("command").and_then(|c| c.as_str()) {
+            format!("Execute command: {}", cmd)
+        } else if let Some(path) = raw_input
+            .get("file_path")
+            .or_else(|| raw_input.get("path"))
+            .and_then(|p| p.as_str())
+        {
+            format!("File: {}", path)
+        } else if let Some(desc) = raw_input.get("description").and_then(|d| d.as_str()) {
+            desc.to_string()
+        } else {
+            tool_call
+                .fields
+                .title
+                .clone()
+                .unwrap_or_else(|| "Action requested".to_string())
+        }
+    } else if let Some(content) = &tool_call.fields.content {
+        let text_parts: Vec<String> = content
+            .iter()
+            .filter_map(|item| match item {
+                agent_client_protocol_schema::ToolCallContent::Content(c) => match &c.content {
+                    agent_client_protocol_schema::ContentBlock::Text(t) => Some(t.text.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if !text_parts.is_empty() {
+            text_parts.join("\n")
+        } else {
+            tool_call
+                .fields
+                .title
+                .clone()
+                .unwrap_or_else(|| "Action requested".to_string())
+        }
+    } else {
+        tool_call
+            .fields
+            .title
+            .clone()
+            .unwrap_or_else(|| "Action requested".to_string())
+    };
+
+    (title_opt, description, kind_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,5 +993,39 @@ mod tests {
                 vec!["-c".to_string(), format!("printf '{}\\n'", message)],
             )
         }
+    }
+
+    #[test]
+    fn test_format_permission_tool_call_plan_mode() {
+        use agent_client_protocol_schema::{ToolCallId, ToolCallUpdate, ToolCallUpdateFields};
+        let update = ToolCallUpdate::new(
+            ToolCallId::new("call-1"),
+            ToolCallUpdateFields::new()
+                .title("Approve Plan".to_string())
+                .raw_input(serde_json::json!({
+                    "plan": "### Step 1: Fix bug\n### Step 2: Add test"
+                })),
+        );
+        let (title, description, kind) = format_permission_tool_call(&update);
+        assert_eq!(title, Some("Approve Plan".to_string()));
+        assert_eq!(description, "### Step 1: Fix bug\n### Step 2: Add test");
+        assert_eq!(kind, Some("switch_mode".to_string()));
+    }
+
+    #[test]
+    fn test_format_permission_tool_call_command() {
+        use agent_client_protocol_schema::{ToolCallId, ToolCallUpdate, ToolCallUpdateFields};
+        let update = ToolCallUpdate::new(
+            ToolCallId::new("call-2"),
+            ToolCallUpdateFields::new()
+                .title("Run tests".to_string())
+                .raw_input(serde_json::json!({
+                    "command": "cargo test --all"
+                })),
+        );
+        let (title, description, kind) = format_permission_tool_call(&update);
+        assert_eq!(title, Some("Run tests".to_string()));
+        assert_eq!(description, "Execute command: cargo test --all");
+        assert!(kind.is_none());
     }
 }

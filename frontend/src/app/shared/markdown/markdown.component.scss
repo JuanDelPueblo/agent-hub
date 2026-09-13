@@ -1,0 +1,105 @@
+.markdown-body {
+  line-height: 1.6;
+  word-break: break-word;
+
+  h1, h2, h3, h4, h5, h6 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: inherit;
+  }
+
+  h1 { font-size: 1.35rem; }
+  h2 { font-size: 1.2rem; }
+  h3 { font-size: 1.1rem; }
+  h4 { font-size: 1rem; }
+
+  p {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  ul, ol {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    padding-inline-start: 1.5rem;
+
+    li {
+      margin-bottom: 0.25rem;
+    }
+  }
+
+  blockquote {
+    margin: 0.75rem 0;
+    padding: 0.5rem 1rem;
+    border-left: 3px solid var(--mat-sys-primary, #00639b);
+    background-color: var(--mat-sys-surface-container-low, rgba(0, 0, 0, 0.03));
+    border-radius: 0 4px 4px 0;
+  }
+
+  pre {
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+    background-color: var(--mat-sys-surface-container-highest, rgba(0, 0, 0, 0.08));
+    color: var(--mat-sys-on-surface, inherit);
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.45;
+
+    code {
+      background: none;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+      color: inherit;
+    }
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85em;
+    padding: 0.15em 0.35em;
+    background-color: var(--mat-sys-surface-container-highest, rgba(0, 0, 0, 0.08));
+    border-radius: 4px;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+
+    th, td {
+      border: 1px solid var(--mat-sys-outline-variant, rgba(0, 0, 0, 0.12));
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+
+    th {
+      background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+      font-weight: 600;
+    }
+  }
+
+  a {
+    color: var(--mat-sys-primary, #00639b);
+    text-decoration: underline;
+
+    &:hover {
+      text-decoration: none;
+    }
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--mat-sys-outline-variant, rgba(0, 0, 0, 0.12));
+    margin: 1rem 0;
+  }
+}

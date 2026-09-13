@@ -775,16 +775,47 @@ async fn handle_session_update(
                 text: text.to_string(),
             }
         }
-        SessionUpdate::ToolCall(tc) => EventPayload::ToolCall {
-            id: tc.tool_call_id.to_string(),
-            title: tc.title.clone(),
-            status: "in_progress".to_string(),
-        },
-        SessionUpdate::ToolCallUpdate(tcu) => EventPayload::ToolCallUpdate {
-            id: tcu.tool_call_id.to_string(),
-            status: serialize_optional_enum(&tcu.fields.status),
-            output: format_tool_call_output(&tcu.fields),
-        },
+        SessionUpdate::ToolCall(tc) => {
+            let title = extract_tool_call_title(Some(&tc.title), tc.raw_input.as_ref());
+            let kind = serde_json::to_value(tc.kind)
+                .ok()
+                .and_then(|v| v.as_str().map(ToOwned::to_owned))
+                .or_else(|| Some(format!("{:?}", tc.kind).to_lowercase()));
+            let parent_id = extract_parent_id(tc.meta.as_ref());
+            EventPayload::ToolCall {
+                id: tc.tool_call_id.to_string(),
+                title,
+                status: "in_progress".to_string(),
+                kind,
+                parent_id,
+            }
+        }
+        SessionUpdate::ToolCallUpdate(tcu) => {
+            let title = tcu
+                .fields
+                .title
+                .as_deref()
+                .map(|t| extract_tool_call_title(Some(t), tcu.fields.raw_input.as_ref()))
+                .or_else(|| {
+                    tcu.fields
+                        .raw_input
+                        .as_ref()
+                        .map(|i| extract_tool_call_title(None, Some(i)))
+                });
+            let kind = tcu.fields.kind.map(|k| {
+                serde_json::to_value(k)
+                    .ok()
+                    .and_then(|v| v.as_str().map(ToOwned::to_owned))
+                    .unwrap_or_else(|| format!("{:?}", k).to_lowercase())
+            });
+            EventPayload::ToolCallUpdate {
+                id: tcu.tool_call_id.to_string(),
+                status: serialize_optional_enum(&tcu.fields.status),
+                title,
+                kind,
+                output: clean_tool_output(format_tool_call_output(&tcu.fields)),
+            }
+        }
         SessionUpdate::Plan(plan) => {
             let entries = plan
                 .entries
@@ -840,6 +871,65 @@ fn format_tool_call_output(
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| raw_output.to_string())
     })
+}
+
+fn clean_tool_output(output: Option<String>) -> Option<String> {
+    let s = output?;
+    let trimmed = s.trim();
+    if trimmed.starts_with("```") && trimmed.ends_with("```") && trimmed.len() >= 6 {
+        let inner = &trimmed[3..trimmed.len() - 3];
+        let content = if let Some(newline_pos) = inner.find('\n') {
+            &inner[newline_pos + 1..]
+        } else {
+            inner
+        };
+        Some(content.trim_end().to_string())
+    } else {
+        Some(s)
+    }
+}
+
+fn extract_tool_call_title(title: Option<&str>, raw_input: Option<&serde_json::Value>) -> String {
+    if let Some(t) = title {
+        let trimmed = t.trim();
+        if !trimmed.is_empty()
+            && trimmed != "Read File"
+            && trimmed != "Terminal"
+            && trimmed != "Tool Call"
+        {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Some(input) = raw_input {
+        if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
+            return format!("Terminal: {}", cmd);
+        }
+        if let Some(path) = input
+            .get("file_path")
+            .or_else(|| input.get("path"))
+            .and_then(|p| p.as_str())
+        {
+            return format!("Read: {}", path);
+        }
+        if let Some(desc) = input.get("description").and_then(|d| d.as_str()) {
+            return desc.to_string();
+        }
+    }
+
+    title
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Tool Call".to_string())
+}
+
+fn extract_parent_id(meta: Option<&agent_client_protocol_schema::Meta>) -> Option<String> {
+    meta.and_then(|m| serde_json::to_value(m).ok())
+        .and_then(|v| {
+            v.pointer("/claudeCode/parentToolUseId")
+                .and_then(|p| p.as_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 async fn wait_task(child: SharedChild, child_root_pid: Option<u32>, connected: Arc<AtomicBool>) {
@@ -931,5 +1021,39 @@ mod tests {
         let status = Some(agent_client_protocol_schema::ToolCallStatus::Completed);
 
         assert_eq!(serialize_optional_enum(&status), "completed");
+    }
+
+    #[test]
+    fn test_clean_tool_output_strips_markdown_code_fence() {
+        let fenced = Some("```rust\nfn main() {}\n```".to_string());
+        assert_eq!(clean_tool_output(fenced), Some("fn main() {}".to_string()));
+
+        let unfenced = Some("plain output".to_string());
+        assert_eq!(
+            clean_tool_output(unfenced),
+            Some("plain output".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_tool_call_title() {
+        assert_eq!(
+            extract_tool_call_title(
+                Some("Read File"),
+                Some(&serde_json::json!({"file_path": "src/lib.rs"}))
+            ),
+            "Read: src/lib.rs"
+        );
+        assert_eq!(
+            extract_tool_call_title(
+                Some("Terminal"),
+                Some(&serde_json::json!({"command": "cargo check"}))
+            ),
+            "Terminal: cargo check"
+        );
+        assert_eq!(
+            extract_tool_call_title(Some("Read src/lib.rs (1 - 50)"), None),
+            "Read src/lib.rs (1 - 50)"
+        );
     }
 }

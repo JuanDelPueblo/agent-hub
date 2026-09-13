@@ -1,4 +1,5 @@
-import { Component, computed, effect, inject, input } from '@angular/core';
+import { Component, computed, effect, inject, input, signal } from '@angular/core';
+
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { TextFieldModule } from '@angular/cdk/text-field';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -29,19 +30,24 @@ export class ChatComposerComponent {
 
   readonly prompting = computed(() => this.turnState() === 'PROMPTING');
   readonly cancelling = computed(() => this.turnState() === 'CANCELLING');
+  readonly resuming = signal(false);
+  readonly isStopped = computed(() => this.processState() === 'STOPPED' || this.processState() === 'DEAD');
   readonly canConfigure = computed(() => !this.disabled() && this.processState() === 'RUNNING' && this.turnState() === 'IDLE');
   readonly modelOption = computed(() => this.findOption('model', 'model'));
   readonly reasoningOption = computed(() => this.findOption('reasoning_effort', 'reasoning effort'));
   private readonly unavailable = computed(
-    () => this.disabled() || this.processState() !== 'RUNNING' || this.prompting(),
+    () => this.disabled() || this.processState() === 'STARTING' || this.prompting() || this.cancelling() || this.resuming(),
   );
   readonly canSend = computed(() => !this.unavailable() && this.text().trim().length > 0);
   readonly placeholder = computed(() => {
     if (this.disabled()) return 'Waiting for the agent connection…';
-    if (this.processState() !== 'RUNNING') return 'Agent process stopped';
     if (this.prompting()) return 'Agent is thinking…';
+    if (this.cancelling()) return 'Cancelling active turn…';
+    if (this.processState() === 'STARTING' || this.resuming()) return 'Agent is starting…';
+    if (this.isStopped()) return 'Agent stopped — type a message to resume…';
     return 'Type a message…';
   });
+
 
   constructor() {
     effect(() => {
@@ -58,17 +64,33 @@ export class ChatComposerComponent {
     }
   }
 
+  async resume(): Promise<void> {
+    if (!this.chatId() || this.resuming()) return;
+    this.resuming.set(true);
+    try {
+      await this.state.connectChat(this.chatId());
+    } catch (error) {
+      console.error('Failed to resume chat', error);
+    } finally {
+      this.resuming.set(false);
+    }
+  }
+
   async send(): Promise<void> {
     const value = this.message.value.trim();
     if (!value || !this.canSend()) return;
     this.message.setValue('');
     try {
+      if (this.processState() !== 'RUNNING') {
+        await this.state.connectChat(this.chatId());
+      }
       await this.state.sendPrompt(this.chatId(), value);
     } catch (error) {
       console.error('Failed to send prompt', error);
       this.message.setValue(value);
     }
   }
+
 
   async cancel(): Promise<void> {
     if (!this.chatId()) return;
