@@ -7,6 +7,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
+import type { Chat } from '../core/api/types';
 import { AppStateService } from '../state/app-state.service';
 import { NewChatButtonComponent } from '../chats/new-chat-button.component';
 import { ProjectDialogComponent } from '../projects/project-dialog.component';
@@ -232,9 +233,38 @@ export class NavigationComponent {
     return this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived);
   }
 
-  openProject(projectId: string): void {
-    void this.router.navigate(['/projects', projectId]);
+  /**
+   * Opens the chosen project. Inside a chat view the project switches in
+   * place: the workspace shows the latest chat of the new project. A project
+   * without chats opens its project page instead.
+   */
+  async openProject(projectId: string): Promise<void> {
+    if (projectId === this.state.activeProjectId()) {
+      this.closeRequested.emit();
+      return;
+    }
+    const chat = this.state.activeChatId() ? await this.latestVisibleChat(projectId) : null;
+    void this.router.navigate(
+      chat ? ['/projects', projectId, 'chats', chat.id] : ['/projects', projectId],
+    );
     this.closeRequested.emit();
+  }
+
+  /** Returns the latest visible chat of the project, and loads the list on demand. */
+  private async latestVisibleChat(projectId: string): Promise<Chat | null> {
+    let chats = this.state.chatsByProject()[projectId];
+    if (!chats) {
+      await this.state.loadChats(projectId);
+      chats = this.state.chatsByProject()[projectId];
+    }
+    if (!chats) return null;
+    const visible = this.state.showArchived()
+      ? chats
+      : chats.filter((candidate) => !candidate.archived);
+    return visible.reduce<Chat | null>(
+      (latest, chat) => (!latest || chat.updated_at > latest.updated_at ? chat : latest),
+      null,
+    );
   }
 
   goHome(): void {

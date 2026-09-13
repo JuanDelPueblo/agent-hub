@@ -13,7 +13,7 @@ import type { PlanEntry } from '../core/api/types';
     }
   `,
   styles: `
-    :host { display: block; margin: 10px 0; } .plan { background: var(--mat-sys-tertiary-container); color: var(--mat-sys-on-tertiary-container); } mat-card-header { align-items: center; } mat-card-avatar { color: var(--mat-sys-on-tertiary-container); } mat-card-content { padding-top: 6px; } ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; } li { display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; } li mat-icon { width: 20px; height: 20px; font-size: 20px; flex: 0 0 auto; } li.completed span { color: var(--mat-sys-on-surface-variant); text-decoration: line-through; }
+    :host { display: block; margin: 10px 0; } .plan { background: var(--mat-sys-tertiary-container); color: var(--mat-sys-on-tertiary-container); } mat-card-header { align-items: center; } [mat-card-avatar] { display: grid; place-items: center; margin-bottom: 0; color: var(--mat-sys-on-tertiary-container); } mat-card-content { padding-top: 6px; } ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; } li { display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; } li mat-icon { width: 20px; height: 20px; font-size: 20px; flex: 0 0 auto; } li.completed span { color: var(--mat-sys-on-surface-variant); text-decoration: line-through; }
   `,
 })
 export class PlanViewComponent {
