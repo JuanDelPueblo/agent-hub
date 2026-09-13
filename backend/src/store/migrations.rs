@@ -9,6 +9,13 @@
 //! `ALTER TABLE ... ADD COLUMN`, and `UPDATE`. SQLite's 12-step table rebuild
 //! needs `PRAGMA foreign_keys=OFF` outside the transaction, so it needs its own
 //! handling if it is ever required.
+//!
+//! Write every migration so that running it twice is safe. Prefer
+//! `IF NOT EXISTS`. When a statement has no such form, give the migration a
+//! `precondition` that reports whether the work is still needed. Agent Hub
+//! v0.2 wrote `user_version=1` on every open, so a database that was upgraded,
+//! opened once by v0.2, and then upgraded again arrives claiming to be
+//! version 1 with the newer schema already in place.
 use anyhow::{Context, Result};
 use rusqlite::{Connection, TransactionBehavior};
 
@@ -16,6 +23,13 @@ pub struct Migration {
     pub version: i64,
     pub name: &'static str,
     pub sql: &'static str,
+    /// A query returning non-zero while `sql` still needs to run.
+    ///
+    /// Agent Hub v0.2 set `user_version=1` on every open, so rolling back to
+    /// it and forward again presents an upgraded database that claims to be
+    /// version 1. A migration whose statements are not already idempotent
+    /// needs this guard to stay safe in that case.
+    pub precondition: Option<&'static str>,
 }
 
 pub const MIGRATIONS: &[Migration] = &[
@@ -29,6 +43,8 @@ pub const MIGRATIONS: &[Migration] = &[
         CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, data TEXT NOT NULL);",
+        // `CREATE TABLE IF NOT EXISTS` is already idempotent.
+        precondition: None,
     },
     Migration {
         version: 2,
@@ -42,6 +58,10 @@ pub const MIGRATIONS: &[Migration] = &[
         ALTER TABLE events ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
         UPDATE events SET session_id = COALESCE(json_extract(data, '$.session_id'), '');
         CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);",
+        // SQLite has no `ADD COLUMN IF NOT EXISTS`, so ask directly.
+        precondition: Some(
+            "SELECT COUNT(*)=0 FROM pragma_table_info('events') WHERE name='session_id'",
+        ),
     },
     Migration {
         version: 3,
@@ -49,6 +69,8 @@ pub const MIGRATIONS: &[Migration] = &[
         // `projects()` counts chats per project with a correlated subquery, and
         // the cascade on project deletion looks the same column up.
         sql: "CREATE INDEX IF NOT EXISTS idx_chats_project_id ON chats(project_id);",
+        // `CREATE INDEX IF NOT EXISTS` is already idempotent.
+        precondition: None,
     },
 ];
 
@@ -81,8 +103,16 @@ fn apply(db: &mut Connection, migrations: &[Migration]) -> Result<()> {
             tx.rollback()?;
             continue;
         }
-        tx.execute_batch(m.sql)
-            .with_context(|| format!("Schema migration {} ({}) failed", m.version, m.name))?;
+        if needs_body(&tx, m)? {
+            tx.execute_batch(m.sql)
+                .with_context(|| format!("Schema migration {} ({}) failed", m.version, m.name))?;
+        } else {
+            tracing::info!(
+                version = m.version,
+                name = m.name,
+                "schema migration already applied; advancing version only"
+            );
+        }
         tx.pragma_update(None, "user_version", m.version)?;
         tx.commit()?;
         tracing::info!(
@@ -92,6 +122,14 @@ fn apply(db: &mut Connection, migrations: &[Migration]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Whether this migration's statements still have work to do.
+fn needs_body(conn: &Connection, m: &Migration) -> Result<bool> {
+    match m.precondition {
+        None => Ok(true),
+        Some(sql) => Ok(conn.query_row(sql, [], |r| r.get::<_, i64>(0))? != 0),
+    }
 }
 
 fn user_version(conn: &Connection) -> Result<i64> {
@@ -240,6 +278,44 @@ mod tests {
         assert_eq!(index, 1, "the session_id index is missing");
     }
 
+    /// Agent Hub v0.2 wrote `user_version=1` on every open. A user who rolls
+    /// back to it and then forward again presents an upgraded database that
+    /// claims to be version 1, so the migrations must not run their statements
+    /// a second time.
+    #[test]
+    fn reapplying_over_a_reset_version_marker_is_safe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(V0_2_SCHEMA).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO events (seq, data) VALUES (1, '{\"session_id\":\"chat-a\"}')",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        Store::open(&path).unwrap();
+
+        // Stand in for v0.2 reopening the upgraded file.
+        let reset = Connection::open(&path).unwrap();
+        reset.pragma_update(None, "user_version", 1_i64).unwrap();
+        drop(reset);
+
+        Store::open(&path).expect("re-upgrade after a reset version marker failed");
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn).unwrap(), latest_version());
+        let session_id: String = conn
+            .query_row("SELECT session_id FROM events WHERE seq=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(session_id, "chat-a", "backfilled data was lost");
+    }
+
     #[test]
     fn failed_migration_rolls_back() {
         let tmp = tempfile::tempdir().unwrap();
@@ -251,11 +327,13 @@ mod tests {
                 version: 1,
                 name: "good",
                 sql: "CREATE TABLE good (id TEXT PRIMARY KEY);",
+                precondition: None,
             },
             Migration {
                 version: 2,
                 name: "broken",
                 sql: "CREATE TABLE half (id TEXT); THIS IS NOT SQL;",
+                precondition: None,
             },
         ];
 

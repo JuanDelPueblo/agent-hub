@@ -119,6 +119,10 @@ agent-hub/
   `PRAGMA user_version` inside that transaction, so the version advances only
   after the migration succeeds. A database from a newer build is reported, never
   reset. Add a migration to the end of the table; never edit one that shipped.
+  Write each migration so a second run is safe: prefer `IF NOT EXISTS`, and give
+  it a `precondition` query when no such form exists. Agent Hub v0.2 reset
+  `user_version` on every open, so a downgraded database can arrive claiming an
+  old version with a new schema.
 - **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
   `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
   facade controls the lock and any shared transaction.
