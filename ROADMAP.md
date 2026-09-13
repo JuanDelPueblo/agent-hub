@@ -9,10 +9,11 @@ This roadmap follows the current v0.2 frontend overhaul. Each phase should be im
 | 1 | P1 | Usage quotas/status | Current v0.2 |
 | 2 | P1 | Per-turn git/file diffs | Current v0.2 |
 | 3 | P2 | Native authentication | Current v0.2 |
-| 4 | P2 | MCP control plane | Phase 3 |
-| 5 | P2 | File/inline review comments | Phase 2 |
-| 6 | P3 | Remote Agent Hub federation | Phases 3–4 |
-| 7 | P4 | Generalized ACP + Registry marketplace | All previous |
+| 4 | P2 | Browser/Web Push notifications | Phase 3 |
+| 5 | P2 | MCP control plane | Phases 3–4 |
+| 6 | P2 | File/inline review comments | Phase 2 |
+| 7 | P3 | Remote Agent Hub federation | Phases 3–5 |
+| 8 | P4 | Generalized ACP + Registry marketplace | All previous |
 
 ## Phase 1 — ACP usage quotas and status
 
@@ -142,7 +143,77 @@ Agent Hub can safely run behind ordinary HTTPS without depending on Traefik Basi
 
 ---
 
-## Phase 4 — MCP control plane
+## Phase 4 — Browser and Web Push notifications
+
+Add first-class browser notifications for long-running agent work and events that need attention.
+
+This phase must explicitly support **Firefox for Android**, not only desktop Chromium browsers.
+
+Use standards-based Web Push:
+
+```text
+Agent Hub server
+  ↓ Web Push
+browser push service
+  ↓
+Service Worker
+  ↓
+OS notification
+```
+
+Do not rely on `new Notification()` as the primary implementation. Mobile browsers should receive persistent notifications through a registered Service Worker and `ServiceWorkerRegistration.showNotification()`.
+
+Requirements:
+
+- HTTPS/secure-context operation;
+- Service Worker registration;
+- Push API subscription created only from an explicit user action;
+- server-side storage of PushSubscription endpoint/key material;
+- standards-based encrypted Web Push delivery using application-server/VAPID keys;
+- notification click handling that opens/focuses the relevant project/chat;
+- unsubscribe and re-subscribe support;
+- expired/invalid subscriptions cleaned up automatically;
+- multiple subscribed browsers/devices for the same owner;
+- never put secrets, full prompts, or sensitive tool output in push payloads by default.
+
+Support Firefox for Android as a required test target. Avoid assumptions about a specific browser vendor's push endpoint: persist and send to the endpoint supplied by each browser subscription.
+
+Initial notification events should be configurable and include:
+
+```text
+turn completed
+permission requested
+agent failed / disconnected
+long-running task failed
+```
+
+Consider optional notifications later for:
+
+```text
+quota nearly exhausted
+quota reset
+review requested
+remote Hub unavailable
+```
+
+Add per-device and global notification preferences. At minimum allow users to independently enable/disable completion, permission, and error notifications.
+
+Avoid noisy behavior:
+
+- do not notify for every streamed message/tool call;
+- avoid duplicate notifications when several backend events represent the same logical condition;
+- where practical, suppress or de-emphasize completion notifications while that exact chat is actively visible;
+- use stable notification tags so repeated state changes can replace an existing notification instead of spamming the notification tray.
+
+The subscription should be associated with the authenticated browser session/device introduced in Phase 3, but should survive normal page closes and browser restarts according to browser behavior.
+
+### Completion
+
+A turn can run while the Agent Hub page is in the background or closed, and Firefox for Android plus supported desktop browsers receive an OS-level notification when the turn completes, fails, or needs permission. Tapping the notification opens the relevant Agent Hub chat.
+
+---
+
+## Phase 5 — MCP control plane
 
 Restore MCP, but attach it to the persistent Agent Hub daemon rather than resurrecting the old ephemeral MCP architecture.
 
@@ -196,7 +267,7 @@ Hermes or another MCP client can start and continue an Agent Hub chat while the 
 
 ---
 
-## Phase 5 — Review comments and feedback
+## Phase 6 — Review comments and feedback
 
 Build this directly on the Phase 2 diff viewer.
 
@@ -247,7 +318,7 @@ A turn's diff can be reviewed on phone or desktop, GitHub-style line/file commen
 
 ---
 
-## Phase 6 — Remote Agent Hub federation
+## Phase 7 — Remote Agent Hub federation
 
 Allow one Agent Hub UI to manage other Agent Hub servers.
 
@@ -306,6 +377,8 @@ Projects and chats should otherwise use the same components.
 
 WebSocket/event streaming needs hub identity included in frontend state so identical UUIDs on different servers cannot collide.
 
+Notification events from remote Hubs should be forwarded through the primary Hub's Phase 4 notification subsystem rather than requiring a separate browser push subscription to every remote Hub.
+
 Do not add distributed orchestration or workload migration yet.
 
 ### Completion
@@ -314,7 +387,7 @@ From one Agent Hub page, remote Agent Hub instances can be connected and their p
 
 ---
 
-## Phase 7 — Generalized ACP support + official ACP Registry
+## Phase 8 — Generalized ACP support + official ACP Registry
 
 Replace the current mostly hand-authored `agents.json` model with a first-class installed-agent abstraction.
 
@@ -391,6 +464,7 @@ At the end of these phases, Agent Hub should function as a general ACP operation
 ```text
               ┌───────────────┐
               │   Web / PWA   │
+              │  + Web Push   │
               └───────┬───────┘
                       │
               ┌───────▼───────┐
@@ -407,6 +481,7 @@ Hermes/MCP ──►│   Agent Hub   │◄── Remote Agent Hubs
               turns / diffs
               review comments
               usage / quotas
+              notifications
 ```
 
-Phase 7 should be treated as the last major pre-1.0 architectural feature. Once arbitrary registry agents and remote Hubs work without agent-specific UI/backend logic, further features should mostly be additive.
+Phase 8 should be treated as the last major pre-1.0 architectural feature. Once arbitrary registry agents and remote Hubs work without agent-specific UI/backend logic, further features should mostly be additive.
