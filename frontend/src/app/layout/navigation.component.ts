@@ -201,7 +201,7 @@ import { ThemeService } from '../core/theme.service';
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hub-status-stopped); }
     .status-dot.running { background: var(--hub-status-running); }
     .status-dot.dead { background: var(--hub-status-dead); }
-    .chat-meta { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .chat-meta { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; }
     .mat-mdc-list-item-line::before { display: none !important; }
     .agent-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); font: var(--mat-sys-label-small); text-transform: lowercase; }
     .archived-tag { padding: 2px 6px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-highest); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); text-transform: none; }
