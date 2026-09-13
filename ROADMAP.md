@@ -12,10 +12,11 @@ This roadmap follows the current v0.2 frontend overhaul. Each phase should be im
 | 3 | P1 | Per-turn git/file diffs | Phase 2 |
 | 4 | P2 | Native authentication | Phase 0 |
 | 5 | P2 | Browser/Web Push notifications | Phase 4 |
-| 6 | P2 | MCP control plane | Phase 4 |
-| 7 | P2 | File/inline review comments | Phase 3 |
-| 8 | P3 | Remote Agent Hub federation | Phases 4–6 |
-| 9 | P4 | Generalized ACP + official ACP Registry | All previous |
+| 6 | P2 | File/image uploads and prompt attachments | Phases 3–4 |
+| 7 | P2 | MCP control plane | Phase 4 |
+| 8 | P2 | File/inline review comments | Phase 3 |
+| 9 | P3 | Remote Agent Hub federation | Phases 4–7 |
+| 10 | P4 | Generalized ACP + official ACP Registry | All previous |
 
 ## Phase 0 — Backend architectural foundations
 
@@ -388,7 +389,111 @@ A turn can run while the Agent Hub page is in the background or closed, and Fire
 
 ---
 
-## Phase 6 — MCP control plane
+## Phase 6 — File/image uploads and prompt attachments
+
+Add first-class file attachments to chats so users can upload context from desktop or mobile and send it with a prompt without manually copying files into the project.
+
+Attachments should be durable Agent Hub entities rather than temporary frontend-only blobs.
+
+Persist metadata similar to:
+
+```text
+Attachment
+  id
+  chat_id
+  turn_id?
+  original_name
+  media_type
+  size
+  sha256
+  storage_key
+  created_at
+  consumed_at?
+```
+
+Store canonical attachment bytes under Agent Hub state using Hub-generated IDs/paths. Never use the client-supplied filename as a storage path, never write uploads directly to an arbitrary user-supplied path, and never store attachment data in the Nix store.
+
+### Upload UX
+
+The chat composer should support:
+
+- file picker;
+- drag and drop on desktop;
+- paste for images/files where the browser exposes them;
+- multiple attachments per prompt;
+- visible attachment chips/cards before sending;
+- removal before send;
+- upload progress and clear failure states;
+- mobile browser file/photo selection using standard web controls.
+
+Uploaded files should remain associated with the chat across page reloads until sent or explicitly removed, subject to orphan-retention cleanup.
+
+For common image types, show a safe preview. For other files, show filename, type, and size rather than attempting to execute or deeply parse arbitrary content in the browser.
+
+### Storage and security
+
+Requirements:
+
+- configurable per-file and per-prompt size limits;
+- configurable attachment-count limits;
+- stream uploads to disk rather than buffering large files fully in memory;
+- sanitize display filenames while preserving the original name as metadata where safe;
+- derive/verify media type server-side rather than trusting `Content-Type` alone;
+- content hashes for integrity/deduplication metadata;
+- no automatic execution of uploaded files;
+- no automatic archive extraction;
+- reject path traversal and special filesystem targets;
+- authenticated/authorized download endpoints rather than direct public filesystem URLs;
+- attachment deletion and retention cleanup;
+- clear behavior when a chat/project is deleted.
+
+Canonical attachment storage should stay outside the Git project/worktree so adding prompt context does not pollute Git status or Phase 3 turn diffs.
+
+### Delivering attachments to ACP agents
+
+Keep delivery behind an attachment-capability abstraction rather than hard-coding one ACP implementation.
+
+Prefer native ACP prompt content/attachment blocks when the connected agent advertises a compatible capability, especially for images.
+
+For agents that consume local files by path, expose the canonical attachment through a Hub-controlled read-only path or file callback that the specific chat can access. Extend client file-read validation to allow that chat's attachment roots read-only without granting arbitrary filesystem access.
+
+Do not silently base64-encode arbitrary binary files into text prompts. If the selected agent cannot consume an attachment type, tell the user before the prompt is sent.
+
+Text-like files may optionally expose a bounded text preview, but the canonical attachment should remain a file entity rather than being permanently flattened into prompt text.
+
+Attachment delivery must not modify the user's project repository unless the user or agent explicitly chooses to copy an attachment into project source as a separate action.
+
+### Turn/message association
+
+Uploading and sending are separate operations:
+
+```text
+upload attachment
+  ↓
+receive attachment ID
+  ↓
+compose prompt referencing attachment IDs
+  ↓
+server validates ownership/chat association
+  ↓
+create durable turn + attach files atomically
+  ↓
+deliver prompt to ACP
+```
+
+Once a prompt is accepted, associate its attachments with the durable Phase 3 turn so history can show exactly which files were supplied as context.
+
+Orphaned uploads that were never sent should expire after a configurable retention period rather than accumulating forever.
+
+Later MCP and federation phases should reuse this same attachment model instead of inventing separate upload mechanisms. Remote federation should leave attachment bytes authoritative on the Hub that owns the chat.
+
+### Completion
+
+From desktop or mobile, a user can attach one or more supported files/images to a prompt, reload before sending without losing the staged upload, send the prompt, and later see which attachments belonged to that turn. The selected ACP receives the attachments through a supported delivery mechanism, while uploaded files remain isolated from the project Git worktree and normal diff tracking.
+
+---
+
+## Phase 7 — MCP control plane
 
 Restore MCP, but attach it to the persistent Agent Hub daemon rather than resurrecting the old ephemeral MCP architecture.
 
@@ -429,7 +534,7 @@ cancel_chat
 get_usage
 ```
 
-Consider exposing turn diffs from Phase 3 as read-only MCP data.
+Consider exposing turn diffs from Phase 3 and attachment metadata from Phase 6 as read-only MCP data. If MCP later gains file-upload support, it should create the same Attachment entities and use the same validation/storage pipeline as the browser.
 
 Do not let MCP create an independent process/session/worktree universe. MCP endpoints should be adapters over the shared Hub service layer introduced in Phase 0.
 
@@ -443,7 +548,7 @@ Hermes or another MCP client can start and continue an Agent Hub chat while the 
 
 ---
 
-## Phase 7 — Review comments and feedback
+## Phase 8 — Review comments and feedback
 
 Build this directly on the Phase 3 diff viewer.
 
@@ -494,17 +599,18 @@ A turn's diff can be reviewed on phone or desktop, GitHub-style line/file commen
 
 ---
 
-## Phase 8 — Remote Agent Hub federation
+## Phase 9 — Remote Agent Hub federation
 
 Allow one Agent Hub UI to manage other Agent Hub servers.
 
-Do not synchronize their databases or worktrees.
+Do not synchronize their databases, worktrees, or attachment stores.
 
 Each remote Hub remains authoritative for:
 
 - its projects;
 - chats;
 - chat worktrees;
+- attachments;
 - ACP processes;
 - events;
 - usage data.
@@ -556,15 +662,17 @@ WebSocket/event streaming needs hub identity included in frontend state so ident
 
 Notification events from remote Hubs should be forwarded through the primary Hub's Phase 5 notification subsystem rather than requiring a separate browser push subscription to every remote Hub.
 
-Do not add distributed orchestration, cross-Hub worktrees, or workload migration yet.
+Attachment uploads for remote chats should be proxied or streamed to the owning remote Hub using the Phase 6 attachment API; the primary Hub should not become a second canonical attachment store.
+
+Do not add distributed orchestration, cross-Hub worktrees, attachment replication, or workload migration yet.
 
 ### Completion
 
-From one Agent Hub page, remote Agent Hub instances can be connected and their projects/chats managed almost exactly like local ones while each Hub remains authoritative for its own workspace and runtime state.
+From one Agent Hub page, remote Agent Hub instances can be connected and their projects/chats managed almost exactly like local ones while each Hub remains authoritative for its own workspace, attachments, and runtime state.
 
 ---
 
-## Phase 9 — Generalized ACP support + official ACP Registry
+## Phase 10 — Generalized ACP support + official ACP Registry
 
 Replace the current mostly hand-authored `agents.json` model with a first-class installed-agent abstraction building on the agent definition boundary from Phase 0.
 
@@ -642,6 +750,7 @@ At the end of these phases, Agent Hub should function as a general ACP operation
               ┌───────────────┐
               │   Web / PWA   │
               │  + Web Push   │
+              │  + Uploads    │
               └───────┬───────┘
                       │
               ┌───────▼───────┐
@@ -657,9 +766,10 @@ Hermes/MCP ──►│   Agent Hub   │◄── Remote Agent Hubs
               projects / git
               per-chat worktrees
               turns / diffs
+              attachments
               review comments
               usage / quotas
               notifications
 ```
 
-Phase 9 should be treated as the last major pre-1.0 architectural feature. Once arbitrary registry agents and remote Hubs work without agent-specific UI/backend logic, further features should mostly be additive.
+Phase 10 should be treated as the last major pre-1.0 architectural feature. Once arbitrary registry agents and remote Hubs work without agent-specific UI/backend logic, further features should mostly be additive.
