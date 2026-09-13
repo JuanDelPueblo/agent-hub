@@ -6,6 +6,7 @@
 //! never take the lock themselves, because `std::sync::Mutex` is not reentrant.
 mod chats;
 mod events;
+pub mod migrations;
 mod projects;
 mod validation;
 
@@ -21,15 +22,12 @@ pub struct Store(Mutex<Connection>);
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
-        db.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-            CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, data TEXT NOT NULL);
-            PRAGMA user_version=1;",
-        )?;
+        // Both pragmas must run outside a transaction. SQLite rejects
+        // `journal_mode=WAL` inside one and silently ignores `foreign_keys`.
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        migrations::migrate(&mut db)?;
         Ok(Self(Mutex::new(db)))
     }
 
