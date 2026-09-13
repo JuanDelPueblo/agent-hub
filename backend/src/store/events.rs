@@ -8,8 +8,12 @@ const REPLAY_LIMIT: usize = 10_000;
 
 pub(crate) fn save(conn: &Connection, event: &SessionEvent) -> Result<()> {
     conn.execute(
-        "INSERT INTO events (seq, data) VALUES (?1, ?2)",
-        params![i64::try_from(event.seq)?, serde_json::to_string(event)?],
+        "INSERT INTO events (seq, session_id, data) VALUES (?1, ?2, ?3)",
+        params![
+            i64::try_from(event.seq)?,
+            event.session_id,
+            serde_json::to_string(event)?
+        ],
     )?;
     Ok(())
 }
@@ -25,9 +29,6 @@ pub(crate) fn recent(conn: &Connection) -> Result<Vec<SessionEvent>> {
 }
 
 pub(crate) fn delete_for_session(conn: &Connection, session_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM events WHERE json_extract(data,'$.session_id')=?1",
-        [session_id],
-    )?;
+    conn.execute("DELETE FROM events WHERE session_id=?1", [session_id])?;
     Ok(())
 }

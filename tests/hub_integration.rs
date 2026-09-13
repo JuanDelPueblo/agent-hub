@@ -773,3 +773,54 @@ async fn http_permission_endpoint_accepts_frontend_payload() {
 
     mgr.shutdown_all().await;
 }
+
+/// Deleting a chat must take its events with it and leave every other chat's
+/// history intact, including after a restart rebuilds the log from SQLite.
+#[tokio::test]
+async fn deleting_a_chat_removes_only_its_events_across_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mgr = manager(tmp.path(), true);
+    let db = mgr.store.as_ref().unwrap().clone();
+    let project = db
+        .create_project("test".into(), tmp.path().display().to_string())
+        .unwrap();
+    let doomed = db
+        .create_chat(project.id.clone(), "codex".into(), Some("doomed".into()))
+        .unwrap();
+    let kept = db
+        .create_chat(project.id, "codex".into(), Some("kept".into()))
+        .unwrap();
+
+    let doomed_session = mgr.get_by_id(&doomed.id).await.unwrap();
+    let kept_session = mgr.get_by_id(&kept.id).await.unwrap();
+    doomed_session.ask("hi".into(), None).await.unwrap();
+    kept_session.ask("hi".into(), None).await.unwrap();
+    assert!(db
+        .events()
+        .unwrap()
+        .iter()
+        .any(|e| e.session_id == doomed.id));
+
+    doomed_session.delete_metadata().await.unwrap();
+    mgr.event_log().forget_chat(&doomed.id);
+    mgr.remove_session(&doomed.id).await;
+    mgr.shutdown_all().await;
+
+    // A new process rebuilds the in-memory log from the rows that survived.
+    let reopened = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
+    let log = EventLog::persistent(reopened.clone()).unwrap();
+    let replayed = match log.replay_from(0) {
+        agent_hub::events::ReplayResult::Complete(e)
+        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
+    };
+    assert!(
+        replayed.iter().all(|e| e.session_id != doomed.id),
+        "deleted chat's events came back after restart"
+    );
+    assert!(
+        replayed.iter().any(|e| e.session_id == kept.id),
+        "surviving chat lost its history"
+    );
+    assert!(reopened.chat(&doomed.id).is_err());
+    assert!(reopened.chat(&kept.id).is_ok());
+}

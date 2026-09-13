@@ -18,7 +18,8 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
     version: 1,
     name: "baseline_v0_2",
     // The schema v0.2 shipped. Every v0.2 database already reports
@@ -28,7 +29,28 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, data TEXT NOT NULL);",
-}];
+    },
+    Migration {
+        version: 2,
+        name: "events_session_id_column",
+        // Deleting a chat matched events with
+        // `json_extract(data,'$.session_id')`, which scans and parses the whole
+        // table. The column carries no foreign key on purpose: `EventLog`
+        // writes an empty session id for hub-wide events, and a non-persistent
+        // session writes an id that is not a chat row.
+        sql: "
+        ALTER TABLE events ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+        UPDATE events SET session_id = COALESCE(json_extract(data, '$.session_id'), '');
+        CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);",
+    },
+    Migration {
+        version: 3,
+        name: "chats_project_id_index",
+        // `projects()` counts chats per project with a correlated subquery, and
+        // the cascade on project deletion looks the same column up.
+        sql: "CREATE INDEX IF NOT EXISTS idx_chats_project_id ON chats(project_id);",
+    },
+];
 
 pub fn latest_version() -> i64 {
     MIGRATIONS.last().map_or(0, |m| m.version)
@@ -80,6 +102,7 @@ fn user_version(conn: &Connection) -> Result<i64> {
 mod tests {
     use super::*;
     use crate::store::Store;
+    use rusqlite::params;
 
     /// A verbatim copy of the schema v0.2 created. It is deliberately not
     /// derived from `MIGRATIONS[0]`, or the upgrade test would prove nothing.
@@ -164,6 +187,57 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(events, 1, "event row was lost during the upgrade");
+    }
+
+    /// Migration 2 must derive the new column from the JSON every existing row
+    /// already carries, including the empty id `EventLog` writes for hub-wide
+    /// events.
+    #[test]
+    fn backfill_populates_session_id_for_legacy_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(V0_2_SCHEMA).unwrap();
+        for (seq, session) in [(1, "chat-a"), (2, "chat-b"), (3, "")] {
+            legacy
+                .execute(
+                    "INSERT INTO events (seq, data) VALUES (?1, ?2)",
+                    params![seq, format!("{{\"session_id\":\"{session}\"}}")],
+                )
+                .unwrap();
+        }
+        drop(legacy);
+
+        Store::open(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT seq, session_id FROM events ORDER BY seq")
+            .unwrap();
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (1, "chat-a".to_string()),
+                (2, "chat-b".to_string()),
+                (3, String::new()),
+            ]
+        );
+
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='index' AND name='idx_events_session_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1, "the session_id index is missing");
     }
 
     #[test]
