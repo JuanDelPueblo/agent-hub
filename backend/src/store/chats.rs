@@ -22,15 +22,29 @@ pub struct Chat {
     pub title_overridden: bool,
 }
 
-pub(crate) fn new(project_id: String, agent: String, title: Option<String>) -> StoreResult<Chat> {
+pub(crate) fn new(
+    project_id: String,
+    agent: String,
+    title: Option<String>,
+    default_number: Option<i64>,
+) -> StoreResult<Chat> {
     let (final_title, title_overridden) = match title {
         Some(t) if !t.trim().is_empty() => {
             validate_name(&t)?;
             let trimmed = t.trim().to_string();
-            let overridden = trimmed != "New chat";
-            (trimmed, overridden)
+            (trimmed, true)
         }
-        _ => ("New chat".to_string(), false),
+        _ => (
+            format!(
+                "New chat {}",
+                default_number.ok_or_else(|| {
+                    StoreError::Internal(anyhow::anyhow!(
+                        "Missing default chat title sequence number"
+                    ))
+                })?
+            ),
+            false,
+        ),
     };
     let now = chrono::Utc::now().to_rfc3339();
     Ok(Chat {
@@ -46,6 +60,36 @@ pub(crate) fn new(project_id: String, agent: String, title: Option<String>) -> S
         config_values: serde_json::json!({}),
         title_overridden,
     })
+}
+
+/// Reserves a default title number in SQLite. The caller must hold an
+/// immediate transaction so concurrent Hub processes cannot receive the same
+/// number. Numbers are intentionally consumed even if later workspace setup
+/// fails; that keeps normal forward operation monotonic and never reuses a
+/// title after deletion.
+pub(crate) fn reserve_default_number(conn: &Connection) -> StoreResult<i64> {
+    conn.execute(
+        "INSERT OR IGNORE INTO chat_title_sequence (id, next_number) VALUES (1, 1)",
+        [],
+    )?;
+    let number: i64 = conn.query_row(
+        "SELECT next_number FROM chat_title_sequence WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    if number < 1 {
+        return Err(StoreError::Internal(anyhow::anyhow!(
+            "Invalid default chat title sequence number"
+        )));
+    }
+    let next = number
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Internal(anyhow::anyhow!("Chat title sequence exhausted")))?;
+    conn.execute(
+        "UPDATE chat_title_sequence SET next_number=?1 WHERE id=1",
+        [next],
+    )?;
+    Ok(number)
 }
 
 pub(crate) fn list(conn: &Connection) -> StoreResult<Vec<Chat>> {

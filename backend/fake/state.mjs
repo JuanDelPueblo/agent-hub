@@ -78,6 +78,10 @@ export class FakeState {
   constructor() {
     this.projects = new Map();
     this.chats = new Map();
+    // The real backend stores this sequence in SQLite. The fake keeps the
+    // server-owned sequence for its process lifetime so deleted chats never
+    // make a default title available for reuse.
+    this.nextChatNumber = 1;
     this.configByChat = new Map();
     this.workspaceOptionsByProject = new Map();
     // Live process state, which the real backend holds in the session manager.
@@ -179,18 +183,20 @@ export class FakeState {
   // ----------------------------------------------------------------- chats
 
   createChat(projectId, agent, title, workspace) {
+    const hasExplicitTitle = typeof title === 'string' && title.trim().length > 0;
+    const finalTitle = hasExplicitTitle ? title.trim() : `New chat ${this.nextChatNumber++}`;
     const chat = {
       id: randomUUID(),
       project_id: projectId,
       agent,
-      title: title || 'New chat',
+      title: finalTitle,
       acp_session_id: null,
       created_at: now(),
       updated_at: now(),
       archived: false,
       permission_policy: 'ask',
       config_values: {},
-      title_overridden: Boolean(title),
+      title_overridden: hasExplicitTitle,
       workspace: workspace ? {
         mode: workspace.mode,
         branch: workspace.mode === 'managed_worktree' ? `agent-hub/chat/${chat.id}` : workspace.branch,
@@ -202,6 +208,15 @@ export class FakeState {
     this.configByChat.set(chat.id, defaultConfigOptions(agent));
     this.runtime.set(chat.id, { process: 'STOPPED', turn: 'IDLE' });
     return chat;
+  }
+
+  /** Applies an ACP-generated title unless a manual rename already won. */
+  updateGeneratedTitle(chat, title) {
+    if (chat.title_overridden || chat.title === title) return false;
+    chat.title = title;
+    chat.updated_at = now();
+    this.metadataChanged();
+    return true;
   }
 
   /** Adds the live process fields, like `hub::chat_view`. */

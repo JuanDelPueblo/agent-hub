@@ -16,7 +16,7 @@ pub use projects::Project;
 pub use validation::{validate_name, validate_project_path};
 pub use workspaces::{ChatWorkspace, WorkspaceMode};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
@@ -173,7 +173,19 @@ impl Store {
         agent: String,
         title: Option<String>,
     ) -> StoreResult<Chat> {
-        chats::new(project_id, agent, title)
+        match title {
+            Some(title) if !title.trim().is_empty() => {
+                chats::new(project_id, agent, Some(title), None)
+            }
+            _ => {
+                let mut db = self.conn.lock().unwrap();
+                let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let number = chats::reserve_default_number(&tx)?;
+                let chat = chats::new(project_id, agent, None, Some(number))?;
+                tx.commit()?;
+                Ok(chat)
+            }
+        }
     }
 
     fn insert_chat(&self, chat: &Chat) -> StoreResult<()> {
@@ -332,6 +344,79 @@ mod tests {
             b.permission_policy,
             crate::acp::callbacks::CallbackPolicy::Ask
         );
+    }
+
+    #[test]
+    fn default_chat_titles_are_numbered_and_not_reused_after_restart_or_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+        let db = Store::open(&path).unwrap();
+        let project = db
+            .create_project("project".into(), tmp.path().display().to_string())
+            .unwrap();
+
+        let first = db
+            .create_chat(project.id.clone(), "codex".into(), None)
+            .unwrap();
+        let second = db
+            .create_chat(project.id.clone(), "codex".into(), None)
+            .unwrap();
+        assert_eq!(first.title, "New chat 1");
+        assert_eq!(second.title, "New chat 2");
+        assert!(!first.title_overridden);
+        assert!(!second.title_overridden);
+
+        db.delete_chat(&second.id).unwrap();
+        drop(db);
+
+        let db = Store::open(&path).unwrap();
+        let third = db.create_chat(project.id, "codex".into(), None).unwrap();
+        assert_eq!(third.title, "New chat 3");
+        assert!(!third.title_overridden);
+    }
+
+    #[test]
+    fn manual_title_wins_against_a_racing_generated_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
+        let project = db
+            .create_project("project".into(), tmp.path().display().to_string())
+            .unwrap();
+        let chat = db.create_chat(project.id, "codex".into(), None).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+
+        let generated_db = db.clone();
+        let generated_barrier = barrier.clone();
+        let generated_id = chat.id.clone();
+        let generated = std::thread::spawn(move || {
+            generated_barrier.wait();
+            generated_db
+                .update_chat(&generated_id, |c| {
+                    if !c.title_overridden {
+                        c.title = "Generated title".into();
+                    }
+                })
+                .unwrap();
+        });
+
+        let manual_db = db.clone();
+        let manual_barrier = barrier;
+        let manual_id = chat.id.clone();
+        let manual = std::thread::spawn(move || {
+            manual_barrier.wait();
+            manual_db
+                .update_chat(&manual_id, |c| {
+                    c.title = "Manual title".into();
+                    c.title_overridden = true;
+                })
+                .unwrap();
+        });
+
+        generated.join().unwrap();
+        manual.join().unwrap();
+        let final_chat = db.chat(&chat.id).unwrap();
+        assert_eq!(final_chat.title, "Manual title");
+        assert!(final_chat.title_overridden);
     }
 
     /// Two writers that touch different fields must not lose each other's work.

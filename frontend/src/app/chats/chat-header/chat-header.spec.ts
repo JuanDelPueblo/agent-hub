@@ -102,6 +102,14 @@ describe('ChatHeaderComponent', () => {
     }
   });
 
+  it('keeps rename available while the active turn is working', () => {
+    fixture.componentRef.setInput('chat', { ...mockChat, turn_state: 'PROMPTING' });
+    fixture.detectChanges();
+
+    const titleButton = fixture.nativeElement.querySelector('.title-button') as HTMLButtonElement;
+    expect(titleButton.disabled).toBe(false);
+  });
+
   it('renders a truncated branch badge with the full mode tooltip', () => {
     const branch = 'agent-hub/chat/chat-1-with-a-deliberately-long-generated-branch-name';
     fixture.componentRef.setInput('chat', { ...mockChat, workspace: {

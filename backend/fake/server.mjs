@@ -275,20 +275,34 @@ async function history({ params, url }) {
 function editChat({ params, body }) {
   const chat = requireChat(params[0]);
 
-  if (body.title !== undefined) {
-    const title = requireString(body, 'title');
-    if (title.length > 200) throw httpError(400, 'Name must contain 1–200 bytes');
-    chat.title = title;
-    chat.title_overridden = true;
+  // Validate the whole patch and reject guarded mutations before changing
+  // title or any other field, matching the Rust service's atomic compound
+  // edit behavior.
+  const title = body.title !== undefined ? requireString(body, 'title') : undefined;
+  if (title !== undefined && title.length > 200) {
+    throw httpError(400, 'Name must contain 1–200 bytes');
   }
-  if (body.archived !== undefined) {
-    chat.archived = Boolean(body.archived);
-  }
+  const archived = body.archived !== undefined ? Boolean(body.archived) : undefined;
+  let policy;
   if (body.permission_policy !== undefined) {
     if (!PERMISSION_POLICIES.includes(body.permission_policy)) {
       throw httpError(400, 'Unknown permission policy');
     }
-    chat.permission_policy = body.permission_policy;
+    policy = body.permission_policy;
+  }
+  if ((archived !== undefined || policy !== undefined) && isRunning(chat.id)) {
+    throw httpError(409, 'Wait for or cancel the active turn before editing the chat');
+  }
+
+  if (title !== undefined) {
+    chat.title = title;
+    chat.title_overridden = true;
+  }
+  if (archived !== undefined) {
+    chat.archived = archived;
+  }
+  if (policy !== undefined) {
+    chat.permission_policy = policy;
   }
 
   chat.updated_at = new Date().toISOString();

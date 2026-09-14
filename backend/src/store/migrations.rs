@@ -5,8 +5,9 @@
 //! failure leaves the database exactly where it was. There is no destructive
 //! reset: an unreadable database is reported, never recreated.
 //!
-//! A migration may only use `CREATE TABLE`, `CREATE INDEX`,
-//! `ALTER TABLE ... ADD COLUMN`, and `UPDATE`. SQLite's 12-step table rebuild
+//! A migration may only use schema changes and narrowly-scoped data
+//! initialization (`CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE ... ADD
+//! COLUMN`, `INSERT`, and `UPDATE`). SQLite's 12-step table rebuild
 //! needs `PRAGMA foreign_keys=OFF` outside the transaction, so it needs its own
 //! handling if it is ever required.
 //!
@@ -95,6 +96,31 @@ pub const MIGRATIONS: &[Migration] = &[
         CREATE INDEX IF NOT EXISTS idx_chat_workspaces_project_id ON chat_workspaces(project_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_workspaces_managed_path ON chat_workspaces(workspace_path) WHERE mode='managed_worktree';",
         // `CREATE TABLE/INDEX IF NOT EXISTS` is already idempotent.
+        precondition: None,
+    },
+    Migration {
+        version: 5,
+        name: "chat_title_sequence",
+        // The sequence is separate from chat rows because SQLite's ordinary
+        // rowid may be reused after deleting the highest row. Keeping the
+        // next value in a durable singleton makes default titles monotonic.
+        sql: "CREATE TABLE IF NOT EXISTS chat_title_sequence (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            next_number INTEGER NOT NULL
+        );
+        INSERT OR IGNORE INTO chat_title_sequence (id, next_number)
+        SELECT 1, MAX(
+            COALESCE((SELECT MAX(rowid) + 1 FROM chats), 1),
+            COALESCE((
+                SELECT MAX(CAST(substr(title, 10) AS INTEGER)) + 1
+                FROM (
+                    SELECT json_extract(data, '$.title') AS title
+                    FROM chats
+                )
+                WHERE title GLOB 'New chat [0-9]*'
+                  AND printf('New chat %d', CAST(substr(title, 10) AS INTEGER)) = title
+            ), 1)
+        );",
         precondition: None,
     },
 ];
@@ -332,6 +358,40 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(events, 1, "event row was lost during the upgrade");
+    }
+
+    #[test]
+    fn v5_title_sequence_starts_beyond_legacy_chat_rows_and_titles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(V0_2_SCHEMA).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO projects (id, data) VALUES ('p1', '{\"id\":\"p1\"}')",
+                [],
+            )
+            .unwrap();
+        // Explicit rowids exercise the durable row identity, while the larger
+        // exact title suffix proves migration does not collide with old
+        // numbered defaults even when it exceeds the rowid high-water mark.
+        legacy
+            .execute(
+                "INSERT INTO chats (rowid, id, project_id, data) VALUES
+                 (5, 'c5', 'p1', '{\"title\":\"New chat 2\"}'),
+                 (7, 'c7', 'p1', '{\"title\":\"New chat 20\"}')",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        let created = store
+            .create_chat("p1".into(), "codex".into(), None)
+            .unwrap();
+        assert_eq!(created.title, "New chat 21");
+        assert!(!created.title_overridden);
     }
 
     /// Migration 2 must derive the new column from the JSON every existing row

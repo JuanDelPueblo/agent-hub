@@ -231,11 +231,7 @@ async function runTurn(state, chat, text, latency, turn) {
   if (turn.cancelled) return finishCancelled(emit);
 
   // A real agent renames the chat after the first turn.
-  if (!chat.title_overridden && chat.title === 'New chat') {
-    chat.title = titleFor(text);
-    chat.updated_at = new Date().toISOString();
-    state.metadataChanged();
-  }
+  state.updateGeneratedTitle(chat, titleFor(text));
 
   emit({ type: 'turn_complete', stop_reason: 'end_turn' });
 }

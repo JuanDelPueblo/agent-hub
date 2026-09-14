@@ -601,9 +601,20 @@ impl AcpSession {
         archived: Option<bool>,
         policy: Option<crate::acp::callbacks::CallbackPolicy>,
     ) -> anyhow::Result<crate::store::Chat> {
-        let _guard = self.turn_guard.try_lock().map_err(|_| {
-            anyhow::anyhow!("Wait for or cancel the active turn before editing the chat")
-        })?;
+        // A title is display metadata and can be changed while the agent is
+        // working. Archive and permission-policy changes affect session
+        // behavior, so keep the existing turn guard for those fields. When a
+        // request combines both kinds of edits, acquire this guard before the
+        // store mutation so the compound patch remains atomic.
+        let needs_turn_guard = archived.is_some() || policy.is_some();
+        let policy_changed = policy.is_some();
+        let _guard = needs_turn_guard
+            .then(|| {
+                self.turn_guard.try_lock().map_err(|_| {
+                    anyhow::anyhow!("Wait for or cancel the active turn before editing the chat")
+                })
+            })
+            .transpose()?;
         let store = self
             .store
             .as_ref()
@@ -620,10 +631,12 @@ impl AcpSession {
                 c.permission_policy = policy;
             }
         })?;
-        if let Some(client) = self.client.read().await.as_ref() {
-            client
-                .callback_handler()
-                .set_policy(c.permission_policy.clone());
+        if policy_changed {
+            if let Some(client) = self.client.read().await.as_ref() {
+                client
+                    .callback_handler()
+                    .set_policy(c.permission_policy.clone());
+            }
         }
         Ok(c)
     }
@@ -793,7 +806,7 @@ impl AcpSession {
     async fn try_sync_acp_title(&self, client: &Arc<AcpClient>) -> anyhow::Result<()> {
         if let Some(store) = &self.store {
             if let Ok(chat) = store.chat(&self.id) {
-                if !chat.title_overridden && chat.title == "New chat" {
+                if !chat.title_overridden {
                     if let Ok(Ok(sessions_val)) = tokio::time::timeout(
                         Duration::from_secs(5),
                         client.list_sessions(&self.key.cwd, None),
@@ -814,16 +827,20 @@ impl AcpSession {
                                         {
                                             let trimmed = title.trim();
                                             if !trimmed.is_empty() && trimmed.len() <= 200 {
+                                                let mut changed = false;
                                                 let _ = store.update_chat(&self.id, |c| {
-                                                    if !c.title_overridden {
+                                                    if !c.title_overridden && c.title != trimmed {
                                                         c.title = trimmed.to_string();
+                                                        changed = true;
                                                     }
                                                 });
-                                                self.event_log.append(
-                                                    &self.id,
-                                                    &self.key.agent,
-                                                    EventPayload::MetadataChanged {},
-                                                )?;
+                                                if changed {
+                                                    self.event_log.append(
+                                                        &self.id,
+                                                        &self.key.agent,
+                                                        EventPayload::MetadataChanged {},
+                                                    )?;
+                                                }
                                             }
                                         }
                                         break;

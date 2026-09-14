@@ -30,7 +30,7 @@ describe('AppStateService', () => {
       editProject: async (id: string, name: string, path: string) => ({ ...projects[0], id, name, path }),
       deleteProject: async () => undefined,
       createChat: async (_projectId: string, agent: string) => {
-        const created = { ...chats[0], id: 'chat-2', agent, title: 'New chat' };
+        const created = { ...chats[0], id: 'chat-2', agent, title: 'New chat 1' };
         chats = [...chats, created];
         return created;
       }, fetchChatConfig: async () => [],
@@ -73,7 +73,7 @@ describe('AppStateService', () => {
     state.activeChatId.set('chat-1');
 
     const created = await state.createChat('project-1', 'claude');
-    expect(created).toMatchObject({ id: 'chat-2', agent: 'claude', title: 'New chat' });
+    expect(created).toMatchObject({ id: 'chat-2', agent: 'claude', title: 'New chat 1' });
     expect(state.chatsByProject()['project-1']).toHaveLength(2);
 
     events.next({ seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:00Z', payload: { type: 'permission_request', id: 'permission-1', method: 'terminal/run_command', description: 'Run tests' } });
@@ -88,6 +88,19 @@ describe('AppStateService', () => {
 
     events.next({ seq: 3, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:02Z', payload: { type: 'state_change', process: 'RUNNING', turn: 'IDLE' } });
     expect(state.findChat('chat-1')?.process_state).toBe('RUNNING');
+  });
+
+  it('applies a successful rename immediately while the chat is working', async () => {
+    chats[0] = { ...chats[0], turn_state: 'PROMPTING' };
+    await state.loadChats('project-1');
+
+    await state.renameChat('chat-1', 'Renamed while working');
+
+    expect(state.findChat('chat-1')).toMatchObject({
+      title: 'Renamed while working',
+      turn_state: 'PROMPTING',
+    });
+    expect(state.chatsByProject()['project-1'][0].title).toBe('Renamed while working');
   });
 
   it('refreshes project and chat metadata after a metadata event', async () => {

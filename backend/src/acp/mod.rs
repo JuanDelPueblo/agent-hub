@@ -797,19 +797,23 @@ async fn handle_session_update(
                 let trimmed = title.trim();
                 if !trimmed.is_empty() && trimmed.len() <= 200 {
                     if let Some(st) = store {
-                        if let Ok(chat) = st.chat(session_id) {
-                            if !chat.title_overridden {
-                                let _ = st.update_chat(session_id, |c| {
-                                    if !c.title_overridden {
-                                        c.title = trimmed.to_string();
-                                    }
-                                });
-                                event_log.append(
-                                    session_id,
-                                    agent_name,
-                                    EventPayload::MetadataChanged {},
-                                )?;
+                        let mut changed = false;
+                        let _ = st.update_chat(session_id, |c| {
+                            // Store's read/modify/write lock orders this
+                            // update against a manual rename. Whichever
+                            // mutation commits first is deterministic, and a
+                            // committed manual override always wins.
+                            if !c.title_overridden && c.title != trimmed {
+                                c.title = trimmed.to_string();
+                                changed = true;
                             }
+                        });
+                        if changed {
+                            event_log.append(
+                                session_id,
+                                agent_name,
+                                EventPayload::MetadataChanged {},
+                            )?;
                         }
                     }
                 }
