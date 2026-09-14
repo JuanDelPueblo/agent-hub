@@ -6,10 +6,10 @@ import { randomUUID } from 'node:crypto';
 // This is the fake equivalent of the real provider-neutral /api/agents
 // catalog. Keep metadata explicit rather than deriving it from the id.
 export const AGENTS = [
-  { id: 'antigravity', display_name: 'Antigravity', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
-  { id: 'claude', display_name: 'Claude', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
-  { id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
-  { id: 'opencode', display_name: 'OpenCode', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
+  { id: 'antigravity', display_name: 'Antigravity', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
+  { id: 'claude', display_name: 'Claude', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
+  { id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
+  { id: 'opencode', display_name: 'OpenCode', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
 ];
 
 export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-all'];
@@ -351,6 +351,36 @@ export class FakeState {
     });
   }
 
+  agent(id) { return AGENTS.find((agent) => agent.id === id); }
+
+  createCustomAgent(input) {
+    if (this.agent(input.id)) throw Object.assign(new Error('An agent already uses that id'), { status: 409 });
+    const agent = customSummary(input);
+    AGENTS.push(agent);
+    this.metadataChanged();
+    return agent;
+  }
+
+  editCustomAgent(id, input) {
+    const agent = this.agent(id);
+    if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    if (agent.source !== 'pueblo_managed') throw Object.assign(new Error('This agent is not Pueblo-managed'), { status: 409 });
+    if (input.id !== id) throw Object.assign(new Error('An agent id cannot change'), { status: 400 });
+    Object.assign(agent, customSummary(input));
+    this.metadataChanged();
+    return agent;
+  }
+
+  removeAgent(id) {
+    const index = AGENTS.findIndex((agent) => agent.id === id);
+    if (index < 0) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    const agent = AGENTS[index];
+    if (agent.mutability === 'read_only') throw Object.assign(new Error('This agent is read-only'), { status: 409 });
+    AGENTS.splice(index, 1);
+    this.metadataChanged();
+    return { id, deleted: true, retained_chats: 0 };
+  }
+
   // ------------------------------------------------------------------ seed
 
   seed() {
@@ -465,4 +495,21 @@ export class FakeState {
     });
     this.emit(chat.id, agent, { type: 'turn_complete', stop_reason: 'end_turn' });
   }
+}
+
+function customSummary(input) {
+  validateCustomInput(input);
+  return {
+    id: input.id.trim(), display_name: input.display_name?.trim() || input.id.trim(),
+    source: 'pueblo_managed', availability: 'available', usage_provider: input.usage_provider ?? null,
+    metadata: input.metadata ?? null, mutability: 'editable',
+    display: input.description?.trim() ? { description: input.description.trim() } : {},
+  };
+}
+
+export function validateCustomInput(input) {
+  const issues = [];
+  if (!input || typeof input.id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(input.id.trim())) issues.push({ field: 'id', message: "An agent id holds letters, digits, '-', and '_' only." });
+  if (!input || typeof input.command !== 'string' || !input.command.trim()) issues.push({ field: 'command', message: 'An agent needs a command.' });
+  return { valid: issues.length === 0, issues };
 }

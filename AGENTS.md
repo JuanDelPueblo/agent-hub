@@ -136,6 +136,13 @@ Optional fields per agent:
 
 The file rejects an unknown field, so a typo fails at startup.
 
+Pueblo-managed custom agents and ACP Registry installs share the runtime
+catalog with these declarative definitions. Their durable records live in
+`installed_agents`; registry installs persist a pinned launch snapshot, so a
+session never needs to contact the registry to start. Sources own their ids:
+collisions are errors, custom agents are editable, registry agents use their
+update/uninstall lifecycle, and file/built-in definitions are read-only.
+
 ---
 
 ## 4. Directory Structure
@@ -150,7 +157,7 @@ pueblo-hub/
 │   │   ├── main.rs           # Binary entrypoint
 │   │   ├── lib.rs            # Library exports
 │   │   ├── acp/              # ACP protocol, callbacks, process supervision
-│   │   ├── agents/           # Agent definitions, launch config, agents.json
+│   │   ├── agents/           # Catalog, custom/installed records, Registry client and install logic
 │   │   ├── service/          # HubService: the operations every surface shares
 │   │   ├── session/          # Chat sessions, turn locks, idle reaping
 │   │   ├── store/            # SQLite migrations, projects, chats, events
@@ -225,7 +232,7 @@ pueblo-hub/
   unavailable, timeout, internal). Each transport maps it to its own errors.
 
 ### 5.6. Web API and Static Serving (`backend/src/web/`)
-- **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, and permissions.
+- **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, permissions, and agent management. `GET/POST /api/agents`, `POST /api/agents/validate`, registry browse/refresh/install routes, and custom/registry lifecycle routes all adapt `HubService`.
 - **Adapters**: Handlers in `web/hub.rs` parse the request, call `HubService`,
   and map `ServiceError` to a status code. Business rules do not live here.
 - **Web-only work (`web/git.rs`)**: Repository cloning shells out to git with

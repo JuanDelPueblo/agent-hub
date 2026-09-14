@@ -4,8 +4,12 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use pueblo_hub::{
-    agents::{parse_agents, AgentDefinition, AgentRegistry, AgentSource},
-    config::Config,
+    agents::registry::{HttpFetch, RegistryClient},
+    agents::{
+        parse_agents, AgentCatalog, AgentDefinition, AgentManager, AgentRegistry, AgentSource,
+        HostRuntimeProbe,
+    },
+    config::{Config, PathOverrides, PuebloPaths, RegistryConfig},
     events::{EventLog, EventPayload},
     session::SessionManager,
     store::Store,
@@ -14,6 +18,70 @@ use pueblo_hub::{
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
+
+struct OfflineRegistry;
+
+impl HttpFetch for OfflineRegistry {
+    fn fetch(
+        &self,
+        _url: String,
+        _max_bytes: u64,
+    ) -> pueblo_hub::agents::registry::client::FetchFuture<'_> {
+        Box::pin(async { Err(anyhow::anyhow!("fixture registry is offline")) })
+    }
+}
+
+fn managed_app(
+    root: &std::path::Path,
+) -> (
+    axum::Router,
+    Arc<SessionManager>,
+    Arc<AgentCatalog>,
+    Arc<AgentManager>,
+) {
+    let paths = PuebloPaths::from_overrides(PathOverrides {
+        database: Some(root.join("hub.db")),
+        data_dir: Some(root.join("data")),
+        ..Default::default()
+    });
+    let store = Arc::new(Store::open(&paths.database).unwrap());
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agents = Arc::new(AgentCatalog::new([]));
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
+    let http: Arc<dyn HttpFetch> = Arc::new(OfflineRegistry);
+    let registry = Arc::new(RegistryClient::new(
+        "https://registry.fixture.invalid/registry.json",
+        paths.registry_cache.clone(),
+        http.clone(),
+    ));
+    let agent_manager = AgentManager::new(
+        store,
+        agents.clone(),
+        registry,
+        paths.installed_agents.clone(),
+        Arc::new(HostRuntimeProbe),
+    );
+    let config = Arc::new(Config {
+        paths,
+        agents: agents.clone(),
+        agent_manager: Some(agent_manager.clone()),
+        registry: RegistryConfig {
+            url: "https://registry.fixture.invalid/registry.json".into(),
+            http,
+        },
+        web: pueblo_hub::config::WebConfig {
+            project_roots: vec![root.display().to_string()],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    (
+        router(AppState::new(sessions.clone(), config, 8765)),
+        sessions,
+        agents,
+        agent_manager,
+    )
+}
 
 fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
     let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
@@ -72,6 +140,43 @@ async fn agents_api_returns_provider_neutral_catalog_summaries() {
     assert_eq!(body[0]["metadata"]["package"], "codex");
     assert_eq!(body[1]["id"], "offline");
     assert_eq!(body[1]["availability"], "unavailable");
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn managed_agents_persist_through_the_real_router_and_store_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, sessions, _, _) = managed_app(tmp.path());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/agents")
+        .header("host", "127.0.0.1:8765")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"id":"fixture-agent","command":"fixture-acp","display_name":"Fixture"}"#,
+        ))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+    sessions.shutdown_all().await;
+
+    let (app, sessions, agents, agent_manager) = managed_app(tmp.path());
+    // Startup loads durable agent records before accepting routes, just as main does.
+    assert_eq!(agent_manager.load_persisted().unwrap(), 1);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents")
+                .header("host", "127.0.0.1:8765")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(body[0]["id"], "fixture-agent");
+    assert!(agents.contains("fixture-agent"));
     sessions.shutdown_all().await;
 }
 

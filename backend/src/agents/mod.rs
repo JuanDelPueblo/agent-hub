@@ -1,12 +1,31 @@
 //! The set of agents this Pueblo Hub knows about.
+//!
+//! Every source feeds one catalog: the built-in defaults, the file
+//! `--agents-file` names, the ACP Registry, and the definitions a user creates
+//! through the management API. Ownership is explicit, so a mutable API never
+//! changes a declarative definition and an id collision is reported instead of
+//! resolved by precedence.
+mod custom;
 mod definition;
 mod file;
+mod installed;
+mod manager;
+pub mod registry;
 
+pub use custom::{CustomAgentInput, ValidationIssue, ValidationReport, MAX_IDLE_TIMEOUT_SECS};
 pub use definition::{
-    AgentAvailability, AgentDefinition, AgentLaunch, AgentRuntime, AgentSource, AgentSummary,
-    DEFAULT_IDLE_TIMEOUT_SECS,
+    AgentAvailability, AgentDefinition, AgentDisplay, AgentLaunch, AgentMutability, AgentRuntime,
+    AgentSource, AgentSummary, DEFAULT_IDLE_TIMEOUT_SECS,
 };
 pub use file::parse_agents;
+pub use installed::{
+    which, HostRuntimeProbe, InstalledAgent, InstalledDistribution, RegistrySnapshot, RuntimeProbe,
+};
+pub use manager::{
+    AgentError, AgentManagementDetail, AgentManager, AgentResult, InstallRequest,
+    RegistryCatalogView, RegistryEntryView, RegistryStatus, RemoveOutcome, UpdateOutcome,
+};
+pub use registry::{DistributionKind, PlatformTarget};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,6 +44,36 @@ struct AgentEntry {
     definition: Arc<AgentDefinition>,
     runtime: Arc<AgentRuntime>,
 }
+
+impl AgentEntry {
+    fn new(definition: AgentDefinition) -> Self {
+        Self {
+            runtime: Arc::new(definition.runtime()),
+            definition: Arc::new(definition),
+        }
+    }
+}
+
+/// Two sources claimed the same agent id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogCollision {
+    pub id: String,
+    pub existing: AgentSource,
+    pub incoming: AgentSource,
+}
+
+impl std::fmt::Display for CatalogCollision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Agent id '{}' is already defined by the {} source, so the {} source cannot use it. \
+             Choose a different id or remove the other definition.",
+            self.id, self.existing, self.incoming
+        )
+    }
+}
+
+impl std::error::Error for CatalogCollision {}
 
 impl AgentCatalog {
     pub fn new(definitions: impl IntoIterator<Item = AgentDefinition>) -> Self {
@@ -87,19 +136,66 @@ impl AgentCatalog {
             .collect()
     }
 
+    /// The source that owns one entry, so a caller can check ownership
+    /// before it tries a mutation.
+    pub fn source_of(&self, id: &str) -> Option<AgentSource> {
+        self.entries
+            .read()
+            .expect("agent catalog lock poisoned")
+            .get(id)
+            .map(|entry| entry.definition.source)
+    }
+
+    /// Adds one entry. An id that another source already owns is a collision
+    /// and is reported, never resolved by precedence.
+    pub fn insert(&self, definition: AgentDefinition) -> Result<(), CatalogCollision> {
+        let mut entries = self.entries.write().expect("agent catalog lock poisoned");
+        if let Some(existing) = entries.get(&definition.id) {
+            return Err(CatalogCollision {
+                id: definition.id,
+                existing: existing.definition.source,
+                incoming: definition.source,
+            });
+        }
+        let id = definition.id.clone();
+        entries.insert(id, AgentEntry::new(definition));
+        Ok(())
+    }
+
+    /// Replaces one entry that the same source already owns. A registry
+    /// update and a custom edit both land here, so neither can take an id
+    /// away from another source.
+    pub fn replace(
+        &self,
+        definition: AgentDefinition,
+    ) -> Result<AgentDefinition, CatalogCollision> {
+        let mut entries = self.entries.write().expect("agent catalog lock poisoned");
+        let existing = entries.get(&definition.id).ok_or(CatalogCollision {
+            id: definition.id.clone(),
+            existing: definition.source,
+            incoming: definition.source,
+        })?;
+        if existing.definition.source != definition.source {
+            return Err(CatalogCollision {
+                id: definition.id,
+                existing: existing.definition.source,
+                incoming: definition.source,
+            });
+        }
+        let previous = (*existing.definition).clone();
+        entries.insert(definition.id.clone(), AgentEntry::new(definition));
+        Ok(previous)
+    }
+
     /// Inserts or replaces one installed agent. Existing session runtime
     /// handles remain valid because the catalog stores each projection in an
     /// `Arc` and only new lookups observe the replacement.
     pub fn upsert(&self, definition: AgentDefinition) -> Option<AgentDefinition> {
         let id = definition.id.clone();
-        let entry = AgentEntry {
-            runtime: Arc::new(definition.runtime()),
-            definition: Arc::new(definition),
-        };
         self.entries
             .write()
             .expect("agent catalog lock poisoned")
-            .insert(id, entry)
+            .insert(id, AgentEntry::new(definition))
             .map(|old| (*old.definition).clone())
     }
 
@@ -191,6 +287,82 @@ mod tests {
         );
         assert!(catalog.remove("codex").is_some());
         assert!(catalog.runtime("codex").is_none());
+    }
+
+    /// Requirement of the management API: an id that another source already
+    /// owns fails loudly rather than replacing that source's definition.
+    #[test]
+    fn insert_reports_a_source_collision_instead_of_applying_precedence() {
+        let catalog = AgentCatalog::new([AgentDefinition::codex_default()]);
+        let collision = catalog
+            .insert(
+                AgentDefinition::new("codex", "my-codex").with_source(AgentSource::PuebloManaged),
+            )
+            .unwrap_err();
+        assert_eq!(collision.id, "codex");
+        assert_eq!(collision.existing, AgentSource::Builtin);
+        assert_eq!(collision.incoming, AgentSource::PuebloManaged);
+        assert!(collision.to_string().contains("already defined"));
+        // The original definition is untouched.
+        assert_eq!(
+            catalog.definition("codex").unwrap().launch.command,
+            "codex-acp"
+        );
+
+        catalog
+            .insert(AgentDefinition::new("private", "private-acp"))
+            .unwrap();
+        assert!(catalog.contains("private"));
+    }
+
+    #[test]
+    fn replace_only_accepts_the_owning_source() {
+        let catalog = AgentCatalog::new([
+            AgentDefinition::new("managed", "v1").with_source(AgentSource::PuebloManaged)
+        ]);
+        let previous = catalog
+            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::PuebloManaged))
+            .unwrap();
+        assert_eq!(previous.launch.command, "v1");
+        assert_eq!(catalog.runtime("managed").unwrap().launch.command, "v2");
+        assert_eq!(
+            catalog.source_of("managed"),
+            Some(AgentSource::PuebloManaged)
+        );
+
+        let collision = catalog
+            .replace(AgentDefinition::new("managed", "v3").with_source(AgentSource::Registry))
+            .unwrap_err();
+        assert_eq!(collision.existing, AgentSource::PuebloManaged);
+        assert_eq!(catalog.runtime("managed").unwrap().launch.command, "v2");
+
+        assert!(catalog
+            .replace(AgentDefinition::new("absent", "x"))
+            .is_err());
+        assert_eq!(catalog.source_of("absent"), None);
+    }
+
+    /// A session already holding a runtime handle must keep working when the
+    /// catalog entry behind it is replaced or removed.
+    #[test]
+    fn live_runtime_handles_survive_catalog_changes() {
+        let catalog = AgentCatalog::new([
+            AgentDefinition::new("managed", "v1").with_source(AgentSource::PuebloManaged)
+        ]);
+        let live = catalog.runtime("managed").unwrap();
+
+        catalog
+            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::PuebloManaged))
+            .unwrap();
+        assert_eq!(
+            live.launch.command, "v1",
+            "a live handle changed under a session"
+        );
+        assert_eq!(catalog.runtime("managed").unwrap().launch.command, "v2");
+
+        catalog.remove("managed");
+        assert_eq!(live.launch.command, "v1");
+        assert!(catalog.runtime("managed").is_none());
     }
 
     #[test]

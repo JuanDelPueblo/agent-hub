@@ -1,6 +1,6 @@
 use clap::Parser;
 use pueblo_hub::{
-    agents::parse_agents,
+    agents::{parse_agents, AgentManager, HostRuntimeProbe},
     config::{Config, PathOverrides, PuebloPaths},
     events::EventLog,
     session::SessionManager,
@@ -26,6 +26,9 @@ struct Args {
     worktrees_dir: Option<PathBuf>,
     #[arg(long, env = "PUEBLO_HUB_AGENTS_FILE")]
     agents_file: Option<PathBuf>,
+    /// The ACP Registry document to read. The default is the official one.
+    #[arg(long, env = "PUEBLO_HUB_REGISTRY_URL")]
+    registry_url: Option<String>,
     #[arg(long, default_value_t = 8765, env = "PUEBLO_HUB_PORT")]
     port: u16,
     #[arg(long, default_value = "127.0.0.1", env = "PUEBLO_HUB_HOST")]
@@ -72,6 +75,26 @@ async fn main() -> anyhow::Result<()> {
     if let Some(path) = args.agents_file {
         config.agents = Arc::new(parse_agents(&std::fs::read_to_string(path)?)?);
     }
+    if let Some(url) = args.registry_url {
+        config.registry.url = url;
+    }
+
+    // Durable installed agents join the same catalog the sessions read. An id
+    // that a declarative source already defines fails here, so a collision is
+    // reported instead of resolved by precedence.
+    let agent_manager = AgentManager::new(
+        store.clone(),
+        config.agents.clone(),
+        config.registry.client(config.paths.registry_cache.clone()),
+        config.paths.installed_agents.clone(),
+        Arc::new(HostRuntimeProbe),
+    );
+    let loaded = agent_manager
+        .load_persisted()
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    tracing::info!(count = loaded, "loaded installed agents");
+    config.agent_manager = Some(agent_manager);
+
     let manager = SessionManager::with_store(config.agents.clone(), events, Some(store));
     let web = WebServer::new(manager.clone(), Arc::new(config));
     #[cfg(unix)]
