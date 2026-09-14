@@ -15,7 +15,7 @@ describe('RenameChatDialogComponent', () => {
     permission_policy: 'ask',
     config_values: {},
     process_state: 'RUNNING',
-    turn_state: 'IDLE',
+    turn_state: 'PROMPTING',
   } as Chat;
   const renameChat = vi.fn(async () => undefined);
   const close = vi.fn();

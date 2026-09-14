@@ -97,6 +97,18 @@ pub const MIGRATIONS: &[Migration] = &[
         // `CREATE TABLE/INDEX IF NOT EXISTS` is already idempotent.
         precondition: None,
     },
+    Migration {
+        version: 5,
+        name: "chat_title_sequence",
+        // The sequence is separate from chat rows because SQLite's ordinary
+        // rowid may be reused after deleting the highest row. Keeping the
+        // next value in a durable singleton makes default titles monotonic.
+        sql: "CREATE TABLE IF NOT EXISTS chat_title_sequence (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            next_number INTEGER NOT NULL
+        );",
+        precondition: None,
+    },
 ];
 
 pub fn latest_version() -> i64 {

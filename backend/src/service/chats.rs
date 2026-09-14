@@ -366,12 +366,13 @@ impl HubService {
     }
 
     pub async fn edit_chat(&self, chat_id: &str, edit: ChatEdit) -> ServiceResult<ChatView> {
-        if let Some(title) = &edit.title {
-            validate_name(title)?;
-        }
+        let title = edit
+            .title
+            .map(|title| validate_name(&title).map(|()| title.trim().to_string()))
+            .transpose()?;
         let live = self.live(chat_id).await?;
         let chat = live
-            .edit_metadata(edit.title, edit.archived, edit.permission_policy)
+            .edit_metadata(title, edit.archived, edit.permission_policy)
             .await?;
         self.notify_metadata_changed();
         Ok(self.view(chat).await)

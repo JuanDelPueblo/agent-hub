@@ -872,7 +872,7 @@ async fn acp_titles_and_lifecycle() {
     .await;
     assert_eq!(status, 200);
     let cid = c["id"].as_str().unwrap();
-    assert_eq!(c["title"], "New chat");
+    assert_eq!(c["title"], "New chat 1");
     assert_eq!(c["title_overridden"], false);
 
     // 3. Connect/Prompt chat with ACP providing title

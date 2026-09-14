@@ -91,6 +91,36 @@ describe('fake backend seed history', () => {
     assert.equal(historyFor(state, fresh.id).length, 0);
   });
 
+  it('numbers default titles without reusing deleted numbers', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const first = state.createChat(projectId, 'codex');
+    const second = state.createChat(projectId, 'codex');
+
+    assert.equal(first.title, 'New chat 1');
+    assert.equal(second.title, 'New chat 2');
+    assert.equal(first.title_overridden, false);
+    assert.equal(second.title_overridden, false);
+
+    state.chats.delete(first.id);
+    const third = state.createChat(projectId, 'codex');
+    assert.equal(third.title, 'New chat 3');
+    assert.equal(third.title_overridden, false);
+  });
+
+  it('lets generated titles update until a manual title wins', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const chat = state.createChat(projectId, 'codex');
+
+    assert.equal(state.updateGeneratedTitle(chat, 'Generated title'), true);
+    assert.equal(chat.title, 'Generated title');
+    chat.title = 'Manual title';
+    chat.title_overridden = true;
+    assert.equal(state.updateGeneratedTitle(chat, 'Later generated title'), false);
+    assert.equal(chat.title, 'Manual title');
+  });
+
   it('provides Git and non-Git workspace options and retains selections', () => {
     const state = new FakeState();
     const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');

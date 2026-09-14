@@ -172,6 +172,106 @@ async fn full_chat_lifecycle_without_http() {
 }
 
 #[tokio::test]
+async fn title_rename_is_live_but_guarded_compound_edits_are_atomic() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+    let project = hub
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    hub.prompt_chat(&chat.chat.id, "wait".into()).await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let current = sessions.get_by_id(&chat.chat.id).await.unwrap();
+        if current.turn_state().await == agent_hub::state::TurnState::Prompting {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "turn never became active"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let renamed = hub
+        .edit_chat(
+            &chat.chat.id,
+            ChatEdit {
+                title: Some("Live manual title".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.chat.title, "Live manual title");
+    assert!(renamed.chat.title_overridden);
+    assert_eq!(renamed.turn_state, "PROMPTING");
+
+    let rejected = hub
+        .edit_chat(
+            &chat.chat.id,
+            ChatEdit {
+                title: Some("Must not apply".into()),
+                archived: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(rejected.is_err());
+    let unchanged = hub.get_chat(&chat.chat.id).await.unwrap();
+    assert_eq!(unchanged.chat.title, "Live manual title");
+    assert!(!unchanged.chat.archived);
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn generated_title_before_manual_rename_and_after_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+    let project = hub
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let session = sessions.get_by_id(&chat.chat.id).await.unwrap();
+
+    session
+        .ask("title: Generated before rename".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        hub.get_chat(&chat.chat.id).await.unwrap().chat.title,
+        "Generated before rename"
+    );
+    assert!(
+        !hub.get_chat(&chat.chat.id)
+            .await
+            .unwrap()
+            .chat
+            .title_overridden
+    );
+
+    hub.edit_chat(
+        &chat.chat.id,
+        ChatEdit {
+            title: Some("Manual winner".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    session
+        .ask("title: Generated after rename".into(), None)
+        .await
+        .unwrap();
+    let final_chat = hub.get_chat(&chat.chat.id).await.unwrap().chat;
+    assert_eq!(final_chat.title, "Manual winner");
+    assert!(final_chat.title_overridden);
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn failed_turn_emits_error_then_exactly_one_completion() {
     let tmp = tempfile::tempdir().unwrap();
     let (hub, sessions) = hub(tmp.path());
