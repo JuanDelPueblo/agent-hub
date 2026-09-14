@@ -333,3 +333,145 @@ async fn rejected_saved_config_blocks_until_only_that_option_is_reset() {
         .is_none());
     sessions.shutdown_all().await;
 }
+
+#[tokio::test]
+async fn concurrent_wait_admission_and_rejected_second_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = hub
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let mut events = log.subscribe();
+
+    // A first "wait" prompt is admitted.
+    hub.prompt_chat(&chat.chat.id, "wait".into()).await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("did not receive prompt event in time")
+            .unwrap();
+        if event.session_id == chat.chat.id
+            && matches!(event.payload, EventPayload::UserMessage { ref text } if text == "wait")
+        {
+            break;
+        }
+    }
+
+    // A second prompt while "wait" is active returns an error immediately.
+    let second = hub.prompt_chat(&chat.chat.id, "second prompt".into()).await;
+    assert!(
+        second.is_err(),
+        "second prompt must be rejected immediately"
+    );
+
+    // Allow any potential background tasks to run.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Cancelling/completing the original "wait" produces exactly one completion for that turn.
+    hub.cancel_chat(&chat.chat.id).await.unwrap();
+
+    loop {
+        let event = tokio::time::timeout_at(deadline + Duration::from_secs(10), events.recv())
+            .await
+            .expect("cancelled turn did not complete in time")
+            .unwrap();
+        if event.session_id == chat.chat.id
+            && matches!(event.payload, EventPayload::TurnComplete { .. })
+        {
+            break;
+        }
+    }
+
+    // The second request produces zero UserMessage, Error, and TurnComplete events.
+    let all_events = log
+        .replay_page(1, log.high_watermark().unwrap(), 10_000)
+        .unwrap();
+    let chat_events: Vec<_> = all_events
+        .into_iter()
+        .filter(|e| e.session_id == chat.chat.id)
+        .collect();
+
+    let user_messages: Vec<_> = chat_events
+        .iter()
+        .filter_map(|e| match &e.payload {
+            EventPayload::UserMessage { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(user_messages, vec!["wait"]);
+
+    let errors: Vec<_> = chat_events
+        .iter()
+        .filter(|e| matches!(e.payload, EventPayload::Error { .. }))
+        .collect();
+    assert_eq!(errors.len(), 0);
+
+    let completions: Vec<_> = chat_events
+        .iter()
+        .filter(|e| matches!(e.payload, EventPayload::TurnComplete { .. }))
+        .collect();
+    assert_eq!(completions.len(), 1);
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn startup_failure_causes_prompt_to_fail_without_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
+    let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agent = AgentDefinition::codex_default()
+        .with_command("nonexistent-command-fail-startup".into())
+        .with_args(vec![]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
+    let sessions = SessionManager::with_store(agents.clone(), log.clone(), Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.display().to_string()];
+    let hub = HubService::new(store, sessions.clone(), agents, &config);
+
+    let project = hub
+        .create_project("demo".into(), root.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+
+    let result = hub.prompt_chat(&chat.chat.id, "hello".into()).await;
+    assert!(
+        result.is_err(),
+        "startup failure must fail prompt immediately"
+    );
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_events: Vec<_> = log
+        .replay_page(1, log.high_watermark().unwrap_or(0), 10_000)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| e.session_id == chat.chat.id)
+        .collect();
+
+    let turn_events: Vec<_> = chat_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.payload,
+                EventPayload::UserMessage { .. }
+                    | EventPayload::Error { .. }
+                    | EventPayload::TurnComplete { .. }
+            )
+        })
+        .collect();
+    assert!(
+        turn_events.is_empty(),
+        "startup failure must emit zero UserMessage, Error, or TurnComplete events: {turn_events:?}"
+    );
+
+    sessions.shutdown_all().await;
+}

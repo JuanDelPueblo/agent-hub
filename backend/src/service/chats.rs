@@ -105,9 +105,7 @@ impl HubService {
         }
         let live = self.live(chat_id).await?;
         let timeout = self.prompt_timeout;
-        tokio::spawn(async move {
-            let _ = live.ask(text, timeout).await;
-        });
+        live.start_turn(text, timeout).await?;
         Ok(())
     }
 

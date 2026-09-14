@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { ChatComposerComponent } from './chat-composer';
 import { AppStateService } from '../../state/app-state.service';
 import type { ConfigOption } from '../../core/api/types';
@@ -89,5 +89,20 @@ describe('ChatComposerComponent', () => {
     expect(selectors).toHaveLength(2);
     expect(selectors[0].textContent).toContain('GPT-5');
     expect(selectors[1].textContent).toContain('Reasoning effort: Medium');
+  });
+
+  it('restores message text when sending prompt fails', async () => {
+    const state = TestBed.inject(AppStateService);
+    vi.spyOn(state, 'sendPrompt').mockRejectedValueOnce(new Error('Agent busy'));
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'failed prompt text';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(component.message.value).toBe('failed prompt text');
+
+    await component.send();
+    fixture.detectChanges();
+
+    expect(component.message.value).toBe('failed prompt text');
+    expect(textarea.value).toBe('failed prompt text');
   });
 });

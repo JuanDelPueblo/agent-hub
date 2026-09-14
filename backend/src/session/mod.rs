@@ -8,12 +8,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct SessionKey {
     pub agent: String,
     pub cwd: PathBuf,
+}
+
+pub struct AdmittedTurn {
+    _guard: OwnedMutexGuard<()>,
+    message: String,
+    timeout: Option<Duration>,
+    start_seq: u64,
 }
 
 pub struct AcpSession {
@@ -31,7 +38,7 @@ pub struct AcpSession {
     runtime: Arc<AgentRuntime>,
     event_log: Arc<EventLog>,
     last_activity: RwLock<Instant>,
-    turn_guard: Mutex<()>,
+    turn_guard: Arc<Mutex<()>>,
 }
 
 impl AcpSession {
@@ -48,7 +55,7 @@ impl AcpSession {
             runtime,
             event_log,
             last_activity: RwLock::new(Instant::now()),
-            turn_guard: Mutex::new(()),
+            turn_guard: Arc::new(Mutex::new(())),
         }
     }
 
@@ -246,32 +253,19 @@ impl AcpSession {
         Ok(())
     }
 
-    pub async fn ask(&self, message: String, timeout: Option<Duration>) -> anyhow::Result<String> {
-        let _turn_guard = match self.turn_guard.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                let error = anyhow::anyhow!("Agent busy (turn state: {})", self.turn_state().await);
-                self.finalize_failed_turn(&error, "error")?;
-                return Err(error);
-            }
-        };
-        let result = self.ask_locked(message, timeout).await;
-        if let Err(error) = &result {
-            let stop_reason = if error.is::<PromptTimeout>() {
-                "timeout"
-            } else {
-                "error"
-            };
-            self.finalize_failed_turn(error, stop_reason)?;
-        }
-        result
-    }
-
-    async fn ask_locked(
+    async fn admit_turn(
         &self,
         message: String,
         timeout: Option<Duration>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<AdmittedTurn> {
+        let guard = match self.turn_guard.clone().try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                let current_turn = self.turn_state().await;
+                anyhow::bail!("Agent busy (turn state: {})", current_turn);
+            }
+        };
+
         let current_turn = self.turn_state().await;
         if !current_turn.can_prompt() {
             anyhow::bail!("Agent busy (turn state: {})", current_turn);
@@ -293,21 +287,73 @@ impl AcpSession {
 
         let start_seq = self.event_log.next_seq();
 
-        let client = self
-            .client
-            .read()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No client"))?;
-        let sid = self
-            .acp_session_id
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
+        Ok(AdmittedTurn {
+            _guard: guard,
+            message,
+            timeout,
+            start_seq,
+        })
+    }
 
-        let prompt_future = client.prompt(&sid, &message);
+    pub async fn start_turn(
+        self: &Arc<Self>,
+        message: String,
+        timeout: Option<Duration>,
+    ) -> anyhow::Result<()> {
+        let admitted = self.admit_turn(message, timeout).await?;
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _ = this.run_admitted_turn(admitted).await;
+        });
+        Ok(())
+    }
+
+    pub async fn ask(&self, message: String, timeout: Option<Duration>) -> anyhow::Result<String> {
+        let admitted = self.admit_turn(message, timeout).await?;
+        self.run_admitted_turn(admitted).await
+    }
+
+    async fn run_admitted_turn(&self, admitted: AdmittedTurn) -> anyhow::Result<String> {
+        let AdmittedTurn {
+            _guard,
+            message,
+            timeout,
+            start_seq,
+        } = admitted;
+        let result = self.execute_prompt(&message, timeout, start_seq).await;
+        if let Err(error) = &result {
+            let stop_reason = if error.is::<PromptTimeout>() {
+                "timeout"
+            } else {
+                "error"
+            };
+            let _ = self.finalize_failed_turn(error, stop_reason);
+        }
+        result
+    }
+
+    async fn execute_prompt(
+        &self,
+        message: &str,
+        timeout: Option<Duration>,
+        start_seq: u64,
+    ) -> anyhow::Result<String> {
+        let client = match self.client.read().await.as_ref().cloned() {
+            Some(c) => c,
+            None => {
+                let _ = self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                anyhow::bail!("No client");
+            }
+        };
+        let sid = match self.acp_session_id.read().await.clone() {
+            Some(s) => s,
+            None => {
+                let _ = self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                anyhow::bail!("No ACP session");
+            }
+        };
+
+        let prompt_future = client.prompt(&sid, message);
         tokio::pin!(prompt_future);
 
         let mut event_rx = self.event_log.subscribe();
