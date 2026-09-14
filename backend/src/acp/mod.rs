@@ -32,6 +32,28 @@ use self::protocol::{
 type ResponseResult = anyhow::Result<serde_json::Value>;
 type SharedChild = Arc<Mutex<Option<Box<dyn process_wrap::tokio::TokioChildWrapper>>>>;
 
+/// A saved ACP option the agent genuinely rejects, or that is locally invalid.
+///
+/// Carries the `option_id` so `HubService::resume_chat` can map it to
+/// `ServiceError::SavedConfigRejected` without parsing an error string.
+/// Transient failures (timeouts, transport disconnects, writer failures,
+/// malformed agent responses) must NOT use this type: they stay as plain
+/// `anyhow` errors so the ordinary Retry path appears and `config_values`
+/// are preserved.
+#[derive(Debug)]
+pub struct SavedConfigRejected {
+    pub option_id: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for SavedConfigRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SavedConfigRejected {}
+
 enum WriterMsg {
     Line(String),
     Shutdown,
@@ -253,13 +275,39 @@ impl AcpClient {
         id: &str,
         value: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        validate_config_value(&*self.config_options.read().await, id, &value)?;
+        // A stale saved value that no longer matches the agent's advertised
+        // options is a genuine rejection: the user must reset that option.
+        // Map the local validation failure to the typed rejection.
+        if let Err(error) = validate_config_value(&*self.config_options.read().await, id, &value) {
+            return Err(anyhow::Error::new(SavedConfigRejected {
+                option_id: id.to_owned(),
+                message: format!(
+                    "Saved ACP option {id} could not be reapplied; reset that option before reconnecting ({error})"
+                ),
+            }));
+        }
         let result = self
             .send_request(
                 "session/set_config_option",
                 serde_json::json!({"sessionId":session_id,"configId":id,"value":value}),
             )
-            .await?;
+            .await
+            .map_err(|error| {
+                // Only an agent RPC rejection is a saved-config rejection.
+                // Transport disconnects, writer failures, and dropped response
+                // channels are transient and must keep the ordinary Retry path.
+                let message = error.to_string();
+                if message.starts_with("RPC error") {
+                    anyhow::Error::new(SavedConfigRejected {
+                        option_id: id.to_owned(),
+                        message: format!(
+                            "Saved ACP option {id} could not be reapplied; reset that option before reconnecting ({message})"
+                        ),
+                    })
+                } else {
+                    error
+                }
+            })?;
         let options = result
             .get("configOptions")
             .filter(|v| v.is_array())

@@ -5,8 +5,13 @@ import sys
 import uuid
 
 root = pathlib.Path(sys.argv[1])
-can_load = len(sys.argv) < 3 or sys.argv[2] != "no-load"
-reject_config = len(sys.argv) >= 3 and sys.argv[2] == "reject-config"
+mode = sys.argv[2] if len(sys.argv) >= 3 else "load"
+can_load = mode != "no-load"
+reject_config = mode == "reject-config"
+# Deterministic transient failure: succeeds at the transport level but omits
+# the authoritative `configOptions`, so the backend must treat it as a retryable
+# connection/start failure rather than a saved-config rejection.
+transient_config = mode == "transient-config"
 current = None
 pending_prompt = None
 model = "small"
@@ -49,6 +54,9 @@ for line in sys.stdin:
     elif method == "session/set_config_option":
         if reject_config:
             send({"id": id, "error": {"code": -32002, "message": "Rejected saved option"}})
+        elif transient_config:
+            # No `configOptions`: the backend reports a transient reapply failure.
+            reply(id, {"unexpected": True})
         else:
             model = p["value"]
             reply(id, {"configOptions": options()})

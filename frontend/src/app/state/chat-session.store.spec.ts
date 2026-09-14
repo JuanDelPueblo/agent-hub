@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiService } from '../core/api/api.service';
+import { ApiError, ApiService } from '../core/api/api.service';
 import type { Chat, SessionEvent } from '../core/api/types';
 import { ChatSessionStore } from './chat-session.store';
 
@@ -24,6 +24,8 @@ describe('ChatSessionStore', () => {
     fetchChats: ReturnType<typeof vi.fn>;
     resumeChat: ReturnType<typeof vi.fn>;
     fetchChatConfig: ReturnType<typeof vi.fn>;
+    clearSavedConfig: ReturnType<typeof vi.fn>;
+    deleteChat: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -39,6 +41,8 @@ describe('ChatSessionStore', () => {
           options: [{ value: 'gpt-5', name: 'GPT-5' }],
         },
       ]),
+      clearSavedConfig: vi.fn(async () => undefined),
+      deleteChat: vi.fn(async () => undefined),
     };
     TestBed.configureTestingModule({
       providers: [{ provide: ApiService, useValue: api }],
@@ -91,5 +95,52 @@ describe('ChatSessionStore', () => {
       process_state: 'RUNNING',
       turn_state: 'PROMPTING',
     });
+  });
+
+  it('maps a rejected saved model to the explicit reset path', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    api.resumeChat.mockRejectedValueOnce(
+      new ApiError(409, 'Saved ACP option model could not be reapplied', 'saved_config_rejected', {
+        option_id: 'model',
+      }),
+    );
+
+    await expect(store.connectChat('chat-1')).rejects.toThrow();
+    expect(store.connectErrors()['chat-1']).toContain('could not be reapplied');
+    expect(store.rejectedConfigByChat()['chat-1']).toBe('model');
+  });
+
+  it('keeps a transient config-application failure on the retry path', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    api.resumeChat.mockRejectedValueOnce(
+      new ApiError(400, 'Failed to reapply saved ACP option model; retry to reconnect'),
+    );
+
+    await expect(store.connectChat('chat-1')).rejects.toThrow();
+    expect(store.connectErrors()['chat-1']).toContain('retry to reconnect');
+    expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
+  });
+
+  it('reset deletes only the explicitly rejected option then reconnects', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    store.rejectedConfigByChat.set({ 'chat-1': 'model' });
+
+    await store.resetRejectedConfig('chat-1');
+
+    expect(api.clearSavedConfig).toHaveBeenCalledWith('chat-1', 'model');
+    expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
+    expect(api.resumeChat).toHaveBeenCalledWith('chat-1');
+  });
+
+  it('deleting a chat also deletes its stale rejected-config entry', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    store.rejectedConfigByChat.set({ 'chat-1': 'model' });
+    store.connectErrors.set({ 'chat-1': 'Saved ACP option model could not be reapplied' });
+
+    await store.deleteChat('chat-1');
+
+    expect(store.findChat('chat-1')).toBeNull();
+    expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
+    expect(store.connectErrors()['chat-1']).toBeUndefined();
   });
 });

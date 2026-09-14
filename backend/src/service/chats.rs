@@ -67,7 +67,7 @@ impl HubService {
         let chat = self
             .store
             .create_chat(project_id.to_string(), agent.to_string(), title)?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(self.view(chat).await)
     }
 
@@ -79,7 +79,7 @@ impl HubService {
         let chat = live
             .edit_metadata(edit.title, edit.archived, edit.permission_policy)
             .await?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(self.view(chat).await)
     }
 
@@ -88,7 +88,7 @@ impl HubService {
         live.delete_metadata().await?;
         self.events.forget_chat(chat_id);
         self.sessions.remove_session(chat_id).await;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(())
     }
 
@@ -111,14 +111,11 @@ impl HubService {
 
     pub async fn resume_chat(&self, chat_id: &str) -> ServiceResult<ChatView> {
         if let Err(error) = self.live(chat_id).await?.resume().await {
-            let message = error.to_string();
-            if let Some(rest) = message.strip_prefix("saved_config_rejected:") {
-                if let Some((option_id, detail)) = rest.split_once(':') {
-                    return Err(ServiceError::SavedConfigRejected {
-                        option_id: option_id.to_string(),
-                        message: detail.to_string(),
-                    });
-                }
+            if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
+                return Err(ServiceError::SavedConfigRejected {
+                    option_id: rejected.option_id.clone(),
+                    message: rejected.message.clone(),
+                });
             }
             return Err(error.into());
         }

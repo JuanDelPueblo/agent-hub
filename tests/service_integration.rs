@@ -335,6 +335,169 @@ async fn rejected_saved_config_blocks_until_only_that_option_is_reset() {
 }
 
 #[tokio::test]
+async fn transient_saved_config_failure_preserves_values_for_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());
+    let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let history = root.path().join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "transient-config".into(),
+        ]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
+    let sessions = SessionManager::with_store(agents.clone(), log, Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.path().display().to_string()];
+    let hub = HubService::new(store.clone(), sessions.clone(), agents, &config);
+    let project = hub
+        .create_project("demo".into(), root.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    hub.resume_chat(&chat.chat.id).await.unwrap();
+    hub.stop_chat(&chat.chat.id).await.unwrap();
+    store
+        .update_chat(&chat.chat.id, |chat| {
+            chat.config_values["model"] = serde_json::json!("large");
+        })
+        .unwrap();
+
+    // A transient reapply failure must NOT become a saved-config rejection,
+    // so the frontend shows Retry rather than Reset.
+    let first = hub.resume_chat(&chat.chat.id).await;
+    assert!(
+        !matches!(&first, Err(ServiceError::SavedConfigRejected { .. })),
+        "transient failure must not map to SavedConfigRejected: {first:?}"
+    );
+    assert!(first.is_err(), "transient failure must still fail resume");
+    // Retry retains the saved option.
+    assert_eq!(
+        store.chat(&chat.chat.id).unwrap().config_values["model"],
+        serde_json::json!("large")
+    );
+    let second = hub.resume_chat(&chat.chat.id).await;
+    assert!(
+        !matches!(&second, Err(ServiceError::SavedConfigRejected { .. })),
+        "retry must not map to SavedConfigRejected: {second:?}"
+    );
+    assert_eq!(
+        store.chat(&chat.chat.id).unwrap().config_values["model"],
+        serde_json::json!("large")
+    );
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn locally_invalid_stale_saved_config_is_rejection() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());
+    let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let history = root.path().join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "load".into(),
+        ]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
+    let sessions = SessionManager::with_store(agents.clone(), log, Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.path().display().to_string()];
+    let hub = HubService::new(store.clone(), sessions.clone(), agents, &config);
+    let project = hub
+        .create_project("demo".into(), root.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    hub.resume_chat(&chat.chat.id).await.unwrap();
+    hub.stop_chat(&chat.chat.id).await.unwrap();
+    store
+        .update_chat(&chat.chat.id, |chat| {
+            chat.config_values["model"] = serde_json::json!("bogus-model");
+        })
+        .unwrap();
+
+    assert!(matches!(
+        hub.resume_chat(&chat.chat.id).await,
+        Err(ServiceError::SavedConfigRejected { option_id, .. }) if option_id == "model"
+    ));
+    // The stale value is preserved until the user explicitly resets it.
+    assert_eq!(
+        store.chat(&chat.chat.id).unwrap().config_values["model"],
+        serde_json::json!("bogus-model")
+    );
+    hub.clear_saved_config(&chat.chat.id, "model")
+        .await
+        .unwrap();
+    hub.resume_chat(&chat.chat.id).await.unwrap();
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn metadata_mutation_succeeds_when_invalidation_publish_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+    let project = hub
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    // Break post-commit invalidation publishing without touching the
+    // authoritative project/chat tables. The first failed append poisons the
+    // in-memory EventLog (fail-closed for turns), so later publishes keep
+    // failing even after the table is restored.
+    {
+        let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+        raw.execute_batch("DROP TABLE events;").unwrap();
+    }
+    // Every metadata mutation below must still succeed: the SQLite rows are
+    // authoritative and the failed publish is only logged.
+    let second = hub
+        .create_project("second".into(), tmp.path().display().to_string())
+        .unwrap();
+    assert_eq!(second.name, "second");
+    let edited = hub
+        .edit_project(&second.id, "second-renamed".into(), second.path.clone())
+        .unwrap();
+    assert_eq!(edited.name, "second-renamed");
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let renamed = hub
+        .edit_chat(
+            &chat.chat.id,
+            ChatEdit {
+                title: Some("renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.chat.title, "renamed");
+    // Restore the events table so `delete_chat` (which deletes that chat's
+    // event rows in the same transaction) can run. The EventLog stays
+    // poisoned, so the invalidation publish still fails and must stay
+    // best-effort.
+    {
+        let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+        raw.execute_batch(
+            "CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, data TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT ''); \
+             CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);",
+        )
+        .unwrap();
+    }
+    hub.delete_chat(&chat.chat.id).await.unwrap();
+    hub.delete_project(&second.id).unwrap();
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn concurrent_wait_admission_and_rejected_second_prompt() {
     let tmp = tempfile::tempdir().unwrap();
     let (hub, sessions) = hub(tmp.path());

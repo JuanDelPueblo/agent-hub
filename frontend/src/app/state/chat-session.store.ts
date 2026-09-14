@@ -279,6 +279,7 @@ export class ChatSessionStore {
       this.configOptionsByChat,
       this.configLoadedByChat,
       this.connectErrors,
+      this.rejectedConfigByChat,
     ] as WritableSignal<Record<string, unknown>>[]) {
       target.update((current) => {
         const next = { ...current };

@@ -68,11 +68,18 @@ impl HubService {
 
     /// Tells every connected client that project or chat metadata moved. A
     /// chat created over any surface therefore appears on the others at once.
-    pub(crate) fn notify_metadata_changed(&self) -> ServiceResult<()> {
-        self.events
-            .append("", "", EventPayload::MetadataChanged {})
-            .map(|_| ())
-            .map_err(ServiceError::Internal)
+    ///
+    /// Best-effort only: the project/chat SQLite rows are authoritative, so a
+    /// failure to publish the invalidation event is logged but never turns a
+    /// completed mutation into an error. Turn/activity events stay fail-closed
+    /// in their own call sites.
+    pub(crate) fn notify_metadata_changed(&self) {
+        if let Err(error) = self.events.append("", "", EventPayload::MetadataChanged {}) {
+            tracing::warn!(
+                %error,
+                "Failed to publish metadata_changed invalidation; SQLite rows remain authoritative"
+            );
+        }
     }
 
     /// The live session for a chat, with the same distinctions the HTTP layer

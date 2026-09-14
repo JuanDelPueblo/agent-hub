@@ -1,4 +1,4 @@
-use crate::acp::AcpClient;
+use crate::acp::{AcpClient, SavedConfigRejected};
 use crate::agents::{AgentRegistry, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
@@ -230,11 +230,39 @@ impl AcpSession {
                         client.set_config(&new_session.clone().into(), id, value.clone()),
                     )
                     .await;
-                    if !matches!(result, Ok(Ok(_))) {
-                        client.shutdown().await;
-                        *self.child_root_pid.write().await = None;
-                        self.set_states(ProcessState::Dead, TurnState::Idle).await?;
-                        anyhow::bail!("saved_config_rejected:{id}:Saved ACP option {id} could not be reapplied; reset that option before reconnecting");
+                    match result {
+                        // A timeout applying saved config is transient: keep
+                        // `config_values` so the ordinary Retry path appears.
+                        Err(_) => {
+                            client.shutdown().await;
+                            *self.child_root_pid.write().await = None;
+                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                            anyhow::bail!(
+                                "Timed out applying saved ACP option {id}; retry to reconnect"
+                            );
+                        }
+                        // A genuine agent rejection or locally invalid stale
+                        // config keeps its typed identity for `resume_chat`
+                        // to map to `SavedConfigRejected`. Return it unwrapped
+                        // so the downcast survives.
+                        Ok(Err(error)) if error.is::<SavedConfigRejected>() => {
+                            client.shutdown().await;
+                            *self.child_root_pid.write().await = None;
+                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                            return Err(error);
+                        }
+                        // Transport disconnects, writer failures, and malformed
+                        // agent responses are transient: preserve the saved
+                        // option and let Retry reconnect.
+                        Ok(Err(error)) => {
+                            client.shutdown().await;
+                            *self.child_root_pid.write().await = None;
+                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                            return Err(anyhow::anyhow!(
+                                "Failed to reapply saved ACP option {id}; retry to reconnect: {error}"
+                            ));
+                        }
+                        Ok(Ok(_)) => {}
                     }
                 }
             }

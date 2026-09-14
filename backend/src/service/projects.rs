@@ -14,7 +14,7 @@ impl HubService {
     pub fn create_project(&self, name: String, path: String) -> ServiceResult<Project> {
         let path = validate_project_path(&path, &self.project_roots)?;
         let project = self.store.create_project(name, path)?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(project)
     }
 
@@ -27,7 +27,7 @@ impl HubService {
     ) -> ServiceResult<Project> {
         let path = validate_project_path(&canonical_path, &self.project_roots)?;
         let project = self.store.create_project(name, path)?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(project)
     }
 
@@ -48,7 +48,7 @@ impl HubService {
         project.path = path;
         project.updated_at = chrono::Utc::now().to_rfc3339();
         self.store.save_project(&project)?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(project)
     }
 
@@ -60,7 +60,7 @@ impl HubService {
             ));
         }
         self.store.delete_project(id)?;
-        self.notify_metadata_changed()?;
+        self.notify_metadata_changed();
         Ok(())
     }
 }
