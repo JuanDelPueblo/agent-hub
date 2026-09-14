@@ -14,7 +14,7 @@ For each task:
 
 Do not inventory the whole repository by default. Source and tests are the authority for current implementation details.
 
-If `docs/STYLE_GUIDE.md` exists, it is normative for documentation changes.
+`docs/STYLE_GUIDE.md` is normative for documentation changes.
 
 ## Stack and map
 
