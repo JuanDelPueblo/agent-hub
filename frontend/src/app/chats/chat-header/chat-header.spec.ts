@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ChatHeaderComponent } from './chat-header';
 import { AppStateService } from '../../state/app-state.service';
@@ -22,7 +23,10 @@ describe('ChatHeaderComponent', () => {
     turn_state: 'IDLE',
   };
 
+  const activitySignal = signal('idle');
+
   beforeEach(async () => {
+    activitySignal.set('idle');
     await TestBed.configureTestingModule({
       imports: [ChatHeaderComponent],
       providers: [
@@ -34,6 +38,7 @@ describe('ChatHeaderComponent', () => {
             stopChatProcess: async () => undefined,
             retryConnection: async () => undefined,
             archiveChat: async () => undefined,
+            chatActivity: () => activitySignal(),
           },
         },
       ],
@@ -65,5 +70,25 @@ describe('ChatHeaderComponent', () => {
     expect(fixture.nativeElement.querySelector('button[aria-label="Stop process"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('button[aria-label="Reconnect process"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('button[aria-label="Reconnect ACP"]')).toBeNull();
+  });
+
+  it('shows the shared activity badge instead of a hard-coded Thinking label', () => {
+    const badge = fixture.nativeElement.querySelector('hub-chat-status-badge .chat-status');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent.trim()).toBe('Idle');
+    expect(fixture.nativeElement.textContent).not.toContain('Thinking…');
+  });
+
+  it('reflects the store activity for working, waiting, and error', () => {
+    for (const [activity, label] of [['working', 'Working…'], ['waiting', 'Waiting for you'], ['error', 'Error']] as const) {
+      activitySignal.set(activity);
+      fixture.detectChanges();
+      const badge = fixture.nativeElement.querySelector('hub-chat-status-badge .chat-status');
+      expect(badge.textContent.trim()).toBe(label);
+    }
+    const text = fixture.nativeElement.textContent as string;
+    for (const process of ['STARTING', 'RUNNING', 'STOPPED', 'DEAD', 'Starting', 'Running', 'Stopped', 'Dead']) {
+      expect(text).not.toContain(process);
+    }
   });
 });

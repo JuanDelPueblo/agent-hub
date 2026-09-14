@@ -51,6 +51,7 @@ describe('ChatWorkspaceComponent', () => {
     const stateValue = {
       ...state,
       findChat: (id: string) => id === chat.id ? chat : null,
+      chatActivity: () => 'idle',
       setMobileDrawerOpen: vi.fn(),
       stopChatProcess: vi.fn(async () => undefined),
       cancelActiveTurn: vi.fn(async () => undefined),
@@ -144,6 +145,7 @@ describe('ChatWorkspaceComponent live stream', () => {
       reducersByChat: signal<Record<string, EventReducer>>({ 'chat-1': reducer }),
       configOptionsByChat: signal<Record<string, never>>({}),
       findChat: (id: string) => (id === chat.id ? chat : null),
+      chatActivity: () => 'idle',
       retryConnection: vi.fn(async () => undefined),
       resetRejectedConfig: vi.fn(async () => undefined),
       setMobileDrawerOpen: vi.fn(),

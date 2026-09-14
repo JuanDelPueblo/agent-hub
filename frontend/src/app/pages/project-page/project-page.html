@@ -51,10 +51,11 @@
           <mat-card appearance="outlined" class="chat-card">
             <a
               [routerLink]="['/projects', current.id, 'chats', chat.id]"
-              [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
+              [attr.aria-label]="chatAriaLabel(chat)"
             >
               <div class="chat-top">
                 <span class="agent-badge">{{ agentLabel(chat.agent) }}</span>
+                <hub-chat-status-badge [status]="activityFor(chat)" />
                 @if (chat.archived) { <span class="archived-tag">Archived</span> }
               </div>
               <h3 class="chat-title">{{ chat.title || 'Untitled chat' }}</h3>

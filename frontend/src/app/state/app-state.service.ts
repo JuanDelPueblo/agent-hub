@@ -4,6 +4,7 @@ import { filter } from 'rxjs';
 import { EventSocketService } from '../core/event-socket.service';
 import type { CloneProjectInput, PermissionPolicy, SessionEvent } from '../core/api/types';
 import { EventReducer } from './event-reducer';
+import type { ChatActivity } from './chat-activity';
 import { ChatSessionStore } from './chat-session.store';
 import { ProjectStore } from './project.store';
 import { UiStateStore } from './ui-state.store';
@@ -74,6 +75,7 @@ export class AppStateService {
   loadAgents(): Promise<void> { return this.projectStore.loadAgents(); }
   loadChats(projectId: string): Promise<void> { return this.chatStore.loadChats(projectId); }
   findChat(chatId: string) { return this.chatStore.findChat(chatId); }
+  chatActivity(chatId: string): ChatActivity { return this.chatStore.chatActivity(chatId); }
   autoConnectChat(chatId: string): Promise<void> { return this.chatStore.autoConnectChat(chatId); }
   loadChatConfig(chatId: string) { return this.chatStore.loadChatConfig(chatId); }
   retryConnection(chatId: string): Promise<void> { return this.chatStore.retryConnection(chatId); }

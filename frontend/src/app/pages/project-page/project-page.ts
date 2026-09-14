@@ -10,8 +10,10 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { map } from 'rxjs';
-import type { Project } from '../../core/api/types';
+import type { Chat, Project } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
+import { chatActivityLabel, type ChatActivity } from '../../state/chat-activity';
+import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { NewChatButtonComponent } from '../../chats/new-chat-button/new-chat-button';
 import { DeleteProjectDialogComponent } from '../../projects/delete-project-dialog/delete-project-dialog';
 import { EditProjectDialogComponent } from '../../projects/edit-project-dialog/edit-project-dialog';
@@ -19,6 +21,7 @@ import { EditProjectDialogComponent } from '../../projects/edit-project-dialog/e
 @Component({
   selector: 'hub-project-page',
   imports: [
+    ChatStatusBadgeComponent,
     MatButtonModule,
     MatCardModule,
     MatDialogModule,
@@ -66,6 +69,14 @@ export class ProjectPageComponent {
     const value = agent ?? '';
     if (!value) return value;
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  }
+
+  activityFor(chat: Chat): ChatActivity {
+    return this.state.chatActivity(chat.id);
+  }
+
+  chatAriaLabel(chat: Chat): string {
+    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(this.activityFor(chat))}`;
   }
 
   edit(project: Project): void {

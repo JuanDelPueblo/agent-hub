@@ -8,6 +8,7 @@ import type {
   SessionEvent,
   TurnState,
 } from '../core/api/types';
+import { deriveChatActivity, type ChatActivity } from './chat-activity';
 import { EventReducer } from './event-reducer';
 
 type ChatMap = Record<string, Chat[]>;
@@ -268,6 +269,18 @@ export class ChatSessionStore {
 
   resetEventHistory(): void {
     this.reducersByChat.set({});
+  }
+
+  /** Central user-facing activity for one chat. Never reads process_state. */
+  chatActivity(chatId: string): ChatActivity {
+    const chat = this.findChat(chatId);
+    const items = this.reducersByChat()[chatId]?.items() ?? [];
+    return deriveChatActivity({
+      turnState: chat?.turn_state,
+      connectError: this.connectErrors()[chatId],
+      rejectedConfig: this.rejectedConfigByChat()[chatId],
+      items,
+    });
   }
 
   private setConfig(chatId: string, options: ConfigOption[]): void {

@@ -9,7 +9,9 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import type { Chat } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
+import { chatActivityLabel, type ChatActivity } from '../../state/chat-activity';
 import { NewChatButtonComponent } from '../../chats/new-chat-button/new-chat-button';
+import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { ProjectDialogComponent } from '../../projects/project-dialog/project-dialog';
 import { ConnectionStatusComponent } from '../connection-status/connection-status';
 import { ThemeService } from '../../core/theme.service';
@@ -22,6 +24,7 @@ import { ThemeService } from '../../core/theme.service';
 @Component({
   selector: 'hub-navigation',
   imports: [
+    ChatStatusBadgeComponent,
     ConnectionStatusComponent,
     MatButtonModule,
     MatDialogModule,
@@ -57,6 +60,14 @@ export class NavigationComponent {
     const value = agent ?? '';
     if (!value) return value;
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  }
+
+  activityFor(chat: Chat): ChatActivity {
+    return this.state.chatActivity(chat.id);
+  }
+
+  chatAriaLabel(chat: Chat): string {
+    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(this.activityFor(chat))}`;
   }
 
   /**

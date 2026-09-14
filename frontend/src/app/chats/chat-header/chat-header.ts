@@ -1,4 +1,4 @@
-import { Component, inject, input, output } from '@angular/core';
+import { Component, computed, inject, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -6,12 +6,14 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import type { Chat } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
+import type { ChatActivity } from '../../state/chat-activity';
+import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { DeleteChatDialogComponent } from '../delete-chat-dialog/delete-chat-dialog';
 import { RenameChatDialogComponent } from '../rename-chat-dialog/rename-chat-dialog';
 
 @Component({
   selector: 'hub-chat-header',
-  imports: [MatButtonModule, MatDialogModule, MatIconModule, MatMenuModule, MatTooltipModule],
+  imports: [ChatStatusBadgeComponent, MatButtonModule, MatDialogModule, MatIconModule, MatMenuModule, MatTooltipModule],
   templateUrl: './chat-header.html',
   styleUrl: './chat-header.scss',
 })
@@ -19,6 +21,11 @@ export class ChatHeaderComponent {
   readonly chat = input<Chat | null>(null);
   readonly configRequested = output<void>();
   readonly state = inject(AppStateService);
+  readonly activity = computed<ChatActivity>(() => {
+    const chat = this.chat();
+    if (!chat) return 'idle';
+    return this.state.chatActivity(chat.id);
+  });
   agentLabel(agent: string | null | undefined): string {
     const value = agent ?? '';
     if (!value) return value;

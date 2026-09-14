@@ -52,6 +52,8 @@ describe('NavigationComponent DOM check', () => {
       isMobileDrawerOpen: signal(false),
       wsStatus: signal('connected'),
       wsError: signal(''),
+      chatActivity: (chatId: string) =>
+        chatId === 'chat-1' ? 'working' : chatId === 'chat-2' ? 'waiting' : 'error',
     };
 
     await TestBed.configureTestingModule({
@@ -106,6 +108,21 @@ describe('NavigationComponent DOM check', () => {
     expect(fixture.componentInstance.agentLabel('antigravity')).toBe('Antigravity');
     expect(fixture.componentInstance.agentLabel('opencode')).toBe('Opencode');
   });
+
+  it('shows the shared activity badge in every chat row with an accessible label', () => {
+    const badges = Array.from(
+      fixture.nativeElement.querySelectorAll('hub-chat-status-badge .chat-status'),
+    ).map((badge: unknown) => (badge as Element).textContent?.trim());
+    expect(badges).toEqual(['Working…', 'Waiting for you', 'Error']);
+
+    const labels = Array.from(fixture.nativeElement.querySelectorAll('a[mat-list-item]'))
+      .map((item: unknown) => (item as Element).getAttribute('aria-label') ?? '');
+    expect(labels).toEqual([
+      'Open chat Review the WebSocket replay path, Working…',
+      'Open chat Draft the migration plan, Waiting for you',
+      'Open chat Summarize the router guard, Error',
+    ]);
+  });
 });
 
 describe('NavigationComponent project switching', () => {
@@ -143,6 +160,7 @@ describe('NavigationComponent project switching', () => {
       wsStatus: signal('connected'),
       wsError: signal(''),
       loadChats: vi.fn(async () => {}),
+      chatActivity: () => 'idle',
     };
   }
 

@@ -181,4 +181,82 @@ describe('ChatSessionStore', () => {
     expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
     expect(store.connectErrors()['chat-1']).toBeUndefined();
   });
+
+  it('derives Idle for an ordinary completed chat', () => {
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'IDLE' }] });
+    const event = (seq: number, payload: SessionEvent['payload']): SessionEvent => ({
+      seq,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: `2026-01-01T00:00:0${seq}Z`,
+      payload,
+    });
+    store.handleIncomingEvent(event(1, { type: 'user_message', text: 'Hello' }));
+    store.handleIncomingEvent(event(2, { type: 'message_chunk', text: 'Hi' }));
+    store.handleIncomingEvent(event(3, { type: 'turn_complete', stop_reason: 'end_turn' }));
+    expect(store.chatActivity('chat-1')).toBe('idle');
+  });
+
+  it('derives Working while PROMPTING and Waiting while a permission is pending', () => {
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'PROMPTING' }] });
+    expect(store.chatActivity('chat-1')).toBe('working');
+
+    const event = (seq: number, payload: SessionEvent['payload']): SessionEvent => ({
+      seq,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: `2026-01-01T00:00:0${seq}Z`,
+      payload,
+    });
+    store.handleIncomingEvent(event(1, {
+      type: 'permission_request',
+      id: 'permission-1',
+      method: 'fs/write_text_file',
+      description: 'Write file',
+    }));
+    expect(store.chatActivity('chat-1')).toBe('waiting');
+
+    store.handleIncomingEvent(event(2, { type: 'permission_response', id: 'permission-1', granted: true }));
+    expect(store.chatActivity('chat-1')).toBe('working');
+  });
+
+  it('derives Error from connection failures and failed turns, then clears on a later success', () => {
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'IDLE' }] });
+    store.connectErrors.set({ 'chat-1': 'Failed to connect to agent' });
+    expect(store.chatActivity('chat-1')).toBe('error');
+    store.connectErrors.set({});
+
+    const event = (seq: number, payload: SessionEvent['payload']): SessionEvent => ({
+      seq,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: `2026-01-01T00:00:0${seq}Z`,
+      payload,
+    });
+    store.handleIncomingEvent(event(1, { type: 'user_message', text: 'Break it' }));
+    store.handleIncomingEvent(event(2, { type: 'thought_chunk', text: 'Trying' }));
+    store.handleIncomingEvent(event(3, { type: 'error', message: 'boom' }));
+    store.handleIncomingEvent(event(4, { type: 'turn_complete', stop_reason: 'error' }));
+    expect(store.chatActivity('chat-1')).toBe('error');
+
+    store.handleIncomingEvent(event(5, { type: 'user_message', text: 'Try again' }));
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'PROMPTING' }] });
+    expect(store.chatActivity('chat-1')).toBe('working');
+
+    store.handleIncomingEvent(event(6, { type: 'message_chunk', text: 'Fixed' }));
+    store.handleIncomingEvent(event(7, { type: 'turn_complete', stop_reason: 'end_turn' }));
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'IDLE' }] });
+    expect(store.chatActivity('chat-1')).toBe('idle');
+  });
+
+  it('never lets process state alone change the user-facing activity', () => {
+    for (const process_state of ['STARTING', 'RUNNING', 'STOPPED', 'DEAD'] as const) {
+      store.chatsByProject.set({ 'project-1': [{ ...chat, process_state, turn_state: 'IDLE' }] });
+      expect(store.chatActivity('chat-1')).toBe('idle');
+    }
+    for (const process_state of ['STARTING', 'RUNNING', 'STOPPED', 'DEAD'] as const) {
+      store.chatsByProject.set({ 'project-1': [{ ...chat, process_state, turn_state: 'PROMPTING' }] });
+      expect(store.chatActivity('chat-1')).toBe('working');
+    }
+  });
 });

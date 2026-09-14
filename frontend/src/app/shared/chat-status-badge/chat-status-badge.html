@@ -1,0 +1,8 @@
+<span
+  class="chat-status"
+  [class.status-idle]="status() === 'idle'"
+  [class.status-working]="status() === 'working'"
+  [class.status-waiting]="status() === 'waiting'"
+  [class.status-error]="status() === 'error'"
+  [attr.data-status]="status()"
+>{{ label() }}</span>
