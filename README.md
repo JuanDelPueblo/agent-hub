@@ -62,12 +62,23 @@ frontend:
 
 ```sh
 result/bin/pueblo-hub \
-  --database /path/to/state/hub.sqlite3 \
   --project-root /path/to/projects \
   --agents-file agents.json \
   --public-origin https://example.com \
   --port 9123
 ```
+
+The database is optional. Without an explicit `--database` (or
+`PUEBLO_HUB_DATABASE`), Pueblo uses the platform's XDG-style data location:
+`$XDG_DATA_HOME/pueblo-hub/pueblo-hub.sqlite3` (falling back to
+`~/.local/share/pueblo-hub`). Managed worktrees are kept in the same Pueblo
+path model. An explicit database retains the existing layout, with worktrees
+beside its parent in `worktrees/`; no existing data is moved or removed.
+
+The path options `--data-dir`, `--config-dir`, `--state-dir`, `--log-dir`, and
+`--worktrees-dir` have matching `PUEBLO_HUB_*_DIR` environment variables.
+`--host` / `PUEBLO_HUB_HOST` controls the bind address and defaults to
+`127.0.0.1`; `--port` / `PUEBLO_HUB_PORT` controls the port.
 
 For standalone backend development without embedded frontend assets:
 
