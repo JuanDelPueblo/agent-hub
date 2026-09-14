@@ -1,4 +1,4 @@
-# Agent Hub Roadmap
+# Pueblo Hub Roadmap
 
 This roadmap follows the current v0.2 frontend overhaul. Each phase should be implemented by a separate agent against the completed previous phase. Avoid parallel agents modifying the same branch.
 
@@ -15,7 +15,7 @@ This roadmap follows the current v0.2 frontend overhaul. Each phase should be im
 | 6 | P2 | File/image uploads and prompt attachments | Phases 3–4 | ❌ |
 | 7 | P2 | MCP control plane | Phase 4 | ❌ |
 | 8 | P2 | File/inline review comments | Phase 3 | ❌ |
-| 9 | P3 | Remote Agent Hub federation | Phases 4–7 | ❌ |
+| 9 | P3 | Remote Pueblo Hub federation | Phases 4–7 | ❌ |
 | 10 | P4 | Generalized ACP + official ACP Registry | All previous | ❌ |
 
 ## Phase 0 — Backend architectural foundations
@@ -67,7 +67,7 @@ Do not infer provider behavior from names such as `codex`, `claude`, or `opencod
 
 ### Shared application service layer
 
-Introduce a thin backend application/service layer that owns user-visible Agent Hub operations instead of placing business rules directly in HTTP handlers.
+Introduce a thin backend application/service layer that owns user-visible Pueblo Hub operations instead of placing business rules directly in HTTP handlers.
 
 For example:
 
@@ -106,7 +106,7 @@ The backend has tested schema migrations, persistence is organized for additiona
 
 ## Phase 1 — ACP usage quotas and status
 
-Add a generic usage/status subsystem without baking Codex/Claude/etc. assumptions into the rest of Agent Hub.
+Add a generic usage/status subsystem without baking Codex/Claude/etc. assumptions into the rest of Pueblo Hub.
 
 The UI should show useful status beside each configured ACP:
 
@@ -127,7 +127,7 @@ UsageProvider
   └── unsupported
 ```
 
-An agent definition should optionally reference a usage provider rather than Agent Hub determining behavior from agent-name strings.
+An agent definition should optionally reference a usage provider rather than Pueblo Hub determining behavior from agent-name strings.
 
 Keep quota collection outside the ACP protocol layer. ACP sessions must continue functioning if usage/status collection fails.
 
@@ -154,7 +154,7 @@ Chats created before Phase 2 have no workspace row and remain legacy
 direct-checkout sessions. They use the same repository-level checkout
 concurrency rules as Project checkout chats.
 
-The Hub, not the ACP agent, owns worktree creation, validation, reuse, and cleanup. Agents should simply be launched with the chat worktree as their working directory and should not need to know how Agent Hub created it.
+The Hub, not the ACP agent, owns worktree creation, validation, reuse, and cleanup. Agents should simply be launched with the chat worktree as their working directory and should not need to know how Pueblo Hub created it.
 
 A useful model is:
 
@@ -174,12 +174,12 @@ attach a dedicated branch/worktree before the ACP process starts. Users choose
 the starting local branch. Use deterministic Hub-owned naming:
 
 ```text
-agent-hub/chat/<chat-id>
+pueblo-hub/chat/<chat-id>
 ```
 
 The exact naming scheme may differ, but it must avoid collisions and remain recoverable after a daemon restart.
 
-Store managed worktrees beneath Agent Hub state or another explicitly configured workspace root, not inside the user's repository checkout and never in the Nix store.
+Store managed worktrees beneath Pueblo Hub state or another explicitly configured workspace root, not inside the user's repository checkout and never in the Nix store.
 
 ### Workspace semantics
 
@@ -241,7 +241,7 @@ implicitly deletes a managed branch.
 
 Managed chats can operate concurrently on the same Git repository while each
 agent sees a separate worktree and branch; direct and legacy chats are safely
-serialized on the shared checkout. Agent Hub creates, persists, validates,
+serialized on the shared checkout. Pueblo Hub creates, persists, validates,
 recovers, and safely deletes managed worktrees without requiring agents to
 invoke `git worktree`. Phase 2 is complete.
 
@@ -307,7 +307,7 @@ For any completed coding turn, the exact files changed and commits created by th
 
 ## Phase 4 — Native authentication
 
-Replace reliance on reverse-proxy Basic Auth with first-class Agent Hub authentication.
+Replace reliance on reverse-proxy Basic Auth with first-class Pueblo Hub authentication.
 
 Keep it appropriate for the current single-owner design rather than building a full account-management system.
 
@@ -342,7 +342,7 @@ Do not build multi-user permissions yet.
 
 ### Completion
 
-Agent Hub can safely run behind ordinary HTTPS without depending on Traefik Basic Auth, and machine-to-machine clients have a clean token mechanism.
+Pueblo Hub can safely run behind ordinary HTTPS without depending on Traefik Basic Auth, and machine-to-machine clients have a clean token mechanism.
 
 ---
 
@@ -355,7 +355,7 @@ This phase must explicitly support **Firefox for Android**, not only desktop Chr
 Use standards-based Web Push:
 
 ```text
-Agent Hub server
+Pueblo Hub server
   ↓ Web Push
 browser push service
   ↓
@@ -413,7 +413,7 @@ The subscription should be associated with the authenticated browser session/dev
 
 ### Completion
 
-A turn can run while the Agent Hub page is in the background or closed, and Firefox for Android plus supported desktop browsers receive an OS-level notification when the turn completes, fails, or needs permission. Tapping the notification opens the relevant Agent Hub chat.
+A turn can run while the Pueblo Hub page is in the background or closed, and Firefox for Android plus supported desktop browsers receive an OS-level notification when the turn completes, fails, or needs permission. Tapping the notification opens the relevant Pueblo Hub chat.
 
 ---
 
@@ -421,7 +421,7 @@ A turn can run while the Agent Hub page is in the background or closed, and Fire
 
 Add first-class file attachments to chats so users can upload context from desktop or mobile and send it with a prompt without manually copying files into the project.
 
-Attachments should be durable Agent Hub entities rather than temporary frontend-only blobs.
+Attachments should be durable Pueblo Hub entities rather than temporary frontend-only blobs.
 
 Persist metadata similar to:
 
@@ -439,7 +439,7 @@ Attachment
   consumed_at?
 ```
 
-Store canonical attachment bytes under Agent Hub state using Hub-generated IDs/paths. Never use the client-supplied filename as a storage path, never write uploads directly to an arbitrary user-supplied path, and never store attachment data in the Nix store.
+Store canonical attachment bytes under Pueblo Hub state using Hub-generated IDs/paths. Never use the client-supplied filename as a storage path, never write uploads directly to an arbitrary user-supplied path, and never store attachment data in the Nix store.
 
 ### Upload UX
 
@@ -523,7 +523,7 @@ From desktop or mobile, a user can attach one or more supported files/images to 
 
 ## Phase 7 — MCP control plane
 
-Restore MCP, but attach it to the persistent Agent Hub daemon rather than resurrecting the old ephemeral MCP architecture.
+Restore MCP, but attach it to the persistent Pueblo Hub daemon rather than resurrecting the old ephemeral MCP architecture.
 
 Implement Streamable HTTP MCP, for example:
 
@@ -568,11 +568,11 @@ Do not let MCP create an independent process/session/worktree universe. MCP endp
 
 Authentication should use Phase 4 service tokens.
 
-Hermes can then be configured to use Agent Hub as its preferred coding-agent control surface rather than launching CLI agents independently.
+Hermes can then be configured to use Pueblo Hub as its preferred coding-agent control surface rather than launching CLI agents independently.
 
 ### Completion
 
-Hermes or another MCP client can start and continue an Agent Hub chat while the exact same chat, ACP process, and Hub-managed workspace remain visible and manageable in the browser.
+Hermes or another MCP client can start and continue an Pueblo Hub chat while the exact same chat, ACP process, and Hub-managed workspace remain visible and manageable in the browser.
 
 ---
 
@@ -627,9 +627,9 @@ A turn's diff can be reviewed on phone or desktop, GitHub-style line/file commen
 
 ---
 
-## Phase 9 — Remote Agent Hub federation
+## Phase 9 — Remote Pueblo Hub federation
 
-Allow one Agent Hub UI to manage other Agent Hub servers.
+Allow one Pueblo Hub UI to manage other Pueblo Hub servers.
 
 Do not synchronize their databases, worktrees, or attachment stores.
 
@@ -659,9 +659,9 @@ Prefer server-to-server federation:
 ```text
 Browser
    ↓
-Primary Agent Hub
+Primary Pueblo Hub
    ↓
-Remote Agent Hub
+Remote Pueblo Hub
 ```
 
 rather than making the browser connect directly to every remote server.
@@ -696,7 +696,7 @@ Do not add distributed orchestration, cross-Hub worktrees, attachment replicatio
 
 ### Completion
 
-From one Agent Hub page, remote Agent Hub instances can be connected and their projects/chats managed almost exactly like local ones while each Hub remains authoritative for its own workspace, attachments, and runtime state.
+From one Pueblo Hub page, remote Pueblo Hub instances can be connected and their projects/chats managed almost exactly like local ones while each Hub remains authoritative for its own workspace, attachments, and runtime state.
 
 ---
 
@@ -704,7 +704,7 @@ From one Agent Hub page, remote Agent Hub instances can be connected and their p
 
 Replace the current mostly hand-authored `agents.json` model with a first-class installed-agent abstraction building on the agent definition boundary from Phase 0.
 
-Do not create a proprietary Agent Hub marketplace. Use the official ACP Registry as the discovery source.
+Do not create a proprietary Pueblo Hub marketplace. Use the official ACP Registry as the discovery source.
 
 The UI can expose:
 
@@ -744,7 +744,7 @@ InstalledAgent
 
 Keep support for declaratively configured Nix agents. Registry support should add to, not replace, the current Nix-managed configuration.
 
-Because Agent Hub runs on NixOS, do not assume every upstream binary or npm/Python package will execute correctly merely because the registry lists it.
+Because Pueblo Hub runs on NixOS, do not assume every upstream binary or npm/Python package will execute correctly merely because the registry lists it.
 
 Treat installation as its own backend abstraction supporting registry distribution types individually.
 
@@ -758,7 +758,7 @@ A sensible progression within this phase is:
 5. Remove/update managed agents
 ```
 
-Managed registry agents should live under Agent Hub state, never `/nix/store`.
+Managed registry agents should live under Pueblo Hub state, never `/nix/store`.
 
 Keep proprietary binaries and licensing restrictions respected.
 
@@ -766,13 +766,13 @@ The official ACP Registry should remain the source of truth rather than copying 
 
 ### Completion
 
-A new ACP-compatible agent normally requires no Agent Hub source-code changes: it can be discovered through the ACP Registry or added as a custom command and then behaves like every other agent.
+A new ACP-compatible agent normally requires no Pueblo Hub source-code changes: it can be discovered through the ACP Registry or added as a custom command and then behaves like every other agent.
 
 ---
 
 ## Target architecture
 
-At the end of these phases, Agent Hub should function as a general ACP operations interface rather than a web wrapper around a fixed set of agents:
+At the end of these phases, Pueblo Hub should function as a general ACP operations interface rather than a web wrapper around a fixed set of agents:
 
 ```text
               ┌───────────────┐
@@ -782,7 +782,7 @@ At the end of these phases, Agent Hub should function as a general ACP operation
               └───────┬───────┘
                       │
               ┌───────▼───────┐
-Hermes/MCP ──►│   Agent Hub   │◄── Remote Agent Hubs
+Hermes/MCP ──►│   Pueblo Hub   │◄── Remote Pueblo Hubs
               └───────┬───────┘
                       │ ACP
           ┌───────────┼─────────────┐

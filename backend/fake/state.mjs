@@ -199,7 +199,7 @@ export class FakeState {
       title_overridden: hasExplicitTitle,
       workspace: workspace ? {
         mode: workspace.mode,
-        branch: workspace.mode === 'managed_worktree' ? `agent-hub/chat/${chat.id}` : workspace.branch,
+        branch: workspace.mode === 'managed_worktree' ? `pueblo-hub/chat/${chat.id}` : workspace.branch,
         base_commit: workspace.base_commit ?? this.workspaceOptionsByProject.get(projectId)?.branches
           ?.find((branch) => branch.name === workspace.branch)?.sha ?? null,
       } : null,
@@ -273,7 +273,7 @@ export class FakeState {
   // ------------------------------------------------------------------ seed
 
   seed() {
-    const hub = this.createProject('agent-hub', `${PROJECT_ROOT}/agent-hub`, {
+    const hub = this.createProject('pueblo-hub', `${PROJECT_ROOT}/pueblo-hub`, {
       is_git: true,
       current_branch: 'master',
       head_sha: '1111111111111111111111111111111111111111',
@@ -290,7 +290,7 @@ export class FakeState {
     const review = this.createChat(hub.id, 'claude', 'Review the WebSocket replay path');
     review.workspace = {
       mode: 'managed_worktree',
-      branch: `agent-hub/chat/${review.id}`,
+      branch: `pueblo-hub/chat/${review.id}`,
       base_commit: '1111111111111111111111111111111111111111',
     };
     review.acp_session_id = 'acp-session-1';

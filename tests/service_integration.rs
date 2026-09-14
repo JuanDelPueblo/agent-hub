@@ -2,7 +2,7 @@
 //!
 //! This is the proof that a later MCP or federation surface can reuse these
 //! operations instead of reimplementing chat and session behavior.
-use agent_hub::{
+use pueblo_hub::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::{EventLog, EventPayload},
@@ -225,7 +225,7 @@ async fn title_rename_is_live_but_guarded_compound_edits_are_atomic() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let current = sessions.get_by_id(&chat.chat.id).await.unwrap();
-        if current.turn_state().await == agent_hub::state::TurnState::Prompting {
+        if current.turn_state().await == pueblo_hub::state::TurnState::Prompting {
             break;
         }
         assert!(
@@ -751,7 +751,7 @@ async fn concurrent_wait_admission_and_rejected_second_prompt() {
 
 #[tokio::test]
 async fn concurrent_config_load_and_prompt_share_one_startup() {
-    use agent_hub::state::ProcessState;
+    use pueblo_hub::state::ProcessState;
 
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());

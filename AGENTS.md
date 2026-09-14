@@ -1,12 +1,12 @@
-# Agent Hub: Developer & AI Agent Guide
+# Pueblo Hub: Developer & AI Agent Guide
 
-This document gives architectural context, development guidelines, and operational procedures for software engineers and AI assistants who work on **Agent Hub**.
+This document gives architectural context, development guidelines, and operational procedures for software engineers and AI assistants who work on **Pueblo Hub**.
 
 ---
 
 ## 1. Project Overview
 
-Agent Hub is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents. It provides a web interface that follows Material 3 design and adaptive-layout conventions. It manages persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
+Pueblo Hub is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents. It provides a web interface that follows Material 3 design and adaptive-layout conventions. It manages persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
 
 The backend is Rust with `tokio` and `axum`. The frontend is a standalone Angular application in TypeScript, with Angular Material/CDK primitives and the Angular Router. Angular produces production-hashed static assets, which `rust-embed` embeds in the Rust binary.
 
@@ -52,9 +52,9 @@ Optional fields per agent:
 - `idle_timeout`: Idle timeout in seconds before the process is reaped (default: 900).
 - `display_name`: Name for the user interface (default: the map key).
 - `usage_provider`: Identifier of the provider that reports quota and account
-  status. Agent Hub never infers this from the agent name, so an agent named
+  status. Pueblo Hub never infers this from the agent name, so an agent named
   `codex` gets no provider until this field names one.
-- `metadata`: Free-form object. Agent Hub stores it and does not read it yet.
+- `metadata`: Free-form object. Pueblo Hub stores it and does not read it yet.
 
 The file rejects an unknown field, so a typo fails at startup.
 
@@ -63,8 +63,8 @@ The file rejects an unknown field, so a typo fails at startup.
 ## 4. Directory Structure
 
 ```
-agent-hub/
-├── Cargo.toml                # Rust crate configuration (agent-hub)
+pueblo-hub/
+├── Cargo.toml                # Rust crate configuration (pueblo-hub)
 ├── flake.nix                 # Nix package outputs and the dev shell
 ├── .envrc                    # direnv entry point for the dev shell
 ├── backend/
@@ -120,9 +120,11 @@ agent-hub/
   after the migration succeeds. A database from a newer build is reported, never
   reset. Add a migration to the end of the table; never edit one that shipped.
   Write each migration so a second run is safe: prefer `IF NOT EXISTS`, and give
-  it a `precondition` query when no such form exists. Agent Hub v0.2 reset
+  it a `precondition` query when no such form exists. Pueblo Hub v0.2 reset
   `user_version` on every open, so a downgraded database can arrive claiming an
-  old version with a new schema.
+  old version with a new schema. Existing managed chats may retain the
+  pre-rename `agent-hub/chat/<chat-id>` branch prefix; new chats use
+  `pueblo-hub/chat/<chat-id>` and recovery accepts both.
 - **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
   `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
   facade controls the lock and any shared transaction.
@@ -156,7 +158,7 @@ agent-hub/
 
 ### 5.7. Frontend (`frontend/`)
 - **Framework**: Angular standalone components with signals, `HttpClient`, the Angular Router, and RxJS for the WebSocket stream.
-- **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Agent Hub status tokens.
+- **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Pueblo Hub status tokens.
 - **Window Classes**: Compact (<600px) uses a modal drawer, full-width inputs, touch targets of 48px or more, and `env(safe-area-inset-bottom)`. Medium (600–839px) uses a modal drawer and flexible margins. Expanded (>=840px) uses a permanent drawer, a dual-pane layout, and a side sheet for configuration.
 - **Routing**: `/`, `/projects/:projectId`, and `/projects/:projectId/chats/:chatId`, with the Rust SPA fallback for deep links.
 - **State**: A signal store (`src/app/state/app-state.service.ts`) and a pure event reducer (`src/app/state/event-reducer.ts`) that aggregates turns, thoughts, tools, plans, and permissions.
@@ -211,7 +213,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### Nix Build
 ```sh
-nix build .#agent-hub
+nix build .#pueblo-hub
 ```
 
 ---

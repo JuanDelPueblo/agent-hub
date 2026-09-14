@@ -1,4 +1,4 @@
-# Agent Hub v0.2
+# Pueblo Hub v0.2
 
 A single-owner, persistent web supervisor for local ACP coding agents (such as Codex, Claude, OpenCode, and Antigravity). GPL-3.0-only. No proprietary agent binaries are included.
 
@@ -7,16 +7,16 @@ A single-owner, persistent web supervisor for local ACP coding agents (such as C
 - **Angular Material Adaptive UI**: A standalone Angular application using Angular Material/CDK primitives and adaptive layouts responsive to compact, medium, and expanded window sizes.
 - **Persistent Projects & Chats**: Multiple independent chats per project across different or identical agents. Full process lifecycle management with automatic session resumption, cancel, stop, and reconnect.
 - **Server-Side Project Creation**: Create projects by browsing existing server directories with boundary enforcement or cloning remote Git repositories directly.
-- **Streamlined Chat Flow**: New chat creation lets users choose the starting local branch and workspace mode for Git projects; Agent Hub automatically connects ACP session and displays configuration options immediately before the first prompt.
+- **Streamlined Chat Flow**: New chat creation lets users choose the starting local branch and workspace mode for Git projects; Pueblo Hub automatically connects ACP session and displays configuration options immediately before the first prompt.
 - **Dynamic Titles**: ACP agents automatically supply chat titles after conversations start, with persistent storage and optional manual rename overrides.
-- **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Agent Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
+- **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Pueblo Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
 - **Single-Service Architecture**: Single Rust binary embeds production-hashed frontend assets with optimized HTTP caching and WebSocket streaming.
 
 ## Run
 
 ```sh
-cargo build --bin agent-hub
-target/debug/agent-hub --database /path/to/state/hub.sqlite3 \
+cargo build --bin pueblo-hub
+target/debug/pueblo-hub --database /path/to/state/hub.sqlite3 \
   --project-root /home/tony --agents-file agents.json \
   --public-origin https://agents.home.edyan.me --port 9123
 ```
@@ -25,7 +25,12 @@ The database parent directory must exist and be private. The server binds only t
 
 Prompts have no silence timeout by default, so a quiet long-running tool call is
 not killed. Set `--prompt-timeout <seconds>` (or
-`AGENT_HUB_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
+`PUEBLO_HUB_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
+
+The `PUEBLO_HUB_*` environment variables are canonical. The previous
+`AGENT_HUB_*` names remain accepted as compatibility aliases when the new name
+is not set. Existing managed chats using `agent-hub/chat/<chat-id>` branches
+are recovered and removed in place; new chats use `pueblo-hub/chat/<chat-id>`.
 
 ## Development environment
 
@@ -108,8 +113,8 @@ Create a project pointing to an existing directory under a configured project ro
 ### Git chat workspaces
 
 Git chats default to **Isolated worktree**. When creating a chat, choose the
-starting local branch; Agent Hub creates a deterministic branch named
-`agent-hub/chat/<chat-id>` and a separate managed worktree. Uncommitted changes
+starting local branch; Pueblo Hub creates a deterministic branch named
+`pueblo-hub/chat/<chat-id>` and a separate managed worktree. Uncommitted changes
 in the primary checkout are not copied into it. The branch and workspace
 identity are visible in the chat header and configuration panel.
 
@@ -117,7 +122,7 @@ Users may explicitly choose **Project checkout**, which operates on the real
 project checkout and the selected branch. Switching that checkout is allowed
 only when it is safe (clean and not in use). Direct and legacy chats share the
 same repository checkout turn lock and therefore cannot work concurrently.
-Agent Hub never silently switches a direct chat back to its expected branch on
+Pueblo Hub never silently switches a direct chat back to its expected branch on
 resume.
 
 Deleting a clean managed chat removes its worktree but retains its branch.
@@ -126,7 +131,7 @@ and legacy chat deletion leaves the repository checkout and Git state alone.
 
 Opening a chat automatically connects the agent process and loads ACP configuration options immediately. Sending a prompt also connects automatically if stopped. `session/load` or advertised `session/resume` restores agent-owned conversation state.
 
-Stop process and idle reaping preserve the chat and ACP session ID. Agent Hub
+Stop process and idle reaping preserve the chat and ACP session ID. Pueblo Hub
 only reaps an idle process when its ACP agent advertises `session/load` or
 `session/resume`; otherwise it keeps the process alive so the chat remains
 usable. The default eligible idle timeout is 900 seconds. Cancel turn sends
@@ -150,7 +155,7 @@ Server-owned JSON definitions in `agents.json`:
 
 Definitions accept optional `args` (array), `env` (object), `idle_timeout`
 (seconds), `display_name` (string), `usage_provider` (string), and `metadata`
-(object). Agent Hub never derives a usage provider from the agent name.
+(object). Pueblo Hub never derives a usage provider from the agent name.
 
 The UI renders ACP `configOptions` dynamically (including select optgroups and switches) and listens for `config_option_update`. Selected values are saved per chat and reapplied on reconnect.
 
@@ -193,5 +198,5 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run
 
 # Full reproducible Nix flake build
-nix build .#agent-hub
+nix build .#pueblo-hub
 ```

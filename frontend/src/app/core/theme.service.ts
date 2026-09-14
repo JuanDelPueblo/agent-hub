@@ -3,6 +3,9 @@ import { effect, inject, Service, signal } from '@angular/core';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
+const THEME_STORAGE_KEY = 'pueblo-hub-theme';
+const LEGACY_THEME_STORAGE_KEY = 'agent-hub-theme';
+
 @Service()
 export class ThemeService {
   private readonly document = inject(DOCUMENT);
@@ -12,7 +15,7 @@ export class ThemeService {
     effect(() => {
       const mode = this.mode();
       this.document.documentElement.dataset['theme'] = mode;
-      if (typeof localStorage !== 'undefined') localStorage.setItem('agent-hub-theme', mode);
+      if (typeof localStorage !== 'undefined') localStorage.setItem(THEME_STORAGE_KEY, mode);
     });
   }
 
@@ -26,7 +29,8 @@ export class ThemeService {
 
   private readMode(): ThemeMode {
     if (typeof localStorage === 'undefined') return 'system';
-    const value = localStorage.getItem('agent-hub-theme');
+    const value = localStorage.getItem(THEME_STORAGE_KEY)
+      ?? localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
     return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
   }
 }

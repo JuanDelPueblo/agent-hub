@@ -9,8 +9,8 @@ import { ProjectDialogComponent } from './project-dialog';
 
 const createdProject: Project = {
   id: 'project-new',
-  name: 'agent-hub',
-  path: '/home/tony/agent-hub',
+  name: 'pueblo-hub',
+  path: '/home/tony/pueblo-hub',
   created_at: '2026-09-13',
   updated_at: '2026-09-13',
   chat_count: 0,
@@ -44,7 +44,7 @@ describe('ProjectDialogComponent', () => {
             parent: '/home',
             roots: ['/home'],
             breadcrumbs: [{ name: 'home', path: '/home' }, { name: 'tony', path: '/home/tony' }],
-            directories: path ? [] : [{ name: 'agent-hub', path: '/home/tony/agent-hub' }],
+            directories: path ? [] : [{ name: 'pueblo-hub', path: '/home/tony/pueblo-hub' }],
           }),
         } as unknown as ApiService },
         { provide: AppStateService, useValue: state as unknown as AppStateService },
@@ -63,7 +63,7 @@ describe('ProjectDialogComponent', () => {
 
   it('keeps browsing separate from the selected folder and creates a project through state', async () => {
     const row = fixture.nativeElement.querySelector('hub-folder-picker button[mat-list-item]') as HTMLButtonElement;
-    expect(row.textContent).toContain('agent-hub');
+    expect(row.textContent).toContain('pueblo-hub');
     row.click();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -81,7 +81,7 @@ describe('ProjectDialogComponent', () => {
     create.click();
     await fixture.whenStable();
 
-    expect(state.createProject).toHaveBeenCalledWith('agent-hub', '/home/tony/agent-hub');
+    expect(state.createProject).toHaveBeenCalledWith('pueblo-hub', '/home/tony/pueblo-hub');
     expect(dialogRef.close).toHaveBeenCalledWith(createdProject);
     expect(router.navigate).toHaveBeenCalledWith(['/projects', 'project-new']);
   });

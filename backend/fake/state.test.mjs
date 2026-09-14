@@ -123,7 +123,7 @@ describe('fake backend seed history', () => {
 
   it('provides Git and non-Git workspace options and retains selections', () => {
     const state = new FakeState();
-    const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'pueblo-hub');
     const nonGitProject = [...state.projects.values()].find((project) => project.name === 'scratch');
     const options = state.workspaceOptions(gitProject.id);
     assert.equal(options.is_git, true);
@@ -181,11 +181,11 @@ describe('fake backend seed history', () => {
 
   it('seeds representative managed and direct workspace summaries without paths', () => {
     const state = new FakeState();
-    const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'pueblo-hub');
     const chats = state.listChats(gitProject.id);
     const managed = chats.find((chat) => chat.workspace?.mode === 'managed_worktree');
     const direct = chats.find((chat) => chat.workspace?.mode === 'project_checkout');
-    assert.ok(managed?.workspace?.branch?.startsWith(`agent-hub/chat/${managed.id}`));
+    assert.ok(managed?.workspace?.branch?.startsWith(`pueblo-hub/chat/${managed.id}`));
     assert.equal(direct?.workspace?.branch, 'feature/ui');
     for (const chat of [managed, direct]) {
       assert.ok(chat);

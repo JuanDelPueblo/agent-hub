@@ -13,7 +13,7 @@
 //!
 //! Write every migration so that running it twice is safe. Prefer
 //! `IF NOT EXISTS`. When a statement has no such form, give the migration a
-//! `precondition` that reports whether the work is still needed. Agent Hub
+//! `precondition` that reports whether the work is still needed. Pueblo Hub
 //! v0.2 wrote `user_version=1` on every open, so a database that was upgraded,
 //! opened once by v0.2, and then upgraded again arrives claiming to be
 //! version 1 with the newer schema already in place.
@@ -26,7 +26,7 @@ pub struct Migration {
     pub sql: &'static str,
     /// A query returning non-zero while `sql` still needs to run.
     ///
-    /// Agent Hub v0.2 set `user_version=1` on every open, so rolling back to
+    /// Pueblo Hub v0.2 set `user_version=1` on every open, so rolling back to
     /// it and forward again presents an upgraded database that claims to be
     /// version 1. A migration whose statements are not already idempotent
     /// needs this guard to stay safe in that case.
@@ -134,8 +134,8 @@ pub(crate) fn check_version(conn: &Connection) -> Result<()> {
     let current = user_version(conn)?;
     anyhow::ensure!(
         current <= latest,
-        "Database schema version {current} comes from a newer Agent Hub \
-         (this build understands version {latest}). Upgrade Agent Hub or restore a backup."
+        "Database schema version {current} comes from a newer Pueblo Hub \
+         (this build understands version {latest}). Upgrade Pueblo Hub or restore a backup."
     );
     Ok(())
 }
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(index, 1, "the session_id index is missing");
     }
 
-    /// Agent Hub v0.2 wrote `user_version=1` on every open. A user who rolls
+    /// Pueblo Hub v0.2 wrote `user_version=1` on every open. A user who rolls
     /// back to it and then forward again presents an upgraded database that
     /// claims to be version 1, so the migrations must not run their statements
     /// a second time.
@@ -526,7 +526,7 @@ mod tests {
         drop(conn);
 
         let err = Store::open(&path).err().unwrap();
-        assert!(err.to_string().contains("newer Agent Hub"), "{err}");
+        assert!(err.to_string().contains("newer Pueblo Hub"), "{err}");
 
         let conn = Connection::open(&path).unwrap();
         assert_eq!(user_version(&conn).unwrap(), 999);

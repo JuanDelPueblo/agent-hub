@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Branch prefix for managed chat worktrees.
-pub const MANAGED_PREFIX: &str = "agent-hub/chat/";
+pub const MANAGED_PREFIX: &str = "pueblo-hub/chat/";
+/// Branch prefix used by pre-rename installations.
+pub const LEGACY_MANAGED_PREFIX: &str = "agent-hub/chat/";
 
 /// Bounded error type. `Conflict` signals a safe refusal, never a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,6 +356,28 @@ fn validate_chat_id(chat_id: &str) -> Result<(), WorkspaceError> {
 
 fn managed_branch(chat_id: &str) -> String {
     format!("{MANAGED_PREFIX}{chat_id}")
+}
+
+fn legacy_managed_branch(chat_id: &str) -> String {
+    format!("{LEGACY_MANAGED_PREFIX}{chat_id}")
+}
+
+/// Whether persisted metadata names either the canonical or legacy managed
+/// branch for this chat.
+pub fn managed_branch_matches(branch: &str, chat_id: &str) -> bool {
+    branch == managed_branch(chat_id) || branch == legacy_managed_branch(chat_id)
+}
+
+fn existing_managed_branch(repo: &Path, chat_id: &str) -> Result<String, WorkspaceError> {
+    for branch in [managed_branch(chat_id), legacy_managed_branch(chat_id)] {
+        if local_branch_tip(repo, &branch)?.is_some() {
+            return Ok(branch);
+        }
+    }
+    Err(WorkspaceError::Failed(format!(
+        "managed branch missing: {}",
+        managed_branch(chat_id)
+    )))
 }
 
 /// Provision an isolated branch + external worktree from `base_commit`.
@@ -708,16 +732,33 @@ pub fn recover_managed(
     chat_id: &str,
 ) -> Result<Recovered, WorkspaceError> {
     validate_chat_id(chat_id)?;
-    let branch = managed_branch(chat_id);
+    let branch = existing_managed_branch(repo, chat_id)?;
+    recover_managed_on_branch(repo, workspace_root, chat_id, &branch)
+}
+
+/// Recover a managed worktree using the branch recorded by persisted chat
+/// metadata. This preserves worktrees created before the product rename.
+pub fn recover_managed_on_branch(
+    repo: &Path,
+    workspace_root: &Path,
+    chat_id: &str,
+    branch: &str,
+) -> Result<Recovered, WorkspaceError> {
+    validate_chat_id(chat_id)?;
+    if !managed_branch_matches(branch, chat_id) {
+        return Err(WorkspaceError::Failed(
+            "invalid managed branch for chat".to_string(),
+        ));
+    }
     let worktree = workspace_root.join(chat_id);
-    if local_branch_tip(repo, &branch)?.is_none() {
+    if local_branch_tip(repo, branch)?.is_none() {
         run_git_ok(repo, &["worktree", "prune"])?;
         return Err(WorkspaceError::Failed(format!(
             "managed branch missing: {branch}"
         )));
     }
     if worktree.exists() {
-        registered_managed_worktree(repo, &worktree, &branch, true)?;
+        registered_managed_worktree(repo, &worktree, branch, true)?;
         return Ok(Recovered::Reused(worktree));
     }
     // Missing worktree + surviving branch: prune stale metadata, then recreate.
@@ -726,7 +767,7 @@ pub fn recover_managed(
         return Err(WorkspaceError::Failed("worktree path blocked".to_string()));
     }
     let worktree_arg = worktree_string(&worktree)?;
-    run_git_ok(repo, &["worktree", "add", &worktree_arg, &branch])?;
+    run_git_ok(repo, &["worktree", "add", &worktree_arg, branch])?;
     Ok(Recovered::Recreated(worktree))
 }
 
@@ -737,7 +778,30 @@ pub fn remove_managed(
     chat_id: &str,
 ) -> Result<(), WorkspaceError> {
     validate_chat_id(chat_id)?;
-    let branch = managed_branch(chat_id);
+    let branch = match existing_managed_branch(repo, chat_id) {
+        Ok(branch) => branch,
+        Err(WorkspaceError::Failed(message)) if message.starts_with("managed branch missing:") => {
+            managed_branch(chat_id)
+        }
+        Err(error) => return Err(error),
+    };
+    remove_managed_on_branch(repo, workspace_root, chat_id, &branch)
+}
+
+/// Remove a managed worktree using persisted branch metadata, retaining the
+/// legacy branch name when an installation predates the product rename.
+pub fn remove_managed_on_branch(
+    repo: &Path,
+    workspace_root: &Path,
+    chat_id: &str,
+    branch: &str,
+) -> Result<(), WorkspaceError> {
+    validate_chat_id(chat_id)?;
+    if !managed_branch_matches(branch, chat_id) {
+        return Err(WorkspaceError::Failed(
+            "invalid managed branch for chat".to_string(),
+        ));
+    }
     let worktree = workspace_root.join(chat_id);
     let worktree_exists = match std::fs::symlink_metadata(&worktree) {
         Ok(_) => true,
@@ -756,13 +820,13 @@ pub fn remove_managed(
             .find(|candidate| absolute_path(&candidate.path) == expected_path);
         let registered_by_branch = records
             .iter()
-            .find(|candidate| candidate.branch.as_deref() == Some(branch.as_str()));
+            .find(|candidate| candidate.branch.as_deref() == Some(branch));
 
         match (registered_by_path, registered_by_branch) {
             (None, None) => {}
             (Some(candidate), Some(by_branch))
                 if candidate.path == by_branch.path
-                    && candidate.branch.as_deref() == Some(branch.as_str()) =>
+                    && candidate.branch.as_deref() == Some(branch) =>
             {
                 run_git_ok(repo, &["worktree", "prune"])?;
             }
@@ -779,7 +843,7 @@ pub fn remove_managed(
         }
         return Ok(());
     }
-    registered_managed_worktree(repo, &worktree, &branch, true)?;
+    registered_managed_worktree(repo, &worktree, branch, true)?;
     let dirty = !run_git_ok(
         &worktree,
         &[

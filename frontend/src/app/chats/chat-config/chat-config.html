@@ -5,7 +5,7 @@
     @if (chat.workspace; as workspace) {
       <section class="workspace-section" aria-labelledby="workspace-heading">
         <h3 id="workspace-heading"><mat-icon aria-hidden="true">account_tree</mat-icon> Workspace</h3>
-        <p>{{ workspace.mode === 'managed_worktree' ? 'This chat runs in its own Agent Hub-managed Git worktree.' : 'This chat works directly in the project\'s checkout.' }}</p>
+        <p>{{ workspace.mode === 'managed_worktree' ? 'This chat runs in its own Pueblo Hub-managed Git worktree.' : 'This chat works directly in the project\'s checkout.' }}</p>
         <dl class="workspace-details">
           <div><dt>Mode</dt><dd>{{ workspace.mode === 'managed_worktree' ? 'Isolated worktree' : 'Project checkout' }}</dd></div>
           <div><dt>Branch</dt><dd>{{ workspace.branch ?? '—' }}</dd></div>

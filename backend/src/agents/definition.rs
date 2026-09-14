@@ -1,4 +1,4 @@
-//! What Agent Hub knows about one ACP agent.
+//! What Pueblo Hub knows about one ACP agent.
 //!
 //! `AgentLaunch` holds what it takes to start the process. Everything the
 //! process does not need — a display name, a usage provider, registry
@@ -24,7 +24,7 @@ pub struct AgentLaunch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSource {
-    /// Compiled into Agent Hub.
+    /// Compiled into Pueblo Hub.
     #[default]
     Builtin,
     /// Read from the file `--agents-file` names.
@@ -37,10 +37,10 @@ pub struct AgentDefinition {
     pub display_name: String,
     pub launch: AgentLaunch,
     /// Which provider reports quota and account status for this agent. The
-    /// usage subsystem resolves it. Agent Hub never infers it from `id`.
+    /// usage subsystem resolves it. Pueblo Hub never infers it from `id`.
     pub usage_provider: Option<String>,
     pub source: AgentSource,
-    /// Opaque to Agent Hub today. The registry phase gives it meaning.
+    /// Opaque to Pueblo Hub today. The registry phase gives it meaning.
     pub metadata: serde_json::Value,
     /// The policy a session uses when no stored chat supplies one.
     pub default_permission_policy: CallbackPolicy,

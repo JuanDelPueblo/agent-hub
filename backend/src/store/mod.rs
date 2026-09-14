@@ -509,10 +509,10 @@ mod tests {
         assert_eq!(resolved, cwd);
         let resolved = state_dir_for_database(Path::new("data/hub.db"));
         assert_eq!(resolved, cwd.join("data"));
-        let absolute = std::path::PathBuf::from("/var/lib/agent-hub/hub.db");
+        let absolute = std::path::PathBuf::from("/var/lib/pueblo-hub/hub.db");
         assert_eq!(
             state_dir_for_database(&absolute),
-            std::path::PathBuf::from("/var/lib/agent-hub")
+            std::path::PathBuf::from("/var/lib/pueblo-hub")
         );
     }
 

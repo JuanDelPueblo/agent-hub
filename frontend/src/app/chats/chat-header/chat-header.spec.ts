@@ -111,7 +111,7 @@ describe('ChatHeaderComponent', () => {
   });
 
   it('renders a truncated branch badge with the full mode tooltip', () => {
-    const branch = 'agent-hub/chat/chat-1-with-a-deliberately-long-generated-branch-name';
+    const branch = 'pueblo-hub/chat/chat-1-with-a-deliberately-long-generated-branch-name';
     fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
       mode: 'managed_worktree', branch, base_commit: 'abcdef1234567890',
     } });

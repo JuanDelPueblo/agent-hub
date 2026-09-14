@@ -36,7 +36,7 @@ pub struct AcpSession {
     acp_session_id: RwLock<Option<agent_client_protocol_schema::SessionId>>,
     // Last spawned wrapper PID. Kept independently of `client` so that even if
     // `mark_dead` takes the client (and the spawned shutdown task races with
-    // agent-hub's own exit), `shutdown` still has a root pid to sweep descendants.
+    // pueblo-hub's own exit), `shutdown` still has a root pid to sweep descendants.
     child_root_pid: RwLock<Option<u32>>,
     runtime: Arc<AgentRuntime>,
     event_log: Arc<EventLog>,
@@ -691,10 +691,15 @@ impl AcpSession {
 
         self.shutdown().await;
 
-        if let Some((repository_root, worktree_root)) = managed_cleanup {
+        if let Some((repository_root, worktree_root, branch)) = managed_cleanup {
             let chat_id = chat.id.clone();
             tokio::task::spawn_blocking(move || {
-                workspace::remove_managed(&repository_root, &worktree_root, &chat_id)
+                workspace::remove_managed_on_branch(
+                    &repository_root,
+                    &worktree_root,
+                    &chat_id,
+                    &branch,
+                )
             })
             .await??;
         }
@@ -995,7 +1000,7 @@ fn validate_persistent_workspace(
             let expected_worktree = state_worktrees.join(&chat.id);
             anyhow::ensure!(
                 Path::new(&workspace.workspace_path) == expected_worktree,
-                "managed workspace path is not Agent Hub's deterministic worktree"
+                "managed workspace path is not Pueblo Hub's deterministic worktree"
             );
 
             let info = workspace::inspect(Path::new(&project.path))
@@ -1011,13 +1016,21 @@ fn validate_persistent_workspace(
             )?;
             validate_project_subdir(project, &repository_root, &workspace.project_subdir)?;
 
-            let expected_branch = format!("{}{}", workspace::MANAGED_PREFIX, chat.id);
+            let branch = workspace
+                .branch
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("managed workspace branch metadata is invalid"))?;
             anyhow::ensure!(
-                workspace.branch.as_deref() == Some(expected_branch.as_str()),
+                workspace::managed_branch_matches(branch, &chat.id),
                 "managed workspace branch metadata is invalid"
             );
-            workspace::recover_managed(&repository_root, state_worktrees, &chat.id)
-                .map_err(|e| anyhow::anyhow!("managed workspace recovery failed: {e}"))?;
+            workspace::recover_managed_on_branch(
+                &repository_root,
+                state_worktrees,
+                &chat.id,
+                branch,
+            )
+            .map_err(|e| anyhow::anyhow!("managed workspace recovery failed: {e}"))?;
             let effective =
                 ensure_cwd_inside_checkout(&expected_worktree, &workspace.project_subdir)?;
             ensure_same_path(
@@ -1073,11 +1086,11 @@ fn prepare_managed_deletion(
     project: &Project,
     workspace: &ChatWorkspace,
     state_worktrees: &Path,
-) -> anyhow::Result<(PathBuf, PathBuf)> {
+) -> anyhow::Result<(PathBuf, PathBuf, String)> {
     let expected_worktree = state_worktrees.join(&chat.id);
     anyhow::ensure!(
         Path::new(&workspace.workspace_path) == expected_worktree,
-        "managed workspace path is not Agent Hub's deterministic worktree"
+        "managed workspace path is not Pueblo Hub's deterministic worktree"
     );
 
     let info = workspace::inspect(Path::new(&project.path))
@@ -1105,13 +1118,20 @@ fn prepare_managed_deletion(
         "managed workspace project metadata does not match the registered project"
     );
 
-    let expected_branch = format!("{}{}", workspace::MANAGED_PREFIX, chat.id);
+    let branch = workspace
+        .branch
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("managed workspace branch metadata is invalid"))?;
     anyhow::ensure!(
-        workspace.branch.as_deref() == Some(expected_branch.as_str()),
+        workspace::managed_branch_matches(branch, &chat.id),
         "managed workspace branch metadata is invalid"
     );
 
-    Ok((repository_root, state_worktrees.to_path_buf()))
+    Ok((
+        repository_root,
+        state_worktrees.to_path_buf(),
+        branch.to_string(),
+    ))
 }
 
 enum PromptAttempt {
