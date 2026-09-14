@@ -29,13 +29,28 @@
           pueblo-hub = pkgs.rustPlatform.buildRustPackage {
             pname = "pueblo-hub";
             version = "0.2.0";
-            src = pkgs.lib.cleanSource self;
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [
+                ./Cargo.toml
+                ./Cargo.lock
+                ./backend/src
+                ./static
+              ];
+            };
             cargoLock.lockFile = ./Cargo.lock;
+            # Packaging builds the release artifact only. Source-level
+            # verification, including the Rust test suite, lives in
+            # `nix run .#verify` and CI.
+            doCheck = false;
+            nativeBuildInputs =
+              pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
+            RUSTFLAGS =
+              pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-C link-arg=-fuse-ld=mold";
             preBuild = ''
               rm -rf static/*
               cp -r ${pueblo-hub-frontend}/* static/
             '';
-            nativeCheckInputs = [ pkgs.python3 pkgs.git ];
             meta = {
               description = "Persistent single-owner ACP project and chat supervisor";
               license = pkgs.lib.licenses.gpl3Only;

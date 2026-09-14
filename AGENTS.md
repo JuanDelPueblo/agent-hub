@@ -285,7 +285,7 @@ Packaging/release/deployment changes:
 nix build .#pueblo-hub
 ```
 
-`nix build .#pueblo-hub` is the authoritative complete application build, responsible for building the Angular frontend, staging assets into `static/`, and compiling the Rust binary with those assets embedded.
+`nix build .#pueblo-hub` is the authoritative complete application build, responsible for building the Angular frontend, staging assets into `static/`, and compiling the Rust binary with those assets embedded. It is packaging and release verification. It does not rerun the Rust test suite. `nix run .#verify` remains the verification path.
 
 Do not run expensive unrelated verification solely for a docs-only or narrowly isolated change.
 

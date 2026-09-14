@@ -221,6 +221,8 @@ The complete application with embedded frontend assets is built authoritatively 
 nix build .#pueblo-hub
 ```
 
+This build is packaging and release verification. It does not rerun the Rust test suite. `nix run .#verify` remains the verification path.
+
 ## License
 
 GPL-3.0-only.
