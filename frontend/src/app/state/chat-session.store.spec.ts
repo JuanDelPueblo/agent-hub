@@ -26,6 +26,7 @@ describe('ChatSessionStore', () => {
     fetchChatConfig: ReturnType<typeof vi.fn>;
     clearSavedConfig: ReturnType<typeof vi.fn>;
     deleteChat: ReturnType<typeof vi.fn>;
+    promptChat: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -43,6 +44,7 @@ describe('ChatSessionStore', () => {
       ]),
       clearSavedConfig: vi.fn(async () => undefined),
       deleteChat: vi.fn(async () => undefined),
+      promptChat: vi.fn(async () => undefined),
     };
     TestBed.configureTestingModule({
       providers: [{ provide: ApiService, useValue: api }],
@@ -50,22 +52,31 @@ describe('ChatSessionStore', () => {
     store = TestBed.inject(ChatSessionStore);
   });
 
-  it('deduplicates concurrent chat loads and connections', async () => {
+  it('deduplicates concurrent chat loads and runtime config initialization', async () => {
     const firstLoad = store.loadChats('project-1');
     const secondLoad = store.loadChats('project-1');
     expect(secondLoad).toBe(firstLoad);
     await firstLoad;
 
-    const firstConnection = store.connectChat('chat-1');
-    const secondConnection = store.connectChat('chat-1');
-    expect(secondConnection).toBe(firstConnection);
-    await firstConnection;
+    const firstConfig = store.loadChatConfig('chat-1');
+    const secondConfig = store.loadChatConfig('chat-1');
+    expect(secondConfig).toBe(firstConfig);
+    await firstConfig;
 
     expect(api.fetchChats).toHaveBeenCalledOnce();
-    expect(api.resumeChat).toHaveBeenCalledOnce();
     expect(api.fetchChatConfig).toHaveBeenCalledOnce();
-    expect(store.findChat('chat-1')?.process_state).toBe('RUNNING');
     expect(store.configLoadedByChat()['chat-1']).toBe(true);
+  });
+
+  it('treats process state as diagnostic only and allows sending prompts while stopped', async () => {
+    const stoppedChat: Chat = { ...chat, process_state: 'STOPPED', turn_state: 'IDLE' };
+    store.chatsByProject.set({ 'project-1': [stoppedChat] });
+
+    await store.sendPrompt('chat-1', 'Hello agent');
+
+    expect(api.promptChat).toHaveBeenCalledWith('chat-1', 'Hello agent');
+    expect(api.resumeChat).not.toHaveBeenCalled();
+    expect(store.findChat('chat-1')?.turn_state).toBe('PROMPTING');
   });
 
   it('reduces streamed entries and process changes into chat-owned state', () => {
@@ -99,29 +110,29 @@ describe('ChatSessionStore', () => {
 
   it('maps a rejected saved model to the explicit reset path', async () => {
     store.chatsByProject.set({ 'project-1': [chat] });
-    api.resumeChat.mockRejectedValueOnce(
+    api.fetchChatConfig.mockRejectedValueOnce(
       new ApiError(409, 'Saved ACP option model could not be reapplied', 'saved_config_rejected', {
         option_id: 'model',
       }),
     );
 
-    await expect(store.connectChat('chat-1')).rejects.toThrow();
+    await expect(store.loadChatConfig('chat-1')).rejects.toThrow();
     expect(store.connectErrors()['chat-1']).toContain('could not be reapplied');
     expect(store.rejectedConfigByChat()['chat-1']).toBe('model');
   });
 
   it('keeps a transient config-application failure on the retry path', async () => {
     store.chatsByProject.set({ 'project-1': [chat] });
-    api.resumeChat.mockRejectedValueOnce(
+    api.fetchChatConfig.mockRejectedValueOnce(
       new ApiError(400, 'Failed to reapply saved ACP option model; retry to reconnect'),
     );
 
-    await expect(store.connectChat('chat-1')).rejects.toThrow();
+    await expect(store.loadChatConfig('chat-1')).rejects.toThrow();
     expect(store.connectErrors()['chat-1']).toContain('retry to reconnect');
     expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
   });
 
-  it('reset deletes only the explicitly rejected option then reconnects', async () => {
+  it('reset deletes only the explicitly rejected option then retries config initialization', async () => {
     store.chatsByProject.set({ 'project-1': [chat] });
     store.rejectedConfigByChat.set({ 'chat-1': 'model' });
 
@@ -129,7 +140,7 @@ describe('ChatSessionStore', () => {
 
     expect(api.clearSavedConfig).toHaveBeenCalledWith('chat-1', 'model');
     expect(store.rejectedConfigByChat()['chat-1']).toBeUndefined();
-    expect(api.resumeChat).toHaveBeenCalledWith('chat-1');
+    expect(api.fetchChatConfig).toHaveBeenCalledWith('chat-1');
   });
 
   it('deleting a chat also deletes its stale rejected-config entry', async () => {

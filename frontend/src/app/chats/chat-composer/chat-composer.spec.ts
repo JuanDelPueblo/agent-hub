@@ -27,7 +27,6 @@ describe('ChatComposerComponent', () => {
     fixture = TestBed.createComponent(ChatComposerComponent);
     component = fixture.componentInstance;
     fixture.componentRef.setInput('chatId', 'chat-1');
-    fixture.componentRef.setInput('processState', 'RUNNING');
     fixture.componentRef.setInput('turnState', 'IDLE');
     fixture.componentRef.setInput('disabled', false);
     fixture.detectChanges();
@@ -44,18 +43,18 @@ describe('ChatComposerComponent', () => {
     expect(component.message.value).toBe('');
   });
 
-  it('allows typing and displays resume button when agent is stopped', async () => {
-    fixture.componentRef.setInput('processState', 'STOPPED');
-    fixture.detectChanges();
+  it('a stopped chat can send normally without an explicit connection action', async () => {
     const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(false);
-    expect(textarea.placeholder).toContain('resume');
+    expect(fixture.nativeElement.querySelector('.resume-button')).toBeNull();
 
-    const resumeBtn = fixture.nativeElement.querySelector('.resume-button') as HTMLButtonElement;
-    expect(resumeBtn).not.toBeNull();
-    resumeBtn.click();
+    textarea.value = 'hello from stopped chat';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await component.send();
     await fixture.whenStable();
-    expect(resumed).toEqual(['chat-1']);
+
+    expect(sent).toEqual(['hello from stopped chat']);
+    expect(resumed).toHaveLength(0);
   });
 
   it('disables the textarea while the agent is not ready', () => {

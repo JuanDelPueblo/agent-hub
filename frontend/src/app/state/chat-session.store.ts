@@ -64,9 +64,7 @@ export class ChatSessionStore {
   async autoConnectChat(chatId: string): Promise<void> {
     const chat = this.findChat(chatId);
     if (!chat) return;
-    if (chat.process_state !== 'RUNNING') {
-      await this.connectChat(chatId).catch(() => undefined);
-    } else if (!this.configLoadedByChat()[chatId]) {
+    if (!this.configLoadedByChat()[chatId]) {
       await this.loadChatConfig(chatId).catch(() => undefined);
     }
   }
@@ -84,6 +82,12 @@ export class ChatSessionStore {
         return options;
       } catch (error) {
         this.setError(chatId, this.errorMessage(error, 'Failed to load agent configuration'));
+        if (error instanceof ApiError && error.code?.toLowerCase() === 'saved_config_rejected') {
+          const optionId = error.details?.['option_id'] ?? error.details?.['optionId'];
+          if (typeof optionId === 'string') {
+            this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
+          }
+        }
         throw error;
       } finally {
         this.setSetValue(this.connectingChats, chatId, false);
@@ -95,11 +99,7 @@ export class ChatSessionStore {
   }
 
   retryConnection(chatId: string): Promise<void> {
-    const chat = this.findChat(chatId);
-    const request = chat?.process_state === 'RUNNING'
-      ? this.loadChatConfig(chatId).then(() => undefined)
-      : this.connectChat(chatId).then(() => undefined);
-    return request.catch(() => undefined);
+    return this.loadChatConfig(chatId).then(() => undefined).catch(() => undefined);
   }
 
   connectChat(chatId: string): Promise<Chat> {
@@ -152,8 +152,20 @@ export class ChatSessionStore {
   }
 
   async sendPrompt(chatId: string, text: string): Promise<void> {
-    await this.api.promptChat(chatId, text);
-    this.applyChatPatch(chatId, { turn_state: 'PROMPTING' });
+    try {
+      await this.api.promptChat(chatId, text);
+      this.clearError(chatId);
+      this.applyChatPatch(chatId, { turn_state: 'PROMPTING' });
+    } catch (error) {
+      if (error instanceof ApiError && error.code?.toLowerCase() === 'saved_config_rejected') {
+        const optionId = error.details?.['option_id'] ?? error.details?.['optionId'];
+        if (typeof optionId === 'string') {
+          this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
+        }
+      }
+      this.setError(chatId, this.errorMessage(error, 'Failed to send prompt'));
+      throw error;
+    }
   }
 
   async cancelActiveTurn(chatId: string): Promise<void> {
@@ -206,7 +218,7 @@ export class ChatSessionStore {
       delete next[chatId];
       return next;
     });
-    await this.connectChat(chatId);
+    await this.retryConnection(chatId);
   }
 
   async createChat(projectId: string, agent: string, title?: string): Promise<Chat> {

@@ -7,15 +7,29 @@
     <hub-chat-header [chat]="chat()" (configRequested)="openConfig(configDrawer)" />
     @if (!chat()) {
       <section class="status-state"><mat-icon>chat</mat-icon><h1>No chat selected</h1><p>Choose a chat from the navigation.</p></section>
-    } @else if (connecting()) {
-      <section class="status-state"><mat-spinner diameter="44" /><h1>Connecting to {{ chat()!.agent }}…</h1><p>Initializing the ACP session and loading agent options.</p></section>
-    } @else if (connectError()) {
-      <section class="status-state error-state" role="alert"><mat-icon>error_outline</mat-icon><h1>Connection failed</h1><p>{{ connectError() }}</p>@if (rejectedConfig()) { <button mat-flat-button type="button" (click)="resetConfig()">Reset {{ rejectedConfig() }} and retry</button> } @else { <button mat-flat-button type="button" (click)="retry()">Retry connection</button> }</section>
-    } @else if (!configLoaded() && !items().length) {
-      <section class="status-state error-state" role="alert"><mat-icon>tune</mat-icon><h1>Agent options not loaded</h1><p>Agent Hub cannot read the configuration of {{ chat()!.agent }} yet.</p><button mat-flat-button type="button" (click)="retry()">Retry connection</button></section>
-    } @else if (!items().length) {
-      <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
-    } @else { <hub-event-stream [items]="items()" [chatId]="chatId()" /> }
-    @if (chat()) { <hub-chat-composer [chatId]="chatId()" [options]="options()" [processState]="chat()!.process_state || 'STOPPED'" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="connecting() || !!connectError() || !configLoaded()" /> }
+    } @else {
+      @if (connectError()) {
+        <div class="status-banner error-banner" role="alert">
+          <div class="banner-content">
+            <mat-icon>error_outline</mat-icon>
+            <div class="banner-text">
+              <strong>Connection failed</strong>
+              <span>{{ connectError() }}</span>
+            </div>
+          </div>
+          @if (rejectedConfig()) {
+            <button mat-flat-button type="button" (click)="resetConfig()">Reset {{ rejectedConfig() }} and retry</button>
+          } @else {
+            <button mat-flat-button type="button" (click)="retry()">Retry connection</button>
+          }
+        </div>
+      }
+      @if (!items().length) {
+        <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
+      } @else {
+        <hub-event-stream [items]="items()" [chatId]="chatId()" />
+      }
+      <hub-chat-composer [chatId]="chatId()" [options]="options()" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="chat()!.archived" />
+    }
   </mat-drawer-content>
 </mat-drawer-container>

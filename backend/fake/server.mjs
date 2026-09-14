@@ -239,7 +239,6 @@ function editChat({ params, body }) {
   }
   if (body.archived !== undefined) {
     chat.archived = Boolean(body.archived);
-    if (chat.archived) state.setRuntime(chat.id, 'STOPPED', 'IDLE');
   }
   if (body.permission_policy !== undefined) {
     if (!PERMISSION_POLICIES.includes(body.permission_policy)) {
@@ -323,9 +322,7 @@ function respondPermission({ params, body }) {
 
 function getConfig({ params }) {
   const chat = requireChat(params[0]);
-  const runtime = state.runtime.get(chat.id);
-  // A stopped process has no options, exactly like `AcpSession::config_options`.
-  if (runtime?.process !== 'RUNNING') return json([]);
+  ensureRunning(chat);
   return json(state.configByChat.get(chat.id) ?? []);
 }
 

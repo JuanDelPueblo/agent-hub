@@ -83,7 +83,7 @@ describe('ChatWorkspaceComponent', () => {
     expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
   });
 
-  it('locks the composer and exposes retry when the connection fails', async () => {
+  it('keeps composer usable and exposes retry when the connection fails', async () => {
     state.connectErrors.set({ 'chat-1': 'Agent process exited unexpectedly' });
     fixture.detectChanges();
     await fixture.whenStable();
@@ -91,12 +91,33 @@ describe('ChatWorkspaceComponent', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Connection failed');
     expect(fixture.nativeElement.textContent).toContain('Agent process exited unexpectedly');
-    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
+    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
 
     const retry = Array.from(fixture.nativeElement.querySelectorAll('button'))
       .find((button: unknown) => (button as Element).textContent?.includes('Retry connection')) as HTMLButtonElement;
     retry.click();
     expect(state.retryConnection).toHaveBeenCalledWith('chat-1');
+  });
+
+  it('keeps persisted history visible when connection fails', async () => {
+    const reducer = new EventReducer();
+    reducer.ingest({
+      seq: 1,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: '2026-09-13T12:00:00Z',
+      payload: { type: 'user_message', text: 'Important existing question' },
+    });
+    (state.reducersByChat as ReturnType<typeof signal<Record<string, unknown>>>).set({ 'chat-1': reducer });
+    state.connectErrors.set({ 'chat-1': 'Agent process exited unexpectedly' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Important existing question');
+    expect(fixture.nativeElement.textContent).toContain('Connection failed');
+    expect(fixture.nativeElement.textContent).toContain('Agent process exited unexpectedly');
+    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
   });
 });
 

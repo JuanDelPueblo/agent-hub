@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, computed, effect, inject, input } from '@angular/core';
 
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { TextFieldModule } from '@angular/cdk/text-field';
@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import type { ConfigOption, ConfigOptionSelectGroup, ConfigOptionSelectValue, ProcessState, TurnState } from '../../core/api/types';
+import type { ConfigOption, ConfigOptionSelectGroup, ConfigOptionSelectValue, TurnState } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 
 @Component({
@@ -19,7 +19,6 @@ import { AppStateService } from '../../state/app-state.service';
 })
 export class ChatComposerComponent {
   readonly chatId = input('');
-  readonly processState = input<ProcessState>('STOPPED');
   readonly turnState = input<TurnState>('IDLE');
   readonly disabled = input(false);
   readonly options = input<ConfigOption[]>([]);
@@ -30,21 +29,17 @@ export class ChatComposerComponent {
 
   readonly prompting = computed(() => this.turnState() === 'PROMPTING');
   readonly cancelling = computed(() => this.turnState() === 'CANCELLING');
-  readonly resuming = signal(false);
-  readonly isStopped = computed(() => this.processState() === 'STOPPED' || this.processState() === 'DEAD');
-  readonly canConfigure = computed(() => !this.disabled() && this.processState() === 'RUNNING' && this.turnState() === 'IDLE');
+  readonly canConfigure = computed(() => !this.disabled() && this.turnState() === 'IDLE');
   readonly modelOption = computed(() => this.findOption('model', 'model'));
   readonly reasoningOption = computed(() => this.findOption('reasoning_effort', 'reasoning effort'));
   private readonly unavailable = computed(
-    () => this.disabled() || this.processState() === 'STARTING' || this.prompting() || this.cancelling() || this.resuming(),
+    () => this.disabled() || this.prompting() || this.cancelling(),
   );
   readonly canSend = computed(() => !this.unavailable() && this.text().trim().length > 0);
   readonly placeholder = computed(() => {
     if (this.disabled()) return 'Waiting for the agent connection…';
     if (this.prompting()) return 'Agent is thinking…';
     if (this.cancelling()) return 'Cancelling active turn…';
-    if (this.processState() === 'STARTING' || this.resuming()) return 'Agent is starting…';
-    if (this.isStopped()) return 'Agent stopped — type a message to resume…';
     return 'Type a message…';
   });
 
@@ -64,26 +59,11 @@ export class ChatComposerComponent {
     }
   }
 
-  async resume(): Promise<void> {
-    if (!this.chatId() || this.resuming()) return;
-    this.resuming.set(true);
-    try {
-      await this.state.connectChat(this.chatId());
-    } catch (error) {
-      console.error('Failed to resume chat', error);
-    } finally {
-      this.resuming.set(false);
-    }
-  }
-
   async send(): Promise<void> {
     const value = this.message.value.trim();
     if (!value || !this.canSend()) return;
     this.message.setValue('');
     try {
-      if (this.processState() !== 'RUNNING') {
-        await this.state.connectChat(this.chatId());
-      }
       await this.state.sendPrompt(this.chatId(), value);
     } catch (error) {
       console.error('Failed to send prompt', error);

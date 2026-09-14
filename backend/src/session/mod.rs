@@ -125,7 +125,7 @@ impl AcpSession {
         Ok(())
     }
 
-    async fn ensure_running(&self) -> anyhow::Result<()> {
+    pub async fn ensure_running(&self) -> anyhow::Result<()> {
         if let Some(store) = &self.store {
             let chat = store.chat(&self.id)?;
             anyhow::ensure!(
@@ -578,9 +578,7 @@ impl AcpSession {
                 c.permission_policy = policy;
             }
         })?;
-        if c.archived {
-            self.shutdown().await;
-        } else if let Some(client) = self.client.read().await.as_ref() {
+        if let Some(client) = self.client.read().await.as_ref() {
             client
                 .callback_handler()
                 .set_policy(c.permission_policy.clone());

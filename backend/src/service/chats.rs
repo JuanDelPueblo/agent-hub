@@ -105,7 +105,15 @@ impl HubService {
         }
         let live = self.live(chat_id).await?;
         let timeout = self.prompt_timeout;
-        live.start_turn(text, timeout).await?;
+        if let Err(error) = live.start_turn(text, timeout).await {
+            if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
+                return Err(ServiceError::SavedConfigRejected {
+                    option_id: rejected.option_id.clone(),
+                    message: rejected.message.clone(),
+                });
+            }
+            return Err(error.into());
+        }
         Ok(())
     }
 
@@ -154,7 +162,17 @@ impl HubService {
     }
 
     pub async fn chat_config(&self, chat_id: &str) -> ServiceResult<Value> {
-        Ok(self.live(chat_id).await?.config_options().await)
+        let live = self.live(chat_id).await?;
+        if let Err(error) = live.ensure_running().await {
+            if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
+                return Err(ServiceError::SavedConfigRejected {
+                    option_id: rejected.option_id.clone(),
+                    message: rejected.message.clone(),
+                });
+            }
+            return Err(error.into());
+        }
+        Ok(live.config_options().await)
     }
 
     pub async fn set_chat_config(
@@ -163,11 +181,20 @@ impl HubService {
         option_id: &str,
         value: Value,
     ) -> ServiceResult<Value> {
-        Ok(self
-            .live(chat_id)
-            .await?
-            .set_config(option_id, value)
-            .await?)
+        let live = self.live(chat_id).await?;
+        match live.set_config(option_id, value).await {
+            Ok(v) => Ok(v),
+            Err(error) => {
+                if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
+                    Err(ServiceError::SavedConfigRejected {
+                        option_id: rejected.option_id.clone(),
+                        message: rejected.message.clone(),
+                    })
+                } else {
+                    Err(error.into())
+                }
+            }
+        }
     }
 
     pub async fn remote_sessions(

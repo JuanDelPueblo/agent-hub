@@ -118,6 +118,18 @@ async fn unsupported_resume_never_creates_another_conversation() {
         agent_hub::state::ProcessState::Running,
         "a non-resumable chat must not be made unusable by idle reaping"
     );
+    s.edit_metadata(None, Some(true), None).await.unwrap();
+    assert_eq!(
+        s.process_state().await,
+        agent_hub::state::ProcessState::Running,
+        "archiving a live chat must not terminate its process"
+    );
+    s.edit_metadata(None, Some(false), None).await.unwrap();
+    assert_eq!(
+        s.process_state().await,
+        agent_hub::state::ProcessState::Running,
+        "unarchiving a live chat must preserve its process"
+    );
     s.stop().await.unwrap();
     assert!(s
         .resume()

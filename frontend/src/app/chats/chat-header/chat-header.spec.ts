@@ -56,4 +56,14 @@ describe('ChatHeaderComponent', () => {
     expect(titleBtn).toBeTruthy();
     expect(titleBtn.textContent).toContain('Review the WebSocket replay path');
   });
+
+  it('does not render process controls or status labels', () => {
+    const text = fixture.nativeElement.textContent;
+    expect(text).not.toContain('Running');
+    expect(text).not.toContain('Stopped');
+    expect(text).not.toContain('Dead');
+    expect(fixture.nativeElement.querySelector('button[aria-label="Stop process"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('button[aria-label="Reconnect process"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('button[aria-label="Reconnect ACP"]')).toBeNull();
+  });
 });
