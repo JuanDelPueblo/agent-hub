@@ -13,3 +13,7 @@ frontend/.angular/
 # direnv
 .direnv/
 .envrc.local
+
+# Generated frontend assets
+/static/*
+!/static/.gitkeep

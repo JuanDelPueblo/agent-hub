@@ -27,7 +27,7 @@ Pueblo Hub is a single-owner persistent supervisor for local ACP coding agents.
 - Agent protocol: ACP over NDJSON JSON-RPC on stdio.
 - Frontend: standalone Angular, TypeScript, signals, Angular Material/CDK.
 - Packaging: one Rust binary embeds the production frontend with `rust-embed`.
-- Builds/toolchain: Nix owns the reproducible development and release environment.
+- Builds/toolchain: Nix owns the reproducible development and release environment; `nix build .#pueblo-hub` is the authoritative complete application build.
 
 Important paths:
 
@@ -162,7 +162,7 @@ pueblo-hub/
 │       ├── turns.mjs         # Scripted agent turns
 │       ├── websocket.mjs     # Minimal RFC 6455 server
 │       └── dev.mjs           # Starts the fake backend and `ng serve`
-├── static/                   # Production-hashed embedded frontend assets
+├── static/                   # Directory placeholder (.gitkeep) populated during production Nix build
 ├── frontend/                 # Frontend source code
 │   ├── angular.json          # Angular CLI build, serve, and test targets
 │   ├── proxy.conf.json       # Dev-server proxy to the fake backend
@@ -277,6 +277,8 @@ Packaging/release/deployment changes:
 ```sh
 nix build .#pueblo-hub
 ```
+
+`nix build .#pueblo-hub` is the authoritative complete application build, responsible for building the Angular frontend, staging assets into `static/`, and compiling the Rust binary with those assets embedded.
 
 Do not run expensive unrelated verification solely for a docs-only or narrowly isolated change.
 
