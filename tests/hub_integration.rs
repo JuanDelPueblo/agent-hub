@@ -354,6 +354,18 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         )
         .unwrap();
 
+    // This event lands while the chat is opening, before the fresh subscribe
+    // captures its baseline. The bounded history request must include it.
+    mgr.event_log()
+        .append(
+            &chat.id,
+            "codex",
+            EventPayload::MessageChunk {
+                text: "between startup and baseline".into(),
+            },
+        )
+        .unwrap();
+
     let mut config = Config::default();
     config.web.project_roots = vec![tmp.path().display().to_string()];
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -361,7 +373,8 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .unwrap();
     let address = listener.local_addr().unwrap();
     let app = router(AppState::new(mgr.clone(), Arc::new(config), address.port()));
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let server_app = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, server_app).await.unwrap() });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
         .await
         .unwrap();
@@ -379,11 +392,35 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .unwrap();
     let subscribed: Value = serde_json::from_str(subscribed.to_text().unwrap()).unwrap();
     assert_eq!(subscribed["type"], "subscribed");
-    assert_eq!(subscribed["through_seq"], 1);
+    assert_eq!(subscribed["through_seq"], 2);
     assert!(
         tokio::time::timeout(Duration::from_millis(100), socket.next())
             .await
             .is_err()
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/chats/{}/history?through_seq=2", chat.id))
+                .header("host", format!("127.0.0.1:{}", address.port()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(
+        body["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["seq"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
     );
 
     mgr.event_log()
@@ -401,7 +438,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .unwrap()
         .unwrap();
     let live: Value = serde_json::from_str(live.to_text().unwrap()).unwrap();
-    assert_eq!(live["seq"], 2);
+    assert_eq!(live["seq"], 3);
     socket.close(None).await.unwrap();
 
     mgr.event_log()
@@ -418,7 +455,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .unwrap();
     reconnect
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({ "type": "subscribe", "from_seq": 3 }).to_string(),
+            json!({ "type": "subscribe", "from_seq": 4 }).to_string(),
         ))
         .await
         .unwrap();
@@ -428,7 +465,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .unwrap()
         .unwrap();
     let missed: Value = serde_json::from_str(missed.to_text().unwrap()).unwrap();
-    assert_eq!(missed["seq"], 3);
+    assert_eq!(missed["seq"], 4);
     reconnect.close(None).await.unwrap();
     server.abort();
     mgr.shutdown_all().await;

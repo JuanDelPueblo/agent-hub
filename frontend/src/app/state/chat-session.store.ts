@@ -1,5 +1,6 @@
 import { inject, Service, signal, WritableSignal } from '@angular/core';
 import { ApiError, ApiService } from '../core/api/api.service';
+import { EventSocketService } from '../core/event-socket.service';
 import type {
   Chat,
   ConfigOption,
@@ -22,6 +23,7 @@ type CursorMap = Record<string, number | null>;
 @Service()
 export class ChatSessionStore {
   private readonly api = inject(ApiService);
+  private readonly socket = inject(EventSocketService);
 
   readonly chatsByProject = signal<ChatMap>({});
   readonly configOptionsByChat = signal<ConfigMap>({});
@@ -81,7 +83,7 @@ export class ChatSessionStore {
 
   loadChatHistory(chatId: string): Promise<void> {
     if (this.historyLoaded.has(chatId)) return Promise.resolve();
-    return this.requestHistory(chatId, undefined);
+    return this.requestHistory(chatId, undefined, true);
   }
 
   loadOlderHistory(chatId: string): Promise<void> {
@@ -344,7 +346,11 @@ export class ChatSessionStore {
     }
   }
 
-  private requestHistory(chatId: string, beforeSeq: number | undefined): Promise<void> {
+  private requestHistory(
+    chatId: string,
+    beforeSeq: number | undefined,
+    establishBaseline = false,
+  ): Promise<void> {
     const existing = this.inFlightHistory.get(chatId);
     if (existing) return existing;
 
@@ -357,7 +363,10 @@ export class ChatSessionStore {
         return next;
       });
       try {
-        const page = await this.api.fetchChatHistory(chatId, beforeSeq);
+        const throughSeq = establishBaseline ? await this.socket.waitForBaseline() : undefined;
+        const page = establishBaseline
+          ? await this.api.fetchChatHistory(chatId, beforeSeq, throughSeq)
+          : await this.api.fetchChatHistory(chatId, beforeSeq);
         const reducers = { ...this.reducersByChat() };
         const reducer = reducers[chatId] ?? new EventReducer();
         for (const event of page.events) reducer.ingest(event);

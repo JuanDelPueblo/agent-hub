@@ -88,6 +88,7 @@ pub(crate) fn chat_page(
     conn: &Connection,
     session_id: &str,
     before_seq: Option<u64>,
+    through_seq: Option<u64>,
     limit: usize,
 ) -> StoreResult<(Vec<SessionEvent>, bool)> {
     let before = before_seq
@@ -95,12 +96,17 @@ pub(crate) fn chat_page(
         .transpose()?;
     let query_limit =
         i64::try_from(limit.saturating_add(1)).map_err(|e| StoreError::Internal(e.into()))?;
+    let through = through_seq
+        .map(|seq| i64::try_from(seq).map_err(|e| StoreError::Internal(e.into())))
+        .transpose()?;
     let mut stmt = conn.prepare(
         "SELECT data FROM events
-         WHERE session_id = ?1 AND (?2 IS NULL OR seq < ?2)
-         ORDER BY seq DESC LIMIT ?3",
+         WHERE session_id = ?1
+           AND (?2 IS NULL OR seq < ?2)
+           AND (?3 IS NULL OR seq <= ?3)
+         ORDER BY seq DESC LIMIT ?4",
     )?;
-    let rows = stmt.query_map(params![session_id, before, query_limit], |r| {
+    let rows = stmt.query_map(params![session_id, before, through, query_limit], |r| {
         r.get::<_, String>(0)
     })?;
     let mut events = Vec::new();

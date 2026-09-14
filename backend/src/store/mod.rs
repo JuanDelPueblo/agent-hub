@@ -260,9 +260,16 @@ impl Store {
         &self,
         session_id: &str,
         before_seq: Option<u64>,
+        through_seq: Option<u64>,
         limit: usize,
     ) -> StoreResult<(Vec<crate::events::SessionEvent>, bool)> {
-        events::chat_page(&self.conn.lock().unwrap(), session_id, before_seq, limit)
+        events::chat_page(
+            &self.conn.lock().unwrap(),
+            session_id,
+            before_seq,
+            through_seq,
+            limit,
+        )
     }
 
     pub fn max_event_seq(&self) -> StoreResult<u64> {
@@ -456,17 +463,25 @@ mod tests {
         transaction.commit().unwrap();
         drop(connection);
 
-        let (first, has_older) = db.chat_event_page("target", None, 100).unwrap();
+        let (first, has_older) = db.chat_event_page("target", None, None, 100).unwrap();
         assert_eq!(first.len(), 100);
         assert!(has_older);
         assert!(first.iter().all(|event| event.session_id == "target"));
         assert!(first.windows(2).all(|pair| pair[0].seq < pair[1].seq));
 
+        let (bounded, has_older) = db
+            .chat_event_page("target", None, Some(10_000), 100)
+            .unwrap();
+        assert!(bounded.iter().all(|event| event.seq <= 10_000));
+        assert!(has_older);
+
         let mut total = first.len();
         if has_older {
             let mut cursor = first.first().unwrap().seq;
             loop {
-                let (page, more) = db.chat_event_page("target", Some(cursor), 100).unwrap();
+                let (page, more) = db
+                    .chat_event_page("target", Some(cursor), None, 100)
+                    .unwrap();
                 if page.is_empty() {
                     break;
                 }

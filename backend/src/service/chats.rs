@@ -86,11 +86,14 @@ impl HubService {
         &self,
         chat_id: &str,
         before_seq: Option<u64>,
+        through_seq: Option<u64>,
         limit: usize,
     ) -> ServiceResult<ChatHistoryPage> {
         self.store.chat(chat_id)?;
         let limit = limit.clamp(1, MAX_HISTORY_PAGE_SIZE);
-        let (events, has_older) = self.store.chat_event_page(chat_id, before_seq, limit)?;
+        let (events, has_older) =
+            self.store
+                .chat_event_page(chat_id, before_seq, through_seq, limit)?;
         let next_cursor = has_older
             .then(|| events.first().map(|event| event.seq))
             .flatten();

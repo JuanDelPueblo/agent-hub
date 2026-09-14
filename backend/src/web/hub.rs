@@ -306,6 +306,7 @@ pub async fn chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<J
 #[derive(Deserialize)]
 pub struct HistoryQuery {
     pub before_seq: Option<u64>,
+    pub through_seq: Option<u64>,
     pub limit: Option<usize>,
 }
 
@@ -318,7 +319,12 @@ pub async fn history(
         .limit
         .unwrap_or(DEFAULT_HISTORY_PAGE_SIZE)
         .min(MAX_HISTORY_PAGE_SIZE);
-    Ok(Json(hub(&s)?.chat_history(&id, query.before_seq, limit)?))
+    Ok(Json(hub(&s)?.chat_history(
+        &id,
+        query.before_seq,
+        query.through_seq,
+        limit,
+    )?))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -71,6 +71,10 @@ describe('fake backend seed history', () => {
     const older = state.historyPage(chat.id, first.next_cursor, 2);
     assert.ok(older.events.every((event) => event.session_id === chat.id));
     assert.ok(older.events.at(-1).seq < first.events[0].seq);
+
+    const bounded = state.historyPage(chat.id, undefined, 10, all.at(-3).seq);
+    assert.ok(bounded.events.every((event) => event.seq <= all.at(-3).seq));
+    assert.equal(bounded.has_older, false);
   });
 
   it('keeps history for the archived seed chat and none for a new chat', () => {

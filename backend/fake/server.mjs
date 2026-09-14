@@ -264,9 +264,12 @@ async function history({ params, url }) {
   const before = url.searchParams.has('before_seq')
     ? Number(url.searchParams.get('before_seq'))
     : undefined;
+  const through = url.searchParams.has('through_seq')
+    ? Number(url.searchParams.get('through_seq'))
+    : undefined;
   const requested = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 100;
   const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 200) : 100;
-  return json(state.historyPage(chat.id, before, limit));
+  return json(state.historyPage(chat.id, before, limit, through));
 }
 
 function editChat({ params, body }) {

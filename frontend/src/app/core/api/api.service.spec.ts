@@ -34,8 +34,8 @@ describe('ApiService', () => {
   });
 
   it('requests chat-scoped history with a sequence cursor', async () => {
-    const firstPromise = api.fetchChatHistory('chat/a');
-    const first = http.expectOne('/api/chats/chat%2Fa/history');
+    const firstPromise = api.fetchChatHistory('chat/a', undefined, 7);
+    const first = http.expectOne('/api/chats/chat%2Fa/history?through_seq=7');
     expect(first.request.method).toBe('GET');
     first.flush({ events: [], next_cursor: 42, has_older: true });
     await expect(firstPromise).resolves.toMatchObject({ next_cursor: 42, has_older: true });

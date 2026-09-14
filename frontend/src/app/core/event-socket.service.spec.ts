@@ -88,9 +88,22 @@ describe('EventSocketService', () => {
     socket.message(JSON.stringify(sessionEvent(1)));
     socket.message(JSON.stringify(sessionEvent(1)));
     socket.message(JSON.stringify(sessionEvent(2)));
-    socket.message(JSON.stringify({ type: 'subscribed' }));
+    socket.message(JSON.stringify({ type: 'subscribed', through_seq: 2 }));
 
     expect(received.map((event) => event.seq)).toEqual([1, 2]);
+    service.destroy();
+  });
+
+  it('exposes the durable baseline to history loaders', async () => {
+    const service = new EventSocketService();
+    const baseline = service.waitForBaseline();
+    service.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message(JSON.stringify({ type: 'subscribed', through_seq: 23 }));
+
+    await expect(baseline).resolves.toBe(23);
+    expect(service.baseline()).toBe(23);
     service.destroy();
   });
 

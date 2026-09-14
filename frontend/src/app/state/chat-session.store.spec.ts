@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, ApiService } from '../core/api/api.service';
+import { EventSocketService } from '../core/event-socket.service';
 import type { Chat, SessionEvent } from '../core/api/types';
 import { ChatSessionStore } from './chat-session.store';
 
@@ -20,6 +21,7 @@ describe('ChatSessionStore', () => {
   };
 
   let store: ChatSessionStore;
+  let socket: { waitForBaseline: ReturnType<typeof vi.fn> };
   let api: {
     fetchChats: ReturnType<typeof vi.fn>;
     resumeChat: ReturnType<typeof vi.fn>;
@@ -48,8 +50,12 @@ describe('ChatSessionStore', () => {
       deleteChat: vi.fn(async () => undefined),
       promptChat: vi.fn(async () => undefined),
     };
+    socket = { waitForBaseline: vi.fn(async () => 100) };
     TestBed.configureTestingModule({
-      providers: [{ provide: ApiService, useValue: api }],
+      providers: [
+        { provide: ApiService, useValue: api },
+        { provide: EventSocketService, useValue: socket },
+      ],
     });
     store = TestBed.inject(ChatSessionStore);
   });
@@ -70,12 +76,18 @@ describe('ChatSessionStore', () => {
     expect(store.configLoadedByChat()['chat-1']).toBe(true);
   });
 
-  it('retains live events across a delayed initial history page and deduplicates the overlap', async () => {
+  it('retains an event created before the baseline across delayed initial history and deduplicates overlap', async () => {
     store.chatsByProject.set({ 'project-1': [chat] });
     let resolvePage: ((page: { events: SessionEvent[]; next_cursor: number | null; has_older: boolean }) => void) | undefined;
+    let resolveBaseline: ((sequence: number) => void) | undefined;
+    socket.waitForBaseline.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveBaseline = resolve;
+    }));
     api.fetchChatHistory.mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
 
     const loading = store.loadChatHistory('chat-1');
+    await Promise.resolve();
+    expect(api.fetchChatHistory).not.toHaveBeenCalled();
     store.handleIncomingEvent({
       seq: 3,
       session_id: 'chat-1',
@@ -83,6 +95,9 @@ describe('ChatSessionStore', () => {
       timestamp: '2026-01-01T00:00:03Z',
       payload: { type: 'turn_complete', stop_reason: 'end_turn' },
     });
+    resolveBaseline?.(3);
+    await Promise.resolve();
+    expect(api.fetchChatHistory).toHaveBeenCalledWith('chat-1', undefined, 3);
     resolvePage?.({
       events: [
         { seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:01Z', payload: { type: 'user_message', text: 'Hello' } },
@@ -98,6 +113,22 @@ describe('ChatSessionStore', () => {
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({ type: 'user_message', text: 'Hello' });
     expect(items[1]).toMatchObject({ type: 'turn', status: 'complete' });
+  });
+
+  it('waits for the fresh live baseline before requesting initial history', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    let resolveBaseline: ((sequence: number) => void) | undefined;
+    socket.waitForBaseline.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveBaseline = resolve;
+    }));
+
+    const loading = store.loadChatHistory('chat-1');
+    await Promise.resolve();
+    expect(api.fetchChatHistory).not.toHaveBeenCalled();
+
+    resolveBaseline?.(23);
+    await loading;
+    expect(api.fetchChatHistory).toHaveBeenCalledWith('chat-1', undefined, 23);
   });
 
   it('keeps rendered history when an older page fails and retries from the same cursor', async () => {

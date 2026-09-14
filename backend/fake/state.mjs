@@ -116,9 +116,11 @@ export class FakeState {
     return this.events.filter((event) => event.seq >= fromSeq);
   }
 
-  historyPage(chatId, beforeSeq, limit = 100) {
+  historyPage(chatId, beforeSeq, limit = 100, throughSeq) {
     const history = this.events
-      .filter((event) => event.session_id === chatId && (beforeSeq == null || event.seq < beforeSeq))
+      .filter((event) => event.session_id === chatId
+        && (beforeSeq == null || event.seq < beforeSeq)
+        && (throughSeq == null || event.seq <= throughSeq))
       .sort((a, b) => b.seq - a.seq);
     const page = history.slice(0, limit);
     const hasOlder = history.length > limit;

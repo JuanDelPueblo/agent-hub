@@ -4,6 +4,10 @@ import type { SessionEvent } from './api/types';
 
 export type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+type BaselineWaiter = {
+  resolve: (sequence: number) => void;
+};
+
 /** Owns only the browser transport; application meaning is handled by state. */
 @Service()
 export class EventSocketService implements OnDestroy {
@@ -11,6 +15,8 @@ export class EventSocketService implements OnDestroy {
   readonly events = new Subject<SessionEvent>();
   readonly replayGaps = new Subject<void>();
   readonly errorMessage = signal('');
+  /** The durable high-water mark captured by the latest successful subscribe. */
+  readonly baseline = signal<number | null>(null);
 
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -18,6 +24,13 @@ export class EventSocketService implements OnDestroy {
   private fatal = false;
   private lastSequence = 0;
   private baselineEstablished = false;
+  private baselineWaiters: BaselineWaiter[] = [];
+
+  waitForBaseline(): Promise<number> {
+    const baseline = this.baseline();
+    if (baseline !== null) return Promise.resolve(baseline);
+    return new Promise((resolve) => this.baselineWaiters.push({ resolve }));
+  }
 
   connect(): void {
     if (this.destroyed || typeof window === 'undefined' || this.socket) return;
@@ -59,6 +72,10 @@ export class EventSocketService implements OnDestroy {
           if (typeof data.through_seq === 'number') {
             this.lastSequence = Math.max(this.lastSequence, data.through_seq);
             this.baselineEstablished = true;
+            this.baseline.set(data.through_seq);
+            const waiters = this.baselineWaiters;
+            this.baselineWaiters = [];
+            for (const waiter of waiters) waiter.resolve(data.through_seq);
           }
           return;
         }

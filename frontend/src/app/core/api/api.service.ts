@@ -115,8 +115,11 @@ export class ApiService {
     return this.request<Chat>(`/api/chats/${encodeURIComponent(chatId)}`);
   }
 
-  fetchChatHistory(chatId: string, beforeSeq?: number): Promise<ChatHistoryPage> {
-    const query = beforeSeq === undefined ? '' : `?before_seq=${beforeSeq}`;
+  fetchChatHistory(chatId: string, beforeSeq?: number, throughSeq?: number): Promise<ChatHistoryPage> {
+    const params = new URLSearchParams();
+    if (beforeSeq !== undefined) params.set('before_seq', String(beforeSeq));
+    if (throughSeq !== undefined) params.set('through_seq', String(throughSeq));
+    const query = params.toString() ? `?${params.toString()}` : '';
     return this.request<ChatHistoryPage>(
       `/api/chats/${encodeURIComponent(chatId)}/history${query}`,
     );
