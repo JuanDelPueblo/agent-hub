@@ -1,11 +1,11 @@
 [package]
-name = "agent-hub"
+name = "pueblo-hub"
 version = "0.2.0"
 edition = "2021"
 authors = ["JuanDelPueblo"]
 description = "Persistent single-owner ACP project and chat supervisor"
 license = "GPL-3.0-only"
-repository = "https://github.com/JuanDelPueblo/agent-hub"
+repository = "https://github.com/JuanDelPueblo/pueblo-hub"
 keywords = ["acp", "agent", "supervisor", "claude", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -68,9 +68,15 @@ tokio-tungstenite = "0.24"
 # The Rust sources sit in `backend/src`, next to the fake backend, so Cargo
 # needs the paths. Integration tests keep the default `tests/` location.
 [lib]
-name = "agent_hub"
+name = "pueblo_hub"
 path = "backend/src/lib.rs"
 
+[[bin]]
+name = "pueblo-hub"
+path = "backend/src/main.rs"
+
+# Keep the pre-rename executable available to existing service definitions.
+# `pueblo-hub` remains the canonical binary and package entry point.
 [[bin]]
 name = "agent-hub"
 path = "backend/src/main.rs"

@@ -369,7 +369,7 @@ impl HubService {
             if let Some(session) = self.sessions.get_by_id(&chat_id).await {
                 if session.process_state().await.is_running() {
                     return Err(ServiceError::Conflict(format!(
-                        "Cannot switch the primary checkout while chat {chat_id} has a live Agent Hub process"
+                        "Cannot switch the primary checkout while chat {chat_id} has a live Pueblo Hub process"
                     )));
                 }
             }

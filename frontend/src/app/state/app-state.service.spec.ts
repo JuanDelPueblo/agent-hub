@@ -18,7 +18,7 @@ describe('AppStateService', () => {
   let replayGaps: Subject<void>;
 
   beforeEach(() => {
-    projects = [{ id: 'project-1', name: 'Agent Hub', path: '/work', created_at: '2026-01-01', updated_at: '2026-01-01', chat_count: 1 }];
+    projects = [{ id: 'project-1', name: 'Pueblo Hub', path: '/work', created_at: '2026-01-01', updated_at: '2026-01-01', chat_count: 1 }];
     chats = [{ id: 'chat-1', project_id: 'project-1', agent: 'codex', title: 'First chat', created_at: '2026-01-01', updated_at: '2026-01-01', archived: false, permission_policy: 'ask', config_values: {}, process_state: 'STOPPED', turn_state: 'IDLE' }];
     resumeCalls = 0;
     permissionCalls = [];

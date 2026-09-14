@@ -24,12 +24,12 @@ describe('ChatConfigComponent workspace metadata', () => {
 
   it('shows managed workspace details read-only', () => {
     fixture.componentRef.setInput('chat', { ...baseChat, workspace: {
-      mode: 'managed_worktree', branch: 'agent-hub/chat/chat-1',
+      mode: 'managed_worktree', branch: 'pueblo-hub/chat/chat-1',
       base_commit: 'abcdef1234567890',
     } });
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Isolated worktree');
-    expect(fixture.nativeElement.textContent).toContain('agent-hub/chat/chat-1');
+    expect(fixture.nativeElement.textContent).toContain('pueblo-hub/chat/chat-1');
     expect(fixture.nativeElement.textContent).toContain('abcdef1');
     expect(fixture.nativeElement.querySelector('.workspace-section input, .workspace-section select')).toBeNull();
   });

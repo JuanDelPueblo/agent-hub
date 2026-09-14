@@ -1,6 +1,7 @@
-# Agent Hub Agent Guide
+# Pueblo Hub: Developer & AI Agent Guide
 
-This file contains implementation rules for coding agents. It is intentionally compact: product scope belongs in GitHub Issues and release grouping in milestones.
+This document gives architectural context, development guidelines, and operational procedures for software engineers and AI assistants who work on **Pueblo Hub**.
+This file contains implementation rules for coding agents. Product scope belongs in GitHub Issues and release grouping in milestones.
 
 ## Start here
 
@@ -12,13 +13,15 @@ For each task:
 4. Read `README.md` or other docs only when the task needs that context.
 5. Make the smallest correct change. Avoid unrelated refactors, dependency upgrades, cleanup, or future work.
 
+Pueblo Hub is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents. It provides a web interface that follows Material 3 design and adaptive-layout conventions. It manages persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
+
 Do not inventory the whole repository by default. Source and tests are the authority for current implementation details.
 
 `docs/STYLE_GUIDE.md` is normative for documentation changes.
 
 ## Stack and map
 
-Agent Hub is a single-owner persistent supervisor for local ACP coding agents.
+Pueblo Hub is a single-owner persistent supervisor for local ACP coding agents.
 
 - Backend: Rust, `tokio`, `axum`, SQLite.
 - Agent protocol: ACP over NDJSON JSON-RPC on stdio.
@@ -61,7 +64,7 @@ Important paths:
 
 ### Git workspaces
 
-- Agent Hub owns managed worktree creation, validation, recovery, and cleanup; ACP agents should only receive the resulting working directory.
+- Pueblo Hub owns managed worktree creation, validation, recovery, and cleanup; ACP agents should only receive the resulting working directory.
 - Never silently discard Git work. Do not implicitly reset, clean, stash, rebase, merge, fast-forward, cherry-pick, switch branches, or delete branches/worktrees containing user changes.
 - Direct/project-checkout chats share the real checkout and must preserve its external state.
 
@@ -102,7 +105,147 @@ direnv allow
 nix develop
 ```
 
-Frontend development with the fake backend:
+The shell supplies `cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `mold`, `sccache`, `cargo-nextest`, `cargo-watch`, Node 22, Python, and SQLite. It also points Cargo at the `mold` linker for the host target.
+
+`.envrc.local` holds machine settings and stays out of git.
+
+---
+
+## 3. Agent Configuration (`agents.json`)
+
+Agent definitions live in a JSON file that `--agents-file` names:
+
+```json
+{
+  "codex": { "command": "codex-acp" },
+  "claude": { "command": "claude-agent-acp" },
+  "opencode": { "command": "opencode", "args": ["acp"] },
+  "antigravity": { "command": "agy_acp_server.par", "args": ["--uid="] }
+}
+```
+
+Optional fields per agent:
+- `args`: Array of CLI arguments.
+- `env`: Key-value object of environment variables.
+- `idle_timeout`: Idle timeout in seconds before the process is reaped (default: 900).
+- `display_name`: Name for the user interface (default: the map key).
+- `usage_provider`: Identifier of the provider that reports quota and account
+  status. Pueblo Hub never infers this from the agent name, so an agent named
+  `codex` gets no provider until this field names one.
+- `metadata`: Free-form object. Pueblo Hub stores it and does not read it yet.
+
+The file rejects an unknown field, so a typo fails at startup.
+
+---
+
+## 4. Directory Structure
+
+```
+pueblo-hub/
+├── Cargo.toml                # Rust crate configuration (pueblo-hub)
+├── flake.nix                 # Nix package outputs and the dev shell
+├── .envrc                    # direnv entry point for the dev shell
+├── backend/
+│   ├── src/                  # The Rust backend
+│   │   ├── main.rs           # Binary entrypoint
+│   │   ├── lib.rs            # Library exports
+│   │   ├── acp/              # ACP protocol, callbacks, process supervision
+│   │   ├── agents/           # Agent definitions, launch config, agents.json
+│   │   ├── service/          # HubService: the operations every surface shares
+│   │   ├── session/          # Chat sessions, turn locks, idle reaping
+│   │   ├── store/            # SQLite migrations, projects, chats, events
+│   │   ├── events.rs         # Event log and WebSocket broadcasting
+│   │   └── web/              # Axum router, REST handlers, static file serving
+│   └── fake/                 # In-memory backend for frontend development
+│       ├── server.mjs        # REST and WebSocket routes
+│       ├── state.mjs         # Seed data and the event log
+│       ├── turns.mjs         # Scripted agent turns
+│       ├── websocket.mjs     # Minimal RFC 6455 server
+│       └── dev.mjs           # Starts the fake backend and `ng serve`
+├── static/                   # Production-hashed embedded frontend assets
+├── frontend/                 # Frontend source code
+│   ├── angular.json          # Angular CLI build, serve, and test targets
+│   ├── proxy.conf.json       # Dev-server proxy to the fake backend
+│   ├── package.json          # Pinned frontend dependencies
+│   ├── public/               # Static files copied into the Angular build
+│   └── src/
+│       ├── main.ts           # Frontend entrypoint
+│       ├── app/              # Standalone features, services, and routes
+│       └── styles.scss       # Material theme and global composition CSS
+└── tests/                    # Backend integration tests
+```
+
+---
+
+## 5. Architecture
+
+### 5.1. Subprocess ACP Layer (`backend/src/acp/`)
+- **Transport**: NDJSON JSON-RPC over standard I/O with local ACP agents.
+- **Client Protocol**: Handles the ACP handshake, session initialization (`session/new`, `session/load`, `session/resume`), tool execution, plan updates, and terminal and filesystem callbacks.
+- **Title Synchronization**: Watches `session_info_update` and saves the agent-generated chat title to SQLite, unless the user overrode the title.
+- **Permission Callbacks**: Applies the permission policy (`ask`, `read-only`, `auto-approve`, `deny-all`) to file edits and terminal commands that the agent requests.
+
+### 5.2. Session Lifecycle (`backend/src/session/`)
+- **Process Supervision**: Spawns and supervises the ACP subprocesses on demand.
+- **Turn Locking**: Allows one turn at a time per chat.
+- **Process Management**: Reaps idle processes (900 seconds by default), stops them through `session/close`, and terminates the process tree when necessary.
+
+### 5.3. Persistence (`backend/src/store/`)
+- **Engine**: SQLite in WAL mode, with foreign keys and a busy timeout.
+- **Migrations (`store/migrations.rs`)**: An ordered table of versioned
+  migrations. Each one runs in its own transaction and advances
+  `PRAGMA user_version` inside that transaction, so the version advances only
+  after the migration succeeds. A database from a newer build is reported, never
+  reset. Add a migration to the end of the table; never edit one that shipped.
+  Write each migration so a second run is safe: prefer `IF NOT EXISTS`, and give
+  it a `precondition` query when no such form exists. Pueblo Hub v0.2 reset
+  `user_version` on every open, so a downgraded database can arrive claiming an
+  old version with a new schema. Existing managed chats may retain the
+  pre-rename `agent-hub/chat/<chat-id>` branch prefix; new chats use
+  `pueblo-hub/chat/<chat-id>` and recovery accepts both.
+- **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
+  `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
+  facade controls the lock and any shared transaction.
+- **Tables**:
+  - `projects`: Managed repositories, with a name and a canonical path.
+  - `chats`: Chats bound to a project, an agent, a title, an ACP session ID, a permission policy, and configuration values.
+  - `events`: Session events in strict sequence order, with an indexed
+    `session_id` column so chat deletion does not scan the table.
+
+### 5.4. Event Dispatch and WebSockets (`backend/src/events.rs`)
+- **Event Log**: A thread-safe in-memory ring buffer that holds the latest 10,000 events for reconnect and replay.
+- **WebSocket Streaming**: A client subscribes with `from_seq` and resumes the stream without a gap.
+
+### 5.5. Application Services (`backend/src/service/`)
+- **`HubService`**: Owns the user-visible Hub operations for projects and chats
+  and coordinates the store, the session manager, the event log, and the agent
+  registry. It does not speak ACP.
+- **Why**: The MCP surface and the federation surface must run the same
+  operations as the browser. Put a new Hub operation here, not in a handler.
+- **`ServiceError`**: Names the kind of failure (not found, invalid, conflict,
+  unavailable, timeout, internal). Each transport maps it to its own errors.
+
+### 5.6. Web API and Static Serving (`backend/src/web/`)
+- **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, and permissions.
+- **Adapters**: Handlers in `web/hub.rs` parse the request, call `HubService`,
+  and map `ServiceError` to a status code. Business rules do not live here.
+- **Web-only work (`web/git.rs`)**: Repository cloning shells out to git with
+  its own timeout and cleanup. It registers the finished clone through
+  `HubService` so a project row is always created one way.
+- **Static Assets (`backend/src/web/static_files.rs`)**: Serves the embedded Angular assets. Hashed assets get `Cache-Control: public, max-age=31536000, immutable`. `index.html` gets revalidation headers and the History API fallback.
+
+### 5.7. Frontend (`frontend/`)
+- **Framework**: Angular standalone components with signals, `HttpClient`, the Angular Router, and RxJS for the WebSocket stream.
+- **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Pueblo Hub status tokens.
+- **Window Classes**: Compact (<600px) uses a modal drawer, full-width inputs, touch targets of 48px or more, and `env(safe-area-inset-bottom)`. Medium (600–839px) uses a modal drawer and flexible margins. Expanded (>=840px) uses a permanent drawer, a dual-pane layout, and a side sheet for configuration.
+- **Routing**: `/`, `/projects/:projectId`, and `/projects/:projectId/chats/:chatId`, with the Rust SPA fallback for deep links.
+- **State**: A signal store (`src/app/state/app-state.service.ts`) and a pure event reducer (`src/app/state/event-reducer.ts`) that aggregates turns, thoughts, tools, plans, and permissions.
+
+---
+
+## 6. Frontend Development Against the Fake Backend
+
+`backend/fake/` serves the REST and WebSocket surface of `backend/src/web/` from memory. Use it for frontend work. It needs no Rust build, no agent binary, and no npm dependency.
 
 ```sh
 cd frontend
@@ -132,7 +275,7 @@ npm run build
 Packaging/release/deployment changes:
 
 ```sh
-nix build .#agent-hub
+nix build .#pueblo-hub
 ```
 
 Do not run expensive unrelated verification solely for a docs-only or narrowly isolated change.

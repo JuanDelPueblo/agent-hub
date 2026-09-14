@@ -1,7 +1,7 @@
-use agent_hub::agents::{AgentDefinition, AgentRegistry};
-use agent_hub::events::EventLog;
-use agent_hub::session::SessionManager;
-use agent_hub::state::{ProcessState, TurnState};
+use pueblo_hub::agents::{AgentDefinition, AgentRegistry};
+use pueblo_hub::events::EventLog;
+use pueblo_hub::session::SessionManager;
+use pueblo_hub::state::{ProcessState, TurnState};
 #[cfg(windows)]
 use serde_json::json;
 use std::sync::Arc;

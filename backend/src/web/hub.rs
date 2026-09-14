@@ -71,7 +71,7 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 pub(crate) fn hub(s: &AppState) -> Result<&Arc<HubService>> {
     s.hub.as_ref().ok_or(ApiError(
         StatusCode::SERVICE_UNAVAILABLE,
-        "Run the agent-hub binary for persistent projects".into(),
+        "Run the pueblo-hub binary for persistent projects".into(),
         None,
     ))
 }

@@ -3,7 +3,7 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "agent-hub-frontend": {
+    "pueblo-hub-frontend": {
       "projectType": "application",
       "root": "",
       "sourceRoot": "src",
@@ -52,10 +52,10 @@
           },
           "configurations": {
             "development": {
-              "buildTarget": "agent-hub-frontend:build:development"
+              "buildTarget": "pueblo-hub-frontend:build:development"
             },
             "production": {
-              "buildTarget": "agent-hub-frontend:build:production"
+              "buildTarget": "pueblo-hub-frontend:build:production"
             }
           },
           "defaultConfiguration": "development"

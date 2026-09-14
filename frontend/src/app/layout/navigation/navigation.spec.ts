@@ -13,7 +13,7 @@ describe('NavigationComponent DOM check', () => {
   beforeEach(async () => {
     const mockState = {
       activeProjectId: signal('proj-1'),
-      activeProject: signal({ id: 'proj-1', name: 'agent-hub', path: '/home/dev/projects/agent-hub' }),
+      activeProject: signal({ id: 'proj-1', name: 'pueblo-hub', path: '/home/dev/projects/pueblo-hub' }),
       projects: signal([]),
       agents: signal(['claude', 'codex', 'opencode']),
       chatsByProject: signal({
@@ -131,7 +131,7 @@ describe('NavigationComponent DOM check', () => {
 
 describe('NavigationComponent project switching', () => {
   const projects = [
-    { id: 'p1', name: 'Agent Hub', path: '/repos/agent-hub' },
+    { id: 'p1', name: 'Pueblo Hub', path: '/repos/pueblo-hub' },
     { id: 'p2', name: 'Proj Two', path: '/repos/two' },
     { id: 'p3', name: 'Empty Project', path: '/repos/empty' },
   ];
@@ -230,7 +230,7 @@ describe('NavigationComponent project switching', () => {
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
 
     const items = await openProjectMenu(fixture);
-    itemByText(items, 'Agent Hub').click();
+    itemByText(items, 'Pueblo Hub').click();
     await fixture.whenStable();
 
     expect(navigate).not.toHaveBeenCalled();
@@ -249,7 +249,7 @@ describe('NavigationComponent working duration', () => {
     };
     const state = {
       activeProjectId: signal('proj-1'),
-      activeProject: signal({ id: 'proj-1', name: 'Agent Hub', path: '/work' }),
+      activeProject: signal({ id: 'proj-1', name: 'Pueblo Hub', path: '/work' }),
       projects: signal([]),
       chatsByProject: signal({ 'proj-1': [chat] }),
       showArchived: signal(false),

@@ -1,5 +1,5 @@
 {
-  description = "Agent Hub: persistent ACP project and chat supervisor";
+  description = "Pueblo Hub: persistent ACP project and chat supervisor";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   outputs = { self, nixpkgs }:
     let
@@ -9,11 +9,11 @@
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          frontend = pkgs.buildNpmPackage {
-            pname = "agent-hub-frontend";
+          pueblo-hub-frontend = pkgs.buildNpmPackage {
+            pname = "pueblo-hub-frontend";
             version = "0.2.0";
             src = ./frontend;
-            npmDepsHash = "sha256-IzOJ6wriXKv6PY6tdbzrfhr9DYlaYaM3m4/rTBXZa6o=";
+            npmDepsHash = "sha256-sfE4FiYhZL24PSU+hRlXW3ltkkXN1PM1D7Rc0aqGqHk=";
             preBuild = ''
               export NG_CLI_ANALYTICS=false
             '';
@@ -23,24 +23,29 @@
             '';
           };
         in rec {
-          inherit frontend;
-          agent-hub = pkgs.rustPlatform.buildRustPackage {
-            pname = "agent-hub";
+          inherit pueblo-hub-frontend;
+          # Compatibility attribute for existing `.#frontend` consumers.
+          frontend = pueblo-hub-frontend;
+          pueblo-hub = pkgs.rustPlatform.buildRustPackage {
+            pname = "pueblo-hub";
             version = "0.2.0";
             src = pkgs.lib.cleanSource self;
             cargoLock.lockFile = ./Cargo.lock;
             preBuild = ''
               rm -rf static/*
-              cp -r ${frontend}/* static/
+              cp -r ${pueblo-hub-frontend}/* static/
             '';
             nativeCheckInputs = [ pkgs.python3 pkgs.git ];
             meta = {
               description = "Persistent single-owner ACP project and chat supervisor";
               license = pkgs.lib.licenses.gpl3Only;
-              mainProgram = "agent-hub";
+              mainProgram = "pueblo-hub";
             };
           };
-          default = agent-hub;
+          # Compatibility attribute for deployments that still select
+          # `.#agent-hub`; new consumers should use `.#pueblo-hub`.
+          agent-hub = pueblo-hub;
+          default = pueblo-hub;
         });
 
       devShells = eachSystem (system:
@@ -48,7 +53,7 @@
           pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            name = "agent-hub-dev";
+            name = "pueblo-hub-dev";
 
             packages = with pkgs; [
               # Rust toolchain
@@ -94,7 +99,7 @@
               export NG_CLI_ANALYTICS=false
               export RUST_BACKTRACE=1
 
-              echo "agent-hub dev shell: $(rustc --version), node $(node --version)"
+              echo "pueblo-hub dev shell: $(rustc --version), node $(node --version)"
               echo "  cargo check       fast type check"
               echo "  cargo nextest run fast test run"
               echo "  npm run dev       frontend against the fake backend (in frontend/)"

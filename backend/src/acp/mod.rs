@@ -208,7 +208,7 @@ impl AcpClient {
 
     pub async fn initialize(&self, _cwd: &Path) -> anyhow::Result<InitializeResponse> {
         let req = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
-            agent_client_protocol_schema::Implementation::new("agent-hub", "0.2.0"),
+            agent_client_protocol_schema::Implementation::new("pueblo-hub", "0.2.0"),
         );
         let mut req = serde_json::to_value(req)?;
         req["clientCapabilities"] =
@@ -449,7 +449,7 @@ impl Drop for AcpClient {
         //   can't acquire the child lock — extremely rare since tasks are
         //   aborted right above — the killpg never fires from here and we fall
         //   back to whatever the inner Child does on drop (direct-child kill).
-        //   Force-killing agent-hub itself on Unix (no Drop runs) is a known
+        //   Force-killing pueblo-hub itself on Unix (no Drop runs) is a known
         //   limitation; we have no JobObject equivalent.
         self.connected.store(false, Ordering::SeqCst);
         if let Ok(mut handle) = self.writer_handle.try_lock() {

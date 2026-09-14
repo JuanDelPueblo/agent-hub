@@ -1,4 +1,4 @@
-// Minimal RFC 6455 server. It supports the frames that Agent Hub uses:
+// Minimal RFC 6455 server. It supports the frames that Pueblo Hub uses:
 // text, ping, pong and close. It has no dependencies, so the fake backend
 // runs with plain `node` and never changes the frontend lock file.
 

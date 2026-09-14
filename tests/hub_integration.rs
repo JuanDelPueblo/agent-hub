@@ -1,4 +1,9 @@
-use agent_hub::{
+use axum::{
+    body::{to_bytes, Body},
+    http::Request,
+};
+use futures_util::{SinkExt, StreamExt};
+use pueblo_hub::{
     agents::{parse_agents, AgentDefinition, AgentRegistry},
     config::Config,
     events::{EventLog, EventPayload},
@@ -6,11 +11,6 @@ use agent_hub::{
     store::Store,
     web::{router, AppState},
 };
-use axum::{
-    body::{to_bytes, Body},
-    http::Request,
-};
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
@@ -84,7 +84,7 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     assert_eq!(db.chats().unwrap().len(), 2);
     assert_eq!(
         one.process_state().await,
-        agent_hub::state::ProcessState::Stopped
+        pueblo_hub::state::ProcessState::Stopped
     );
     mgr.shutdown_all().await;
     drop(one);
@@ -95,8 +95,8 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     let result = one.ask("after restart".into(), None).await.unwrap();
     assert_eq!(result, format!("{sid}:4:large"));
     let history = match mgr.event_log().replay_from(0) {
-        agent_hub::events::ReplayResult::Complete(e)
-        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        pueblo_hub::events::ReplayResult::Complete(e)
+        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
     };
     assert!(!history
         .iter()
@@ -121,19 +121,19 @@ async fn unsupported_resume_never_creates_another_conversation() {
     mgr.reap_idle().await;
     assert_eq!(
         s.process_state().await,
-        agent_hub::state::ProcessState::Running,
+        pueblo_hub::state::ProcessState::Running,
         "a non-resumable chat must not be made unusable by idle reaping"
     );
     s.edit_metadata(None, Some(true), None).await.unwrap();
     assert_eq!(
         s.process_state().await,
-        agent_hub::state::ProcessState::Running,
+        pueblo_hub::state::ProcessState::Running,
         "archiving a live chat must not terminate its process"
     );
     s.edit_metadata(None, Some(false), None).await.unwrap();
     assert_eq!(
         s.process_state().await,
-        agent_hub::state::ProcessState::Running,
+        pueblo_hub::state::ProcessState::Running,
         "unarchiving a live chat must preserve its process"
     );
     s.stop().await.unwrap();
@@ -263,7 +263,7 @@ async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
     let connection = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
     let transaction = connection.unchecked_transaction().unwrap();
     for index in 0..20_050 {
-        let event = agent_hub::events::SessionEvent {
+        let event = pueblo_hub::events::SessionEvent {
             seq: index + 1,
             timestamp: chrono::Utc::now(),
             session_id: if index % 2 == 0 {
@@ -483,9 +483,9 @@ fn generic_configuration_is_validated() {
     assert!(parse_agents(r#"{"bad":{"command":""}}"#).is_err());
     assert!(parse_agents(r#"{"bad":{"command":"acp","unknown":true}}"#).is_err());
     let options = json!([{"id":"model","type":"select","options":[{"group":"provider","options":[{"value":"x"}]}]},{"id":"fast","type":"boolean"}]);
-    assert!(agent_hub::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
-    assert!(agent_hub::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
-    assert!(agent_hub::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
+    assert!(pueblo_hub::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
+    assert!(pueblo_hub::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
+    assert!(pueblo_hub::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
 }
 
 #[tokio::test]
@@ -576,12 +576,12 @@ async fn folder_browsing_and_security() {
 
 #[tokio::test]
 async fn git_clone_validation_and_behavior() {
-    use agent_hub::web::{derive_repo_name, sanitize_credentials, validate_git_url};
+    use pueblo_hub::web::{derive_repo_name, sanitize_credentials, validate_git_url};
 
     // Validation unit checks
-    assert!(validate_git_url("https://github.com/JuanDelPueblo/agent-hub.git").is_ok());
-    assert!(validate_git_url("git@github.com:JuanDelPueblo/agent-hub.git").is_ok());
-    assert!(validate_git_url("ssh://git@github.com/JuanDelPueblo/agent-hub.git").is_ok());
+    assert!(validate_git_url("https://github.com/JuanDelPueblo/pueblo-hub.git").is_ok());
+    assert!(validate_git_url("git@github.com:JuanDelPueblo/pueblo-hub.git").is_ok());
+    assert!(validate_git_url("ssh://git@github.com/JuanDelPueblo/pueblo-hub.git").is_ok());
     assert!(validate_git_url("file:///etc/passwd").is_err());
     assert!(validate_git_url("/tmp/repo").is_err());
     assert!(validate_git_url("./local-repo").is_err());
@@ -589,10 +589,10 @@ async fn git_clone_validation_and_behavior() {
     assert!(validate_git_url("").is_err());
 
     // Plain HTTP sends credentials without encryption. Reject it.
-    assert!(validate_git_url("http://github.com/JuanDelPueblo/agent-hub.git").is_err());
-    assert!(validate_git_url("HTTP://github.com/JuanDelPueblo/agent-hub.git").is_err());
+    assert!(validate_git_url("http://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
+    assert!(validate_git_url("HTTP://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
     assert!(validate_git_url("http://user:pw@github.com/org/repo.git").is_err());
-    assert!(validate_git_url("git://github.com/JuanDelPueblo/agent-hub.git").is_err());
+    assert!(validate_git_url("git://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
 
     // Credential sanitization must remove the complete userinfo.
     assert_eq!(
@@ -627,12 +627,12 @@ async fn git_clone_validation_and_behavior() {
 
     // Name derivation
     assert_eq!(
-        derive_repo_name("https://github.com/JuanDelPueblo/agent-hub.git").as_deref(),
-        Some("agent-hub")
+        derive_repo_name("https://github.com/JuanDelPueblo/pueblo-hub.git").as_deref(),
+        Some("pueblo-hub")
     );
     assert_eq!(
-        derive_repo_name("git@github.com:JuanDelPueblo/agent-hub.git").as_deref(),
-        Some("agent-hub")
+        derive_repo_name("git@github.com:JuanDelPueblo/pueblo-hub.git").as_deref(),
+        Some("pueblo-hub")
     );
     assert_eq!(
         derive_repo_name("https://github.com/JuanDelPueblo/my-project/").as_deref(),
@@ -721,7 +721,7 @@ async fn git_clone_validation_and_behavior() {
     assert_eq!(count_before, count_after);
 
     // 5. Destination name traversal validation unit checks
-    use agent_hub::web::validate_clone_destination_name;
+    use pueblo_hub::web::validate_clone_destination_name;
     assert!(validate_clone_destination_name("valid-name").is_ok());
     assert!(validate_clone_destination_name("my_repo_123").is_ok());
     assert!(validate_clone_destination_name("../outside").is_err());
@@ -794,9 +794,12 @@ async fn git_clone_validation_and_behavior() {
     std::fs::create_dir_all(&dest_dir).unwrap();
     assert!(dest_dir.exists());
 
-    let res =
-        agent_hub::web::run_command_with_timeout(child, Duration::from_millis(50), Some(&dest_dir))
-            .await;
+    let res = pueblo_hub::web::run_command_with_timeout(
+        child,
+        Duration::from_millis(50),
+        Some(&dest_dir),
+    )
+    .await;
     assert!(res.is_err());
     assert!(!dest_dir.exists());
     assert_eq!(
@@ -919,8 +922,8 @@ async fn acp_titles_and_lifecycle() {
 
     // 8. Verify MetadataChanged was emitted
     let history = match mgr.event_log().replay_from(0) {
-        agent_hub::events::ReplayResult::Complete(e)
-        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        pueblo_hub::events::ReplayResult::Complete(e)
+        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
     };
     let meta_events: Vec<_> = history
         .iter()
@@ -1046,8 +1049,8 @@ async fn deleting_a_chat_removes_only_its_events_across_restart() {
     let reopened = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
     let log = EventLog::persistent(reopened.clone()).unwrap();
     let replayed = match log.replay_from(0) {
-        agent_hub::events::ReplayResult::Complete(e)
-        | agent_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        pueblo_hub::events::ReplayResult::Complete(e)
+        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
     };
     assert!(
         replayed.iter().all(|e| e.session_id != doomed.id),

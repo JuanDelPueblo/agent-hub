@@ -15,8 +15,8 @@ describe('FolderPickerComponent', () => {
     fetchDirectories: async (path?: string) => {
       requestedPaths.push(path);
       return {
-        current: path || '/home/tony', name: path ? 'agent-hub' : 'tony', parent: '/home', roots: ['/home'], breadcrumbs: [{ name: 'home', path: '/home' }, { name: path ? 'agent-hub' : 'tony', path: path || '/home/tony' }],
-        directories: path ? [] : [{ name: 'agent-hub', path: '/home/tony/agent-hub' }],
+        current: path || '/home/tony', name: path ? 'pueblo-hub' : 'tony', parent: '/home', roots: ['/home'], breadcrumbs: [{ name: 'home', path: '/home' }, { name: path ? 'pueblo-hub' : 'tony', path: path || '/home/tony' }],
+        directories: path ? [] : [{ name: 'pueblo-hub', path: '/home/tony/pueblo-hub' }],
       };
     },
   } as unknown as ApiService;
@@ -33,21 +33,21 @@ describe('FolderPickerComponent', () => {
 
   it('separates browsing from selecting the current directory', async () => {
     const row = fixture.nativeElement.querySelector('button[mat-list-item]') as HTMLButtonElement;
-    expect(row.textContent).toContain('agent-hub');
+    expect(row.textContent).toContain('pueblo-hub');
     row.click();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(host.selected).toBe('');
     const select = Array.from(fixture.nativeElement.querySelectorAll('button')).find((button: unknown) => (button as Element).textContent?.includes('Select current folder')) as HTMLButtonElement;
     select.click();
-    expect(host.selected).toBe('/home/tony/agent-hub');
+    expect(host.selected).toBe('/home/tony/pueblo-hub');
   });
 
   it('browses when the signal input changes', async () => {
-    host.initialPath.set('/home/tony/agent-hub');
+    host.initialPath.set('/home/tony/pueblo-hub');
     fixture.detectChanges();
     await fixture.whenStable();
 
-    expect(requestedPaths).toEqual([undefined, '/home/tony/agent-hub']);
+    expect(requestedPaths).toEqual([undefined, '/home/tony/pueblo-hub']);
   });
 });

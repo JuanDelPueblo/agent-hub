@@ -1,4 +1,4 @@
-//! The set of agents this Agent Hub knows about.
+//! The set of agents this Pueblo Hub knows about.
 mod definition;
 mod file;
 
