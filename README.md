@@ -55,7 +55,15 @@ or directly with Nix:
 nix develop
 ```
 
-Build the server:
+Build the complete application with embedded frontend assets:
+
+```sh
+nix build .#pueblo-hub
+```
+
+The resulting binary will be in `result/bin/pueblo-hub`.
+
+For standalone backend development without embedded frontend assets:
 
 ```sh
 cargo build --bin pueblo-hub
@@ -64,7 +72,7 @@ cargo build --bin pueblo-hub
 Then run it with a database, project directory, and agent configuration:
 
 ```sh
-target/debug/pueblo-hub \
+result/bin/pueblo-hub \
   --database /path/to/state/hub.sqlite3 \
   --project-root /path/to/projects \
   --agents-file agents.json \
@@ -198,7 +206,7 @@ npm test
 npm run build
 ```
 
-The complete Nix package can be checked with:
+The complete application with embedded frontend assets is built authoritatively with:
 
 ```sh
 nix build .#pueblo-hub
