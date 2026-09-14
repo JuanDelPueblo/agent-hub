@@ -254,6 +254,14 @@ npm run dev
 
 Run the narrowest relevant checks while iterating, then the appropriate full checks before committing.
 
+The standard final verification command for implementation tasks is:
+
+```sh
+nix run .#verify
+```
+
+It runs the canonical source-level suite with Nix-supplied tools. It covers Rust formatting, clippy, `cargo nextest run`, frontend tests, the frontend production build, and fake-backend tests. It works without entering `nix develop`.
+
 Backend:
 
 ```sh

@@ -106,5 +106,34 @@
             '';
           };
         });
+
+      apps = eachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          verify = pkgs.writeShellApplication {
+            name = "pueblo-hub-verify";
+            # Every tool the verification suite needs, so `nix run .#verify`
+            # works on a clean checkout without entering `nix develop`.
+            runtimeInputs = with pkgs; [
+              cargo
+              rustc
+              clippy
+              rustfmt
+              pkg-config
+              stdenv.cc
+              cargo-nextest
+              nodejs_22
+              python3
+              git
+              sqlite
+            ];
+            text = builtins.readFile ./nix/verify.sh;
+          };
+        in {
+          verify = {
+            type = "app";
+            program = pkgs.lib.getExe verify;
+          };
+        });
     };
 }
