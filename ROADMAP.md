@@ -4,19 +4,19 @@ This roadmap follows the current v0.2 frontend overhaul. Each phase should be im
 
 ## Phase order
 
-| Phase | Priority | Feature | Depends on |
-| --- | --- | --- | --- |
-| 0 | P0 | Backend architectural foundations | Current v0.2 |
-| 1 | P1 | Usage quotas/status | Phase 0 |
-| 2 | P1 | Hub-managed per-chat Git worktrees | Phase 0 |
-| 3 | P1 | Per-turn git/file diffs | Phase 2 |
-| 4 | P2 | Native authentication | Phase 0 |
-| 5 | P2 | Browser/Web Push notifications | Phase 4 |
-| 6 | P2 | File/image uploads and prompt attachments | Phases 3–4 |
-| 7 | P2 | MCP control plane | Phase 4 |
-| 8 | P2 | File/inline review comments | Phase 3 |
-| 9 | P3 | Remote Agent Hub federation | Phases 4–7 |
-| 10 | P4 | Generalized ACP + official ACP Registry | All previous |
+| Phase | Priority | Feature | Depends on | Completed |
+| --- | --- | --- | --- | --- |
+| 0 | P0 | Backend architectural foundations | Current v0.2 | ✅ |
+| 1 | P1 | Usage quotas/status | Phase 0 | ❌ |
+| 2 | P1 | Hub-managed per-chat Git worktrees | Phase 0 | ❌ |
+| 3 | P1 | Per-turn git/file diffs | Phase 2 | ❌ |
+| 4 | P2 | Native authentication | Phase 0 | ❌ |
+| 5 | P2 | Browser/Web Push notifications | Phase 4 | ❌ |
+| 6 | P2 | File/image uploads and prompt attachments | Phases 3–4 | ❌ |
+| 7 | P2 | MCP control plane | Phase 4 | ❌ |
+| 8 | P2 | File/inline review comments | Phase 3 | ❌ |
+| 9 | P3 | Remote Agent Hub federation | Phases 4–7 | ❌ |
+| 10 | P4 | Generalized ACP + official ACP Registry | All previous | ❌ |
 
 ## Phase 0 — Backend architectural foundations
 
