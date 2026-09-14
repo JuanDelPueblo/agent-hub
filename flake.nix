@@ -1,7 +1,9 @@
 {
   description = "Pueblo Hub: persistent ACP project and chat supervisor";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  outputs = { self, nixpkgs }:
+  inputs.crane.url = "github:ipetkov/crane";
+  inputs.crane.inputs.nixpkgs.follows = "nixpkgs";
+  outputs = { self, nixpkgs, crane }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
@@ -26,37 +28,48 @@
           inherit pueblo-hub-frontend;
           # Compatibility attribute for existing `.#frontend` consumers.
           frontend = pueblo-hub-frontend;
-          pueblo-hub = pkgs.rustPlatform.buildRustPackage {
-            pname = "pueblo-hub";
-            version = "0.2.0";
-            src = pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.unions [
-                ./Cargo.toml
-                ./Cargo.lock
-                ./backend/src
-                ./static
-              ];
-            };
-            cargoLock.lockFile = ./Cargo.lock;
-            # Packaging builds the release artifact only. Source-level
-            # verification, including the Rust test suite, lives in
-            # `nix run .#verify` and CI.
-            doCheck = false;
-            nativeBuildInputs =
-              pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
-            RUSTFLAGS =
-              pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-C link-arg=-fuse-ld=mold";
-            preBuild = ''
-              rm -rf static/*
-              cp -r ${pueblo-hub-frontend}/* static/
-            '';
-            meta = {
-              description = "Persistent single-owner ACP project and chat supervisor";
-              license = pkgs.lib.licenses.gpl3Only;
-              mainProgram = "pueblo-hub";
-            };
-          };
+          pueblo-hub =
+            let
+              craneLib = crane.mkLib pkgs;
+              rustSrc = pkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = pkgs.lib.fileset.unions [
+                  ./Cargo.toml
+                  ./Cargo.lock
+                  ./backend/src
+                  ./static
+                ];
+              };
+              commonArgs = {
+                pname = "pueblo-hub";
+                version = "0.2.0";
+                src = rustSrc;
+                strictDeps = true;
+                # Packaging builds the release artifact only. Source-level
+                # verification, including the Rust test suite, lives in
+                # `nix run .#verify` and CI.
+                doCheck = false;
+                nativeBuildInputs =
+                  pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
+                RUSTFLAGS =
+                  pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-C link-arg=-fuse-ld=mold";
+                meta = {
+                  description = "Persistent single-owner ACP project and chat supervisor";
+                  license = pkgs.lib.licenses.gpl3Only;
+                  mainProgram = "pueblo-hub";
+                };
+              };
+              # Dependencies compile once from the manifest and lockfile.
+              # Crate-only edits reuse these artifacts.
+              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+            in
+            craneLib.buildPackage (commonArgs // {
+              inherit cargoArtifacts;
+              preBuild = ''
+                rm -rf static/*
+                cp -r ${pueblo-hub-frontend}/* static/
+              '';
+            });
           default = pueblo-hub;
         });
 
