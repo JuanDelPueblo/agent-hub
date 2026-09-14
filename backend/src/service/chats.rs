@@ -198,6 +198,15 @@ impl HubService {
                         "Project checkout mode requires an attached local branch".into(),
                     )
                 })?;
+                let _checkout_guard = if info.branch.as_deref() != Some(branch.as_str()) {
+                    Some(
+                        self.sessions
+                            .try_acquire_checkout_guard(&root)
+                            .map_err(|error| ServiceError::Conflict(error.to_string()))?,
+                    )
+                } else {
+                    None
+                };
                 // `prepare_direct` refuses dirty branch switches, but a live
                 // direct/legacy chat must be checked before we ask it to do so.
                 if info.branch.as_deref() != Some(branch.as_str()) {

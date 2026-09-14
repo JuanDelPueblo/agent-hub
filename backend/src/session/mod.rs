@@ -327,10 +327,9 @@ impl AcpSession {
         }
 
         let checkout_guard = match &self.checkout_guard {
-            Some(lock) => match lock.clone().try_lock_owned() {
-                Ok(guard) => Some(guard),
-                Err(_) => anyhow::bail!("Another chat is already working in this project checkout"),
-            },
+            Some(lock) => Some(lock.clone().try_lock_owned().map_err(|_| {
+                anyhow::anyhow!("Another chat is already working in this project checkout")
+            })?),
             None => None,
         };
 
@@ -819,6 +818,7 @@ fn persistent_session_paths(
     chat: &Chat,
     project: &Project,
     workspace: Option<&ChatWorkspace>,
+    legacy_repository_root: Option<&Path>,
 ) -> (PathBuf, Option<PathBuf>) {
     match workspace {
         Some(workspace) if workspace.mode == WorkspaceMode::ManagedWorktree => {
@@ -841,7 +841,9 @@ fn persistent_session_paths(
         }
         Some(_) | None => {
             let cwd = PathBuf::from(&project.path);
-            (cwd.clone(), Some(checkout_key(&cwd)))
+            let checkout = legacy_repository_root.unwrap_or(&cwd);
+            let checkout = checkout_key(checkout);
+            (cwd, Some(checkout))
         }
     }
 }
@@ -877,6 +879,19 @@ fn ensure_same_path(left: &Path, right: &Path, message: &str) -> anyhow::Result<
         .map_err(|e| anyhow::anyhow!("cannot validate path {}: {e}", right.display()))?;
     anyhow::ensure!(left == right, "{message}");
     Ok(())
+}
+
+fn validate_project_subdir(
+    project: &Project,
+    repository_root: &Path,
+    project_subdir: &str,
+) -> anyhow::Result<()> {
+    let effective = ensure_cwd_inside_checkout(repository_root, project_subdir)?;
+    ensure_same_path(
+        &effective,
+        Path::new(&project.path),
+        "workspace project subdirectory does not match the registered project",
+    )
 }
 
 fn validate_persistent_workspace(
@@ -919,6 +934,7 @@ fn validate_persistent_workspace(
                 Path::new(&workspace.repository_root),
                 "managed workspace repository mismatch",
             )?;
+            validate_project_subdir(project, &repository_root, &workspace.project_subdir)?;
 
             let expected_branch = format!("{}{}", workspace::MANAGED_PREFIX, chat.id);
             anyhow::ensure!(
@@ -936,13 +952,32 @@ fn validate_persistent_workspace(
             )?;
         }
         WorkspaceMode::ProjectCheckout => {
+            let registered_info = workspace::inspect(Path::new(&project.path))
+                .map_err(|e| anyhow::anyhow!("cannot validate project repository: {e}"))?;
+            let registered_root = registered_info
+                .root
+                .filter(|_| registered_info.is_git)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("registered project is no longer a Git repository")
+                })?;
+            ensure_same_path(
+                &registered_root,
+                Path::new(&workspace.repository_root),
+                "direct workspace repository does not match the registered project",
+            )?;
             let checkout = Path::new(&workspace.workspace_path);
+            ensure_same_path(
+                checkout,
+                &registered_root,
+                "direct workspace is not the primary repository checkout",
+            )?;
             let branch = workspace
                 .branch
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("direct workspace has no persisted branch"))?;
             workspace::validate_direct(checkout, Path::new(&workspace.repository_root), branch)
                 .map_err(|e| anyhow::anyhow!("direct workspace validation failed: {e}"))?;
+            validate_project_subdir(project, &registered_root, &workspace.project_subdir)?;
             let effective = ensure_cwd_inside_checkout(checkout, &workspace.project_subdir)?;
             ensure_same_path(
                 &effective,
@@ -1058,17 +1093,34 @@ impl SessionManager {
     }
 
     pub async fn get_by_id(&self, session_id: &str) -> Option<Arc<AcpSession>> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get(session_id) {
-            return Some(session.clone());
+        {
+            let sessions = self.sessions.read().await;
+            if let Some(session) = sessions.get(session_id) {
+                return Some(session.clone());
+            }
         }
         let store = self.store.as_ref()?;
         let chat = store.chat(session_id).ok()?;
         let project = store.project(&chat.project_id).ok()?;
         let runtime = self.agents.runtime(&chat.agent)?;
         let workspace = store.workspace(&chat.id).ok().flatten();
-        let (cwd, checkout_key) =
-            persistent_session_paths(store, &chat, &project, workspace.as_ref());
+        let legacy_project_path = (workspace.is_none()).then(|| project.path.clone());
+        let legacy_repository_root = if let Some(path) = legacy_project_path {
+            tokio::task::spawn_blocking(move || workspace::inspect(Path::new(&path)))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(|info| info.is_git.then_some(info.root).flatten())
+        } else {
+            None
+        };
+        let (cwd, checkout_key) = persistent_session_paths(
+            store,
+            &chat,
+            &project,
+            workspace.as_ref(),
+            legacy_repository_root.as_deref(),
+        );
         let checkout_guard = checkout_key.map(|key| self.checkout_guard(key));
         let mut session = AcpSession::new(
             SessionKey {
@@ -1083,6 +1135,10 @@ impl SessionManager {
         session.store = Some(store.clone());
         *session.acp_session_id.get_mut() = chat.acp_session_id.map(Into::into);
         let session = Arc::new(session);
+        let mut sessions = self.sessions.write().await;
+        if let Some(existing) = sessions.get(session_id) {
+            return Some(existing.clone());
+        }
         sessions.insert(session.id.clone(), session.clone());
         Some(session)
     }
@@ -1096,6 +1152,21 @@ impl SessionManager {
             .entry(key)
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    /// Try to reserve the shared mutex for a primary Git checkout.
+    ///
+    /// Direct and legacy turns use this same map and key, so callers that
+    /// mutate the checkout can fail without waiting for an agent turn.
+    pub fn try_acquire_checkout_guard(
+        &self,
+        repository_root: &Path,
+    ) -> anyhow::Result<OwnedMutexGuard<()>> {
+        self.checkout_guard(checkout_key(repository_root))
+            .try_lock_owned()
+            .map_err(|_| {
+                anyhow::anyhow!("Another chat is already working in this project checkout")
+            })
     }
 
     pub async fn list_sessions(&self) -> Vec<crate::web::SessionInfo> {

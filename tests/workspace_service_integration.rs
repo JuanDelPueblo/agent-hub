@@ -45,6 +45,11 @@ fn git_repo(root: &Path) -> std::path::PathBuf {
 }
 
 fn hub(root: &Path) -> (Arc<HubService>, Arc<Store>) {
+    let (hub, store, _) = hub_with_manager(root);
+    (hub, store)
+}
+
+fn hub_with_manager(root: &Path) -> (Arc<HubService>, Arc<Store>, Arc<SessionManager>) {
     let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
     let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
     let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()]));
@@ -55,8 +60,9 @@ fn hub(root: &Path) -> (Arc<HubService>, Arc<Store>) {
     };
     config.web.project_roots = vec![root.display().to_string()];
     (
-        HubService::new(store.clone(), sessions, agents, &config),
+        HubService::new(store.clone(), sessions.clone(), agents, &config),
         store,
+        sessions,
     )
 }
 
@@ -210,6 +216,48 @@ async fn direct_current_branch_preserves_dirty_files_and_switching_refuses_them(
         .unwrap_err();
     assert!(matches!(error, ServiceError::Conflict(_)));
     assert_eq!(git(&repo, &["branch", "--show-current"]), "main");
+}
+
+#[tokio::test]
+async fn checkout_reservation_blocks_branch_switch_and_new_direct_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let current = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, None),
+        )
+        .await
+        .unwrap();
+
+    let reservation = sessions.try_acquire_checkout_guard(&repo).unwrap();
+    let session = sessions.get_by_id(&current.chat.id).await.unwrap();
+    let turn_error = session.start_turn("hello".into(), None).await.unwrap_err();
+    assert_eq!(
+        turn_error.to_string(),
+        "Another chat is already working in this project checkout"
+    );
+
+    let switch_error = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, Some("feature")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(switch_error, ServiceError::Conflict(_)));
+    assert_eq!(git(&repo, &["branch", "--show-current"]), "main");
+    assert_eq!(store.chats().unwrap().len(), 1);
+    drop(reservation);
+    sessions.shutdown_all().await;
 }
 
 #[tokio::test]

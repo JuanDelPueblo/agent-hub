@@ -65,8 +65,17 @@ impl Fixture {
             .unwrap()
     }
 
+    fn nested_project(&self) -> agent_hub::store::Project {
+        self.store
+            .create_project(
+                "nested fixture".into(),
+                self.repository.join("nested").display().to_string(),
+            )
+            .unwrap()
+    }
+
     fn managed_chat(&self) -> (agent_hub::store::Chat, ChatWorkspace) {
-        let project = self.project();
+        let project = self.nested_project();
         let chat = self
             .store
             .create_chat(project.id.clone(), "codex".into(), None)
@@ -94,17 +103,52 @@ impl Fixture {
 
     fn direct_chat(&self, branch: &str) -> agent_hub::store::Chat {
         let project = self.project();
+        self.direct_chat_for_project(&project, branch, "")
+    }
+
+    fn direct_chat_for_project(
+        &self,
+        project: &agent_hub::store::Project,
+        branch: &str,
+        project_subdir: &str,
+    ) -> agent_hub::store::Chat {
         let chat = self
             .store
             .create_chat(project.id.clone(), "codex".into(), None)
             .unwrap();
         let metadata = ChatWorkspace::new(
             chat.id.clone(),
-            project.id,
+            project.id.clone(),
             WorkspaceMode::ProjectCheckout,
             self.repository.display().to_string(),
             self.repository.display().to_string(),
-            "nested".into(),
+            project_subdir.into(),
+            Some(branch.into()),
+            Some(self.commit.clone()),
+        );
+        self.store.insert_workspace(&metadata).unwrap();
+        chat
+    }
+
+    fn direct_chat_with_metadata(
+        &self,
+        project: &agent_hub::store::Project,
+        repository_root: &Path,
+        workspace_path: &Path,
+        project_subdir: &str,
+        branch: &str,
+    ) -> agent_hub::store::Chat {
+        let chat = self
+            .store
+            .create_chat(project.id.clone(), "codex".into(), None)
+            .unwrap();
+        let metadata = ChatWorkspace::new(
+            chat.id.clone(),
+            project.id.clone(),
+            WorkspaceMode::ProjectCheckout,
+            repository_root.display().to_string(),
+            workspace_path.display().to_string(),
+            project_subdir.into(),
             Some(branch.into()),
             Some(self.commit.clone()),
         );
@@ -238,6 +282,83 @@ async fn direct_checkout_turns_are_rejected_while_owned_then_can_run() {
 
     wait_for_turn_state(&first_session, TurnState::Idle).await;
     second_session.ask("hello".into(), None).await.unwrap();
+    fixture.manager.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn nested_legacy_and_direct_chats_share_the_repository_checkout_lock() {
+    let fixture = Fixture::new();
+    let project = fixture.nested_project();
+    let legacy = fixture
+        .store
+        .create_chat(project.id.clone(), "codex".into(), None)
+        .unwrap();
+    let direct = fixture.direct_chat_for_project(&project, "main", "nested");
+    let legacy_session = fixture.manager.get_by_id(&legacy.id).await.unwrap();
+    let direct_session = fixture.manager.get_by_id(&direct.id).await.unwrap();
+
+    assert_eq!(legacy_session.key.cwd, Path::new(&project.path));
+    legacy_session
+        .start_turn("wait".into(), Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    wait_for_turn_state(&legacy_session, TurnState::Prompting).await;
+    let error = direct_session
+        .start_turn("hello".into(), None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Another chat is already working in this project checkout"
+    );
+
+    wait_for_turn_state(&legacy_session, TurnState::Idle).await;
+    fixture.manager.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn corrupted_direct_workspace_metadata_cannot_redirect_startup() {
+    let fixture = Fixture::new();
+    let project = fixture.nested_project();
+    let foreign = fixture._temp.path().join("foreign");
+    std::fs::create_dir_all(&foreign).unwrap();
+    git(&foreign, &["init", "-b", "main"]);
+    git(&foreign, &["config", "user.email", "tests@example.invalid"]);
+    git(&foreign, &["config", "user.name", "Agent Hub tests"]);
+    std::fs::write(foreign.join("foreign.txt"), "foreign\n").unwrap();
+    git(&foreign, &["add", "."]);
+    git(&foreign, &["commit", "-m", "foreign"]);
+
+    let wrong_repository =
+        fixture.direct_chat_with_metadata(&project, &foreign, &foreign, "", "main");
+    let wrong_repository_session = fixture
+        .manager
+        .get_by_id(&wrong_repository.id)
+        .await
+        .unwrap();
+    let error = wrong_repository_session
+        .ask("hello".into(), None)
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("direct workspace repository does not match the registered project"));
+
+    let wrong_subdir = fixture.direct_chat_with_metadata(
+        &project,
+        &fixture.repository,
+        &fixture.repository,
+        "",
+        "main",
+    );
+    let wrong_subdir_session = fixture.manager.get_by_id(&wrong_subdir.id).await.unwrap();
+    let error = wrong_subdir_session
+        .ask("hello".into(), None)
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("workspace project subdirectory does not match the registered project"));
     fixture.manager.shutdown_all().await;
 }
 
