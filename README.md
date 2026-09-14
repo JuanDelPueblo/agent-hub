@@ -1,6 +1,8 @@
 # Pueblo Hub v0.2
 
-A single-owner, persistent web supervisor for local ACP coding agents (such as Codex, Claude, OpenCode, and Antigravity). GPL-3.0-only. No proprietary agent binaries are included.
+An uncomplicated hub to connect and manage all your ACP agents together.
+
+No more shuffling around various tmux sessions or relying on each agent's proprietary remote control interface. Pueblo Hub allows you to drive agents such as Codex, Claude Code, and OpenCode across multiple projects at the same time through a beautiful Material 3 web page that you self-host. Agents can run in parallel using separate worktrees to prevent conflicts and maximize your usage quota across each LLM provider.
 
 ## Features
 
@@ -11,17 +13,13 @@ A single-owner, persistent web supervisor for local ACP coding agents (such as C
 - **Dynamic Titles**: ACP agents automatically supply chat titles after conversations start, with persistent storage and optional manual rename overrides.
 - **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Pueblo Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
 - **Single-Service Architecture**: Single Rust binary embeds production-hashed frontend assets with optimized HTTP caching and WebSocket streaming.
+- **One interface for your agents** - Connect ACP-compatible agents and manage them from the same place instead of jumping between terminals and separate remote interfaces. Pueblo Hub currently works with agents such as Codex, Claude Code, and OpenCode.
 
-## Run
+- **Persistent projects and chats** - Organize chats under projects and come back to them later without having to recreate your setup. Pueblo Hub keeps the agent process and session management behind the scenes so you can focus on the conversation.
 
-```sh
-cargo build --bin pueblo-hub
-target/debug/pueblo-hub --database /path/to/state/hub.sqlite3 \
-  --project-root /home/tony --agents-file agents.json \
-  --public-origin https://agents.home.edyan.me --port 9123
-```
+- **Parallel worktrees** - Run multiple agents against the same Git project without making them fight over a working directory. Isolated chats get their own worktree and branch by default, allowing agents to work independently while keeping your main checkout alone.
 
-The database parent directory must exist and be private. The server binds only to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing it. `--public-origin` authorizes an exact browser Origin and Host.
+- **Project checkout mode** - Not everything needs a worktree. Chats can work directly inside the project's existing checkout when you want an agent operating on the branch and files already there.
 
 Prompts have no silence timeout by default, so a quiet long-running tool call is
 not killed. Set `--prompt-timeout <seconds>` (or
@@ -31,46 +29,47 @@ The `PUEBLO_HUB_*` environment variables are canonical. The previous
 `AGENT_HUB_*` names remain accepted as compatibility aliases when the new name
 is not set. Existing managed chats using `agent-hub/chat/<chat-id>` branches
 are recovered and removed in place; new chats use `pueblo-hub/chat/<chat-id>`.
+- **A proper interface for agent work** - Follow conversations, streaming responses, tool calls, plans, permission requests, and agent state through a responsive Material 3 interface. Pueblo Hub is designed for desktop and mobile layouts so your agents aren't tied to the terminal where you started them.
 
-## Development environment
+- **Agent configuration** - Configure available agents and their launch commands in one place while keeping per-chat options and permission policies close to the conversation. Pueblo Hub talks to agents through ACP rather than maintaining a separate chat implementation for every provider.
 
-The repository ships a Nix flake with a dev shell. The shell supplies Rust, Node, the linker, and the test tools at pinned versions.
+- **Git work stays safe** - Pueblo Hub treats your existing work as something it does not own. It will not silently reset, clean, stash, rebase, switch, or delete Git work to make its own job easier.
 
-With direnv:
+- **Self-hosted** - Run Pueblo Hub on your own machine or server and put it behind the authentication and HTTPS setup you prefer. The backend only binds to localhost by default rather than exposing itself directly to the network.
+
+## Quick start
+
+### Running Pueblo Hub
+
+Pueblo Hub currently uses Nix to provide its environment.
+
+Enter the development environment with direnv:
 
 ```sh
 direnv allow
 ```
 
-direnv then loads the shell every time you enter the directory. Install `nix-direnv` first, because it caches the shell. On NixOS set `programs.direnv.enable = true`.
-
-Without direnv:
+or directly with Nix:
 
 ```sh
 nix develop
 ```
 
-Put machine-specific settings in `.envrc.local`. Git ignores that file.
-
-## Fake backend
-
-The fake backend serves the REST and WebSocket surface of `backend/src/web/` from memory. Use it to work on the frontend without a Rust build and without an agent binary. It starts in under a second, so the edit-reload loop stays short.
-
-Start the frontend and the fake backend together:
+Build the server:
 
 ```sh
-cd frontend
-npm ci        # one time
-npm run dev
+cargo build --bin pueblo-hub
 ```
 
-Open `http://localhost:4200`. The Angular dev server proxies `/api` and `/ws` to the fake backend on port 8765, which is the port the real binary uses.
-
-To run the two parts separately:
+Then run it with a database, project directory, and agent configuration:
 
 ```sh
-npm run fake-backend    # port 8765
-npm start               # Angular dev server on port 4200
+target/debug/pueblo-hub \
+  --database /path/to/state/hub.sqlite3 \
+  --project-root /path/to/projects \
+  --agents-file agents.json \
+  --public-origin https://example.com \
+  --port 9123
 ```
 
 The fake backend accepts two options:
@@ -142,61 +141,73 @@ history.
 
 ## Configuration
 
-Server-owned JSON definitions in `agents.json`:
+Agents are configured in `agents.json`:
 
 ```json
 {
-  "codex": {"command": "codex-acp"},
-  "claude": {"command": "claude-agent-acp"},
-  "opencode": {"command": "opencode", "args": ["acp"]},
-  "antigravity": {"command": "agy_acp_server.par", "args": ["--uid="]}
+  "codex": {
+    "command": "codex-acp"
+  },
+  "claude": {
+    "command": "claude-agent-acp"
+  },
+  "opencode": {
+    "command": "opencode",
+    "args": ["acp"]
+  }
 }
 ```
 
 Definitions accept optional `args` (array), `env` (object), `idle_timeout`
 (seconds), `display_name` (string), `usage_provider` (string), and `metadata`
 (object). Pueblo Hub never derives a usage provider from the agent name.
+The server binds to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing Pueblo Hub remotely.
 
-The UI renders ACP `configOptions` dynamically (including select optgroups and switches) and listens for `config_option_update`. Selected values are saved per chat and reapplied on reconnect.
+### Developing Pueblo Hub
 
-Permission policy is separate from agent configuration. New chats default to `ask`. `read-only` allows client file reads but denies write/terminal and agent permission requests; `deny-all` denies callbacks; `auto-approve` allows them.
-
-## API Summary
-
-| Resource | Operations |
-| --- | --- |
-| `/api/filesystem/directories?path=…` | GET; server-side folder browser within roots |
-| `/api/projects/clone` | POST `{url, parent_path, name?}`; Git clone into root |
-| `/api/projects` | GET, POST `{name,path}` |
-| `/api/projects/:id` | PATCH `{name,path}`, DELETE (empty projects only) |
-| `/api/projects/:id/chats` | GET, POST `{agent, title?}` |
-| `/api/chats/:id` | GET, PATCH `{title?,archived?,permission_policy?}`, DELETE |
-| `/api/chats/:id/prompt` | POST `{text}`; 202 accepted, streaming events on WebSocket |
-| `/api/chats/:id/resume`, `/stop`, `/cancel` | POST |
-| `/api/chats/:id/permission` | POST `{id,granted}` |
-| `/api/chats/:id/config` | GET, PATCH `{id,value}` |
-| `/api/chats/:id/config/:option_id` | DELETE a rejected saved value before retrying |
-| `/api/chats/:id/remote-sessions?cursor=…` | GET; capability-gated ACP session/list |
-| `/api/agents` | GET configured names |
-| `/ws` | WebSocket; send `{ "type":"subscribe", "from_seq":0 }` |
-
-The fake backend serves this same table, which keeps the frontend contract in one place.
-
-## Development and Checks
+Clone the repository and enter its Nix environment:
 
 ```sh
-# Frontend tests and build
-# `npm test` runs Angular service, state, and component tests through Vitest.
+git clone https://github.com/JuanDelPueblo/pueblo-hub.git
+cd pueblo-hub
+direnv allow
+```
+
+The frontend can be developed independently:
+
+```sh
+cd frontend
+npm run dev
+```
+
+Then open `http://localhost:4200`.
+
+Before submitting backend changes:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run
+```
+
+For frontend changes:
+
+```sh
 cd frontend
 npm test
 npm run build
-cd ..
+```
 
-# Rust format, lint, and tests
-cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run
+The complete Nix package can be checked with:
 
-# Full reproducible Nix flake build
+```sh
 nix build .#pueblo-hub
 ```
+
+## License
+
+GPL-3.0-only.
+
+Backend forked from github.com/missdeer/ccgonext.
+
+Pueblo Hub does not include proprietary agent binaries.
