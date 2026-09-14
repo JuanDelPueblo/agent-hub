@@ -353,7 +353,19 @@ impl HubService {
 
     pub async fn delete_chat(&self, chat_id: &str) -> ServiceResult<()> {
         let live = self.live(chat_id).await?;
-        live.delete_metadata().await?;
+        live.delete_metadata().await.map_err(|error| {
+            if let Some(error) = error.downcast_ref::<workspace::WorkspaceError>() {
+                return match error {
+                    workspace::WorkspaceError::Conflict(message) => {
+                        ServiceError::Conflict(message.clone())
+                    }
+                    workspace::WorkspaceError::Failed(message) => {
+                        ServiceError::Invalid(message.clone())
+                    }
+                };
+            }
+            ServiceError::Invalid(error.to_string())
+        })?;
         self.events.forget_chat(chat_id);
         self.sessions.remove_session(chat_id).await;
         self.notify_metadata_changed();

@@ -627,11 +627,63 @@ impl AcpSession {
             .turn_guard
             .try_lock()
             .map_err(|_| anyhow::anyhow!("Cancel the active turn before deleting the chat"))?;
-        self.shutdown().await;
-        self.store
+        let store = self
+            .store
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?
-            .delete_chat(&self.id)?;
+            .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?;
+
+        // Read and validate the workspace while the deletion guard is held.
+        // In particular, an unreadable workspace row must not fall through to
+        // the legacy/no-workspace path.
+        let chat = store.chat(&self.id)?;
+        let project = store.project(&chat.project_id)?;
+        let workspace = store.workspace(&chat.id)?;
+        let managed_cleanup = match workspace {
+            None => None,
+            Some(workspace) => {
+                anyhow::ensure!(
+                    workspace.chat_id == chat.id && workspace.project_id == chat.project_id,
+                    "chat workspace metadata does not belong to this chat"
+                );
+                match workspace.mode {
+                    WorkspaceMode::ManagedWorktree => {
+                        let state_worktrees = store.worktrees_dir();
+                        let chat_for_validation = chat.clone();
+                        let project_for_validation = project.clone();
+                        let workspace_for_validation = workspace.clone();
+                        Some(
+                            tokio::task::spawn_blocking(move || {
+                                prepare_managed_deletion(
+                                    &chat_for_validation,
+                                    &project_for_validation,
+                                    &workspace_for_validation,
+                                    &state_worktrees,
+                                )
+                            })
+                            .await??,
+                        )
+                    }
+                    // A direct checkout is user-owned. Its metadata is
+                    // removed below, but no Git command is allowed here.
+                    WorkspaceMode::ProjectCheckout => None,
+                }
+            }
+        };
+
+        self.shutdown().await;
+
+        if let Some((repository_root, worktree_root)) = managed_cleanup {
+            let chat_id = chat.id.clone();
+            tokio::task::spawn_blocking(move || {
+                workspace::remove_managed(&repository_root, &worktree_root, &chat_id)
+            })
+            .await??;
+        }
+
+        // This is deliberately after managed cleanup. If the transaction
+        // fails, the workspace row and branch remain available for a safe
+        // retry/recovery; no compensating Git cleanup is attempted.
+        store.delete_chat(&self.id)?;
         Ok(())
     }
 
@@ -987,6 +1039,56 @@ fn validate_persistent_workspace(
         }
     }
     Ok(())
+}
+
+/// Validate the durable identity used by managed-chat deletion and return
+/// only paths derived from the registered project and Hub state. The
+/// persisted repository/worktree fields are checked, never used as command
+/// inputs.
+fn prepare_managed_deletion(
+    chat: &Chat,
+    project: &Project,
+    workspace: &ChatWorkspace,
+    state_worktrees: &Path,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let expected_worktree = state_worktrees.join(&chat.id);
+    anyhow::ensure!(
+        Path::new(&workspace.workspace_path) == expected_worktree,
+        "managed workspace path is not Agent Hub's deterministic worktree"
+    );
+
+    let info = workspace::inspect(Path::new(&project.path))
+        .map_err(|_| anyhow::anyhow!("registered project is not a usable Git repository"))?;
+    let repository_root = info
+        .root
+        .filter(|_| info.is_git)
+        .ok_or_else(|| anyhow::anyhow!("registered project is not a Git repository"))?;
+    let persisted_repository = Path::new(&workspace.repository_root)
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("managed workspace repository metadata is unreadable"))?;
+    anyhow::ensure!(
+        persisted_repository == repository_root,
+        "managed workspace repository does not match the registered project"
+    );
+
+    let registered_project = Path::new(&project.path)
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("registered project path is unreadable"))?;
+    let project_subdir = registered_project
+        .strip_prefix(&repository_root)
+        .map_err(|_| anyhow::anyhow!("registered project is outside its Git repository"))?;
+    anyhow::ensure!(
+        Path::new(&workspace.project_subdir) == project_subdir,
+        "managed workspace project metadata does not match the registered project"
+    );
+
+    let expected_branch = format!("{}{}", workspace::MANAGED_PREFIX, chat.id);
+    anyhow::ensure!(
+        workspace.branch.as_deref() == Some(expected_branch.as_str()),
+        "managed workspace branch metadata is invalid"
+    );
+
+    Ok((repository_root, state_worktrees.to_path_buf()))
 }
 
 enum PromptAttempt {

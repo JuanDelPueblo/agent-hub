@@ -414,3 +414,251 @@ async fn http_workspace_options_route_and_chat_workspace_payload_work() {
     assert_eq!(store.chats().unwrap().len(), 1);
     assert_eq!(store.list_workspaces().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn deleting_clean_managed_chat_removes_worktree_but_preserves_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+
+    hub.delete_chat(&chat.chat.id).await.unwrap();
+
+    assert!(store.chat(&chat.chat.id).is_err());
+    assert!(store.workspace(&chat.chat.id).unwrap().is_none());
+    assert!(!Path::new(&workspace.workspace_path).exists());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+}
+
+#[tokio::test]
+async fn deleting_dirty_managed_chat_preserves_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    let worktree = std::path::PathBuf::from(&workspace.workspace_path);
+    std::fs::write(worktree.join("README.md"), "changed\n").unwrap();
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert_eq!(store.workspace(&chat.chat.id).unwrap(), Some(workspace));
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("README.md")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+}
+
+#[tokio::test]
+async fn deleting_untracked_managed_chat_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let worktree = Path::new(&workspace.workspace_path);
+    std::fs::write(worktree.join("untracked.txt"), "keep\n").unwrap();
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert!(worktree.join("untracked.txt").is_file());
+    assert!(worktree.is_dir());
+}
+
+#[tokio::test]
+async fn deleting_missing_managed_worktree_prunes_registration_without_recreation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    std::fs::remove_dir_all(&workspace.workspace_path).unwrap();
+
+    hub.delete_chat(&chat.chat.id).await.unwrap();
+
+    assert!(!Path::new(&workspace.workspace_path).exists());
+    assert!(store.chat(&chat.chat.id).is_err());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+    assert!(!git(&repo, &["worktree", "list", "--porcelain"]).contains(&workspace.workspace_path));
+}
+
+#[tokio::test]
+async fn managed_cleanup_failure_after_worktree_removal_preserves_metadata_and_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+    raw.execute_batch("DROP TABLE events").unwrap();
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Invalid(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert_eq!(
+        store.workspace(&chat.chat.id).unwrap(),
+        Some(workspace.clone())
+    );
+    assert!(!Path::new(&workspace.workspace_path).exists());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+}
+
+#[tokio::test]
+async fn deleting_corrupt_managed_workspace_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    let foreign_root = tmp.path().join("foreign");
+    std::fs::create_dir_all(&foreign_root).unwrap();
+    let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+    raw.execute(
+        "UPDATE chat_workspaces SET repository_root=?1 WHERE chat_id=?2",
+        rusqlite::params![foreign_root.display().to_string(), chat.chat.id.as_str()],
+    )
+    .unwrap();
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Invalid(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert!(store.workspace(&chat.chat.id).is_ok());
+    assert!(Path::new(&workspace.workspace_path).is_dir());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+}
+
+#[tokio::test]
+async fn deleting_foreign_worktree_at_managed_path_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    let worktree = Path::new(&workspace.workspace_path).to_path_buf();
+    std::fs::remove_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "-b", "foreign"]);
+    std::fs::write(worktree.join("keep.txt"), "keep\n").unwrap();
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Invalid(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert!(worktree.join("keep.txt").is_file());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+}
+
+#[tokio::test]
+async fn deleting_direct_chat_leaves_project_checkout_and_branch_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, None),
+        )
+        .await
+        .unwrap();
+    let before = std::fs::read(repo.join("README.md")).unwrap();
+    let branch = git(&repo, &["branch", "--show-current"]);
+
+    hub.delete_chat(&chat.chat.id).await.unwrap();
+
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    assert_eq!(git(&repo, &["branch", "--show-current"]), branch);
+    assert!(store.chat(&chat.chat.id).is_err());
+    assert!(store.workspace(&chat.chat.id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn deleting_legacy_chat_leaves_git_checkout_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = store
+        .create_chat(project.id.clone(), "codex".into(), None)
+        .unwrap();
+    let before = std::fs::read(repo.join("README.md")).unwrap();
+    let branch = git(&repo, &["branch", "--show-current"]);
+
+    hub.delete_chat(&chat.id).await.unwrap();
+
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    assert_eq!(git(&repo, &["branch", "--show-current"]), branch);
+    assert!(store.chat(&chat.id).is_err());
+}
+
+#[tokio::test]
+async fn active_turn_prevents_chat_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let session = sessions.get_by_id(&chat.chat.id).await.unwrap();
+    session
+        .start_turn("wait".into(), Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if session.turn_state().await == agent_hub::state::TurnState::Prompting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let error = hub.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Invalid(message) if message.contains("active turn")));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert!(Path::new(&workspace.workspace_path).is_dir());
+    session.cancel().await.unwrap();
+    sessions.shutdown_all().await;
+}

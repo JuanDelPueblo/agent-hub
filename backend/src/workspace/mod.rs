@@ -488,6 +488,16 @@ fn canonical_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
     })
 }
 
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
 fn same_path(left: &Path, right: &Path) -> Result<bool, WorkspaceError> {
     Ok(canonical_path(left)? == canonical_path(right)?)
 }
@@ -729,20 +739,58 @@ pub fn remove_managed(
     validate_chat_id(chat_id)?;
     let branch = managed_branch(chat_id);
     let worktree = workspace_root.join(chat_id);
-    if !worktree.exists() {
-        let expected_path = worktree.to_string_lossy();
-        let registered = registered_worktrees(repo)?
-            .into_iter()
-            .any(|candidate| candidate.path.to_string_lossy() == expected_path);
-        if registered {
-            run_git_ok(repo, &["worktree", "prune"])?;
+    let worktree_exists = match std::fs::symlink_metadata(&worktree) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(WorkspaceError::Failed(format!(
+                "cannot inspect managed worktree: {error}"
+            )));
+        }
+    };
+    if !worktree_exists {
+        let expected_path = absolute_path(&worktree);
+        let records = registered_worktrees(repo)?;
+        let registered_by_path = records
+            .iter()
+            .find(|candidate| absolute_path(&candidate.path) == expected_path);
+        let registered_by_branch = records
+            .iter()
+            .find(|candidate| candidate.branch.as_deref() == Some(branch.as_str()));
+
+        match (registered_by_path, registered_by_branch) {
+            (None, None) => {}
+            (Some(candidate), Some(by_branch))
+                if candidate.path == by_branch.path
+                    && candidate.branch.as_deref() == Some(branch.as_str()) =>
+            {
+                run_git_ok(repo, &["worktree", "prune"])?;
+            }
+            (Some(_), _) => {
+                return Err(WorkspaceError::Failed(
+                    "managed worktree is registered on the wrong branch".to_string(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(WorkspaceError::Failed(
+                    "managed branch is registered to a different worktree".to_string(),
+                ));
+            }
         }
         return Ok(());
     }
     registered_managed_worktree(repo, &worktree, &branch, true)?;
-    let dirty = !run_git_ok(&worktree, &["status", "--porcelain"])?
-        .trim()
-        .is_empty();
+    let dirty = !run_git_ok(
+        &worktree,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ],
+    )?
+    .trim()
+    .is_empty();
     if dirty {
         return Err(WorkspaceError::Conflict(
             "managed worktree is dirty; refuse to remove".to_string(),
