@@ -7,6 +7,7 @@ pub mod session;
 pub mod state;
 pub mod store;
 pub mod web;
+pub mod workspace;
 
 pub use config::Config;
 pub use session::SessionManager;
