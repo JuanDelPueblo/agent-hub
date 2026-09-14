@@ -119,6 +119,23 @@ fn row_to_workspace(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatWorkspace> 
 }
 
 pub(crate) fn insert(conn: &Connection, ws: &ChatWorkspace) -> StoreResult<()> {
+    let chat_project_id: Option<String> = conn
+        .query_row(
+            "SELECT project_id FROM chats WHERE id=?1",
+            [ws.chat_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let chat_project_id = match chat_project_id {
+        Some(project_id) => project_id,
+        None => return Err(StoreError::NotFound("Chat not found".into())),
+    };
+    if chat_project_id != ws.project_id {
+        return Err(StoreError::Validation(
+            "Workspace project does not match chat project".into(),
+        ));
+    }
+
     conn.execute(
         "INSERT INTO chat_workspaces \
          (chat_id, project_id, mode, repository_root, workspace_path, \
@@ -291,6 +308,34 @@ mod tests {
             .unwrap();
         let again = store.insert_workspace(&checkout_ws(&chat_id, &project_id, "/repo"));
         assert!(again.is_err(), "second workspace for one chat succeeded");
+        assert_eq!(store.list_workspaces().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn workspace_project_must_match_chat_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("hub.db")).unwrap();
+        let project = store
+            .create_project("project".into(), tmp.path().display().to_string())
+            .unwrap();
+        let other_project = store
+            .create_project("other project".into(), tmp.path().display().to_string())
+            .unwrap();
+        let chat = store
+            .create_chat(project.id.clone(), "codex".into(), None)
+            .unwrap();
+        let other_chat = store
+            .create_chat(other_project.id.clone(), "codex".into(), None)
+            .unwrap();
+
+        store
+            .insert_workspace(&checkout_ws(&chat.id, &project.id, "/repo"))
+            .unwrap();
+        let rejected =
+            store.insert_workspace(&checkout_ws(&other_chat.id, &project.id, "/other-repo"));
+
+        assert!(matches!(rejected, Err(StoreError::Validation(_))));
+        assert!(store.workspace(&other_chat.id).unwrap().is_none());
         assert_eq!(store.list_workspaces().unwrap().len(), 1);
     }
 
