@@ -363,6 +363,26 @@ async fn corrupted_direct_workspace_metadata_cannot_redirect_startup() {
 }
 
 #[tokio::test]
+async fn unreadable_workspace_metadata_does_not_downgrade_to_legacy_session() {
+    let fixture = Fixture::new();
+    let project = fixture.nested_project();
+    let chat = fixture.direct_chat_for_project(&project, "main", "nested");
+
+    let raw = rusqlite::Connection::open(fixture._temp.path().join("hub.db")).unwrap();
+    raw.execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .unwrap();
+    raw.execute(
+        "UPDATE chat_workspaces SET mode = ?1 WHERE chat_id = ?2",
+        rusqlite::params!["not-a-workspace-mode", chat.id.as_str()],
+    )
+    .unwrap();
+
+    assert!(fixture.manager.get_by_id(&chat.id).await.is_none());
+    assert!(fixture.manager.list_sessions().await.is_empty());
+    fixture.manager.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn legacy_sessions_keep_the_project_directory() {
     let fixture = Fixture::new();
     let project = fixture.project();

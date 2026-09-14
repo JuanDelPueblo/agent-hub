@@ -1103,7 +1103,17 @@ impl SessionManager {
         let chat = store.chat(session_id).ok()?;
         let project = store.project(&chat.project_id).ok()?;
         let runtime = self.agents.runtime(&chat.agent)?;
-        let workspace = store.workspace(&chat.id).ok().flatten();
+        let workspace = match store.workspace(&chat.id) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                tracing::error!(
+                    session_id,
+                    %error,
+                    "Cannot reconstruct persistent session: workspace metadata is unreadable"
+                );
+                return None;
+            }
+        };
         let legacy_project_path = (workspace.is_none()).then(|| project.path.clone());
         let legacy_repository_root = if let Some(path) = legacy_project_path {
             tokio::task::spawn_blocking(move || workspace::inspect(Path::new(&path)))

@@ -11,7 +11,7 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use std::{path::Path, process::Command, sync::Arc};
+use std::{path::Path, process::Command, sync::Arc, time::Duration};
 use tower::ServiceExt;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -52,7 +52,16 @@ fn hub(root: &Path) -> (Arc<HubService>, Arc<Store>) {
 fn hub_with_manager(root: &Path) -> (Arc<HubService>, Arc<Store>, Arc<SessionManager>) {
     let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
     let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
-    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()]));
+    let history = root.join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "load".into(),
+        ]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
     let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
     let mut config = Config {
         agents: agents.clone(),
@@ -257,6 +266,55 @@ async fn checkout_reservation_blocks_branch_switch_and_new_direct_turn() {
     assert_eq!(git(&repo, &["branch", "--show-current"]), "main");
     assert_eq!(store.chats().unwrap().len(), 1);
     drop(reservation);
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn active_direct_turn_reserves_checkout_before_same_branch_creation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let current = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, None),
+        )
+        .await
+        .unwrap();
+    let current_branch = git(&repo, &["branch", "--show-current"]);
+    let current_session = sessions.get_by_id(&current.chat.id).await.unwrap();
+    current_session
+        .start_turn("wait".into(), Some(std::time::Duration::from_secs(5)))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if current_session.turn_state().await == agent_hub::state::TurnState::Prompting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    git(&repo, &["checkout", "feature"]);
+
+    let error = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, Some("feature")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert_eq!(current_branch, "main");
+    assert_eq!(git(&repo, &["branch", "--show-current"]), "feature");
+    assert_eq!(store.chats().unwrap().len(), 1);
+
+    current_session.cancel().await.unwrap();
     sessions.shutdown_all().await;
 }
 

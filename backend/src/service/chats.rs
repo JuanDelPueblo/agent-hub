@@ -130,6 +130,16 @@ impl HubService {
             .map(str::trim)
             .filter(|branch| !branch.is_empty())
             .map(ToOwned::to_owned);
+        // Every direct checkout operation must reserve the same mutex that
+        // direct and legacy turns use. The branch in `info` is only a
+        // snapshot from before this reservation.
+        let _checkout_guard = (mode == WorkspaceMode::ProjectCheckout)
+            .then(|| {
+                self.sessions
+                    .try_acquire_checkout_guard(&root)
+                    .map_err(|error| ServiceError::Conflict(error.to_string()))
+            })
+            .transpose()?;
 
         let (workspace, managed_paths) = match mode {
             WorkspaceMode::ManagedWorktree => {
@@ -193,23 +203,17 @@ impl HubService {
                 (workspace, Some((paths, base_commit)))
             }
             WorkspaceMode::ProjectCheckout => {
-                let branch = requested_branch.or(info.branch.clone()).ok_or_else(|| {
-                    ServiceError::Conflict(
-                        "Project checkout mode requires an attached local branch".into(),
-                    )
-                })?;
-                let _checkout_guard = if info.branch.as_deref() != Some(branch.as_str()) {
-                    Some(
-                        self.sessions
-                            .try_acquire_checkout_guard(&root)
-                            .map_err(|error| ServiceError::Conflict(error.to_string()))?,
-                    )
-                } else {
-                    None
-                };
+                let (current_info, _) = inspect_with_branches(project_path.clone()).await?;
+                let branch = requested_branch
+                    .or(current_info.branch.clone())
+                    .ok_or_else(|| {
+                        ServiceError::Conflict(
+                            "Project checkout mode requires an attached local branch".into(),
+                        )
+                    })?;
                 // `prepare_direct` refuses dirty branch switches, but a live
                 // direct/legacy chat must be checked before we ask it to do so.
-                if info.branch.as_deref() != Some(branch.as_str()) {
+                if current_info.branch.as_deref() != Some(branch.as_str()) {
                     self.ensure_primary_checkout_available(&root).await?;
                 }
                 let repo_for_blocking = root.clone();
