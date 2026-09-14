@@ -186,6 +186,14 @@ npm run dev
 
 Then open `http://localhost:4200`.
 
+The standard final check for any implementation task is:
+
+```sh
+nix run .#verify
+```
+
+It runs the full source-level suite — Rust formatting, clippy, Rust tests, frontend tests, the frontend production build, and fake-backend tests — using tools supplied by Nix, so you don't need to enter `nix develop` first.
+
 Before submitting backend changes:
 
 ```sh
