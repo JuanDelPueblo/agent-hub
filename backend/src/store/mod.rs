@@ -9,13 +9,18 @@ mod events;
 pub mod migrations;
 mod projects;
 mod validation;
+mod workspaces;
 
 pub use chats::Chat;
 pub use projects::Project;
 pub use validation::{validate_name, validate_project_path};
+pub use workspaces::{ChatWorkspace, WorkspaceMode};
 
 use rusqlite::Connection;
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -62,10 +67,33 @@ impl From<anyhow::Error> for StoreError {
     }
 }
 
-pub struct Store(Mutex<Connection>);
+pub struct Store {
+    conn: Mutex<Connection>,
+    state_dir: PathBuf,
+}
+
+/// Resolve the directory that holds Hub state for a database path.
+///
+/// The managed-worktree root lives directly below it. Relative database
+/// paths resolve against the current working directory so the root stays
+/// deterministic no matter when the caller asks for it.
+pub(crate) fn state_dir_for_database(path: &Path) -> PathBuf {
+    if path.as_os_str() == ":memory:" {
+        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    absolute.parent().map(Path::to_path_buf).unwrap_or(absolute)
+}
 
 impl Store {
     pub fn open(path: &Path) -> StoreResult<Self> {
+        let state_dir = state_dir_for_database(path);
         let mut db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         migrations::check_version(&db)?;
@@ -73,19 +101,39 @@ impl Store {
         // `journal_mode=WAL` inside one and silently ignores `foreign_keys`.
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         migrations::migrate(&mut db)?;
-        Ok(Self(Mutex::new(db)))
+        Ok(Self {
+            conn: Mutex::new(db),
+            state_dir,
+        })
+    }
+
+    /// Directory that holds the database file and Hub-managed state.
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
+
+    /// Deterministic root for Hub-managed external worktrees:
+    /// `<database parent>/worktrees`. The directory is resolved, never
+    /// created here; worktree creation stays outside `Store`.
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.state_dir.join("worktrees")
+    }
+
+    /// Alias for the managed-worktree root. Same value as `worktrees_dir`.
+    pub fn managed_worktree_root(&self) -> PathBuf {
+        self.worktrees_dir()
     }
 
     pub fn projects(&self) -> StoreResult<Vec<Project>> {
-        projects::list(&self.0.lock().unwrap())
+        projects::list(&self.conn.lock().unwrap())
     }
 
     pub fn project(&self, id: &str) -> StoreResult<Project> {
-        projects::get(&self.0.lock().unwrap(), id)
+        projects::get(&self.conn.lock().unwrap(), id)
     }
 
     pub fn save_project(&self, p: &Project) -> StoreResult<()> {
-        projects::save(&self.0.lock().unwrap(), p)
+        projects::save(&self.conn.lock().unwrap(), p)
     }
 
     pub fn create_project(&self, name: String, path: String) -> StoreResult<Project> {
@@ -95,15 +143,15 @@ impl Store {
     }
 
     pub fn delete_project(&self, id: &str) -> StoreResult<()> {
-        projects::delete(&self.0.lock().unwrap(), id)
+        projects::delete(&self.conn.lock().unwrap(), id)
     }
 
     pub fn chats(&self) -> StoreResult<Vec<Chat>> {
-        chats::list(&self.0.lock().unwrap())
+        chats::list(&self.conn.lock().unwrap())
     }
 
     pub fn chat(&self, id: &str) -> StoreResult<Chat> {
-        chats::get(&self.0.lock().unwrap(), id)
+        chats::get(&self.conn.lock().unwrap(), id)
     }
 
     pub fn create_chat(
@@ -113,18 +161,19 @@ impl Store {
         title: Option<String>,
     ) -> StoreResult<Chat> {
         let c = chats::new(project_id, agent, title)?;
-        chats::insert(&self.0.lock().unwrap(), &c)?;
+        chats::insert(&self.conn.lock().unwrap(), &c)?;
         Ok(c)
     }
 
     /// Read/modify/write under one lock so a config notification cannot overwrite a rename.
     pub fn update_chat(&self, id: &str, edit: impl FnOnce(&mut Chat)) -> StoreResult<Chat> {
-        chats::update(&self.0.lock().unwrap(), id, edit)
+        chats::update(&self.conn.lock().unwrap(), id, edit)
     }
 
     /// A chat and its events go together, so one transaction covers both tables.
+    /// The workspace row goes away through the `chat_workspaces` foreign key.
     pub fn delete_chat(&self, id: &str) -> StoreResult<()> {
-        let mut db = self.0.lock().unwrap();
+        let mut db = self.conn.lock().unwrap();
         let tx = db.transaction()?;
         chats::delete(&tx, id)?;
         events::delete_for_session(&tx, id)?;
@@ -132,18 +181,40 @@ impl Store {
         Ok(())
     }
 
+    pub fn insert_workspace(&self, ws: &ChatWorkspace) -> StoreResult<()> {
+        workspaces::insert(&self.conn.lock().unwrap(), ws)
+    }
+
+    /// Returns `None` for chats without a workspace row, which includes
+    /// every chat created before workspaces existed.
+    pub fn workspace(&self, chat_id: &str) -> StoreResult<Option<ChatWorkspace>> {
+        workspaces::get(&self.conn.lock().unwrap(), chat_id)
+    }
+
+    pub fn delete_workspace(&self, chat_id: &str) -> StoreResult<()> {
+        workspaces::delete(&self.conn.lock().unwrap(), chat_id)
+    }
+
+    pub fn list_workspaces(&self) -> StoreResult<Vec<ChatWorkspace>> {
+        workspaces::list(&self.conn.lock().unwrap())
+    }
+
+    pub fn list_project_workspaces(&self, project_id: &str) -> StoreResult<Vec<ChatWorkspace>> {
+        workspaces::list_for_project(&self.conn.lock().unwrap(), project_id)
+    }
+
     pub fn save_event(&self, event: &crate::events::SessionEvent) -> StoreResult<()> {
-        events::save(&self.0.lock().unwrap(), event)
+        events::save(&self.conn.lock().unwrap(), event)
     }
 
     pub fn events(&self) -> StoreResult<Vec<crate::events::SessionEvent>> {
-        events::recent(&self.0.lock().unwrap())
+        events::recent(&self.conn.lock().unwrap())
     }
 
     /// Durable rows needed to repair pending permissions and interrupted
     /// turns on startup, in sequence order. See `events::recovery`.
     pub fn recovery_events(&self) -> StoreResult<Vec<crate::events::SessionEvent>> {
-        events::recovery(&self.0.lock().unwrap())
+        events::recovery(&self.conn.lock().unwrap())
     }
 
     pub fn event_page(
@@ -152,16 +223,16 @@ impl Store {
         through_seq: u64,
         limit: usize,
     ) -> StoreResult<Vec<crate::events::SessionEvent>> {
-        events::page(&self.0.lock().unwrap(), from_seq, through_seq, limit)
+        events::page(&self.conn.lock().unwrap(), from_seq, through_seq, limit)
     }
 
     pub fn max_event_seq(&self) -> StoreResult<u64> {
-        events::max_seq(&self.0.lock().unwrap())
+        events::max_seq(&self.conn.lock().unwrap())
     }
 
     #[cfg(test)]
     pub(crate) fn set_query_only(&self) {
-        self.0
+        self.conn
             .lock()
             .unwrap()
             .execute_batch("PRAGMA query_only=ON")
@@ -248,6 +319,30 @@ mod tests {
                 .as_deref()
                 .is_some_and(|s| s.starts_with("acp-")),
             "ACP session id was lost"
+        );
+    }
+
+    #[test]
+    fn worktrees_dir_lives_beside_database() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+        let db = Store::open(&path).unwrap();
+        assert_eq!(db.state_dir(), tmp.path());
+        assert_eq!(db.worktrees_dir(), tmp.path().join("worktrees"));
+        assert_eq!(db.managed_worktree_root(), tmp.path().join("worktrees"));
+    }
+
+    #[test]
+    fn relative_database_paths_resolve_under_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        let resolved = state_dir_for_database(Path::new("hub.db"));
+        assert_eq!(resolved, cwd);
+        let resolved = state_dir_for_database(Path::new("data/hub.db"));
+        assert_eq!(resolved, cwd.join("data"));
+        let absolute = std::path::PathBuf::from("/var/lib/agent-hub/hub.db");
+        assert_eq!(
+            state_dir_for_database(&absolute),
+            std::path::PathBuf::from("/var/lib/agent-hub")
         );
     }
 

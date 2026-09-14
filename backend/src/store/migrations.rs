@@ -72,6 +72,31 @@ pub const MIGRATIONS: &[Migration] = &[
         // `CREATE INDEX IF NOT EXISTS` is already idempotent.
         precondition: None,
     },
+    Migration {
+        version: 4,
+        name: "chat_workspaces",
+        // Durable Phase 2 workspace metadata. One row per chat at most:
+        // `chat_id` is both the primary key and the cascade back to the chat.
+        // `workspace_path` is the managed external worktree root in managed
+        // mode and the primary checkout root in project-checkout mode, so
+        // only managed paths are unique and several direct chats may share
+        // one checkout. No Git or filesystem work happens here.
+        sql: "CREATE TABLE IF NOT EXISTS chat_workspaces (
+            chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            mode TEXT NOT NULL CHECK(mode IN ('managed_worktree', 'project_checkout')),
+            repository_root TEXT NOT NULL,
+            workspace_path TEXT NOT NULL,
+            project_subdir TEXT NOT NULL DEFAULT '',
+            branch TEXT,
+            base_commit TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_workspaces_project_id ON chat_workspaces(project_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_workspaces_managed_path ON chat_workspaces(workspace_path) WHERE mode='managed_worktree';",
+        // `CREATE TABLE/INDEX IF NOT EXISTS` is already idempotent.
+        precondition: None,
+    },
 ];
 
 pub fn latest_version() -> i64 {
@@ -180,9 +205,85 @@ mod tests {
         let conn = Connection::open(&path).unwrap();
         assert_eq!(user_version(&conn).unwrap(), latest_version());
         let tables = table_names(&conn);
-        for expected in ["chats", "events", "projects"] {
+        for expected in ["chats", "chat_workspaces", "events", "projects"] {
             assert!(tables.contains(&expected.to_string()), "missing {expected}");
         }
+    }
+
+    #[test]
+    fn chat_workspaces_schema_has_expected_keys_and_indexes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+        Store::open(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_workspaces'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        for expected in [
+            "chat_id TEXT PRIMARY KEY",
+            "REFERENCES chats(id) ON DELETE CASCADE",
+            "REFERENCES projects(id) ON DELETE CASCADE",
+            "CHECK(mode IN ('managed_worktree', 'project_checkout'))",
+        ] {
+            assert!(sql.contains(expected), "missing {expected} in {sql}");
+        }
+        for index in [
+            "idx_chat_workspaces_project_id",
+            "idx_chat_workspaces_managed_path",
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [index],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "index {index} is missing");
+        }
+        let partial: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='index' \
+                 AND name='idx_chat_workspaces_managed_path'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            partial.contains("WHERE mode='managed_worktree'"),
+            "managed-path uniqueness must be partial, got {partial}"
+        );
+    }
+
+    #[test]
+    fn v0_2_chats_stay_readable_without_workspace_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hub.db");
+
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(V0_2_SCHEMA).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO projects (id, data) VALUES ('p1', '{\"id\":\"p1\"}')",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO chats (id, project_id, data) VALUES ('c1','p1','{\"id\":\"c1\"}')",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        assert!(store.workspace("c1").unwrap().is_none());
+        assert!(store.list_workspaces().unwrap().is_empty());
+        assert!(store.list_project_workspaces("p1").unwrap().is_empty());
     }
 
     #[test]
