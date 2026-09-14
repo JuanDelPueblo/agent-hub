@@ -46,11 +46,11 @@
           @if (cancelling()) { <mat-spinner diameter="22" /> } @else { <mat-icon>stop</mat-icon> }
         </button>
       } @else {
-        <button matFab class="action" type="submit" matTooltip="Send message (Ctrl+Enter)" aria-label="Send message" [disabled]="!canSend()">
+        <button matFab class="action" type="submit" matTooltip="Send message (Enter)" aria-label="Send message" [disabled]="!canSend()">
           <mat-icon>arrow_upward</mat-icon>
         </button>
       }
     </div>
   </form>
-  <p class="hint">Press Ctrl+Enter or Cmd+Enter to send</p>
+  <p class="hint">Press Enter to send, Shift+Enter or Ctrl+J for a new line</p>
 </div>

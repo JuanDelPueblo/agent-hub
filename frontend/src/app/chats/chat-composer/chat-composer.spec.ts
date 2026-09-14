@@ -32,6 +32,45 @@ describe('ChatComposerComponent', () => {
     fixture.detectChanges();
   });
 
+  it('sends on plain Enter and clears the message', async () => {
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = '  hello agent  ';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    textarea.dispatchEvent(event);
+    await fixture.whenStable();
+    expect(event.defaultPrevented).toBe(true);
+    expect(sent).toEqual(['hello agent']);
+    expect(component.message.value).toBe('');
+  });
+
+  it('does not send on Shift+Enter', async () => {
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'line1';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const event = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(event);
+    await fixture.whenStable();
+    expect(event.defaultPrevented).toBe(false);
+    expect(sent).toEqual([]);
+    expect(component.message.value).toBe('line1');
+  });
+
+  it('inserts a newline at the cursor on Ctrl+J without sending', async () => {
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'hello world';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.setSelectionRange(5, 5);
+    const event = new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, bubbles: true, cancelable: true });
+    textarea.dispatchEvent(event);
+    await fixture.whenStable();
+    expect(event.defaultPrevented).toBe(true);
+    expect(sent).toEqual([]);
+    expect(component.message.value).toBe('hello\n world');
+    expect(textarea.selectionStart).toBe(6);
+    expect(textarea.selectionEnd).toBe(6);
+  });
+
   it('sends through Ctrl+Enter and clears the Material form control', async () => {
     const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(false);

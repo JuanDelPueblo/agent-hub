@@ -53,10 +53,28 @@ export class ChatComposerComponent {
   }
 
   keyDown(event: KeyboardEvent): void {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    if (event.isComposing) return;
+    if (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'j') {
+      event.preventDefault();
+      this.insertNewline(event);
+      return;
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void this.send();
     }
+  }
+
+  private insertNewline(event: KeyboardEvent): void {
+    const textarea = event.target as HTMLTextAreaElement | null;
+    const current = this.message.value;
+    const start = textarea?.selectionStart ?? current.length;
+    const end = textarea?.selectionEnd ?? current.length;
+    this.message.setValue(`${current.slice(0, start)}\n${current.slice(end)}`);
+    const cursor = start + 1;
+    queueMicrotask(() => {
+      if (textarea) textarea.setSelectionRange(cursor, cursor);
+    });
   }
 
   async send(): Promise<void> {
