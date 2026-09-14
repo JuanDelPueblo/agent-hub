@@ -583,6 +583,114 @@ async fn concurrent_wait_admission_and_rejected_second_prompt() {
 }
 
 #[tokio::test]
+async fn concurrent_config_load_and_prompt_share_one_startup() {
+    use agent_hub::state::ProcessState;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());
+    let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let history = root.path().join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "slow-startup".into(),
+        ]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
+    let sessions = SessionManager::with_store(agents.clone(), log.clone(), Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.path().display().to_string()];
+    let hub = HubService::new(store.clone(), sessions.clone(), agents, &config);
+
+    let project = hub
+        .create_project("demo".into(), root.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    assert_eq!(chat.process_state, "STOPPED");
+    let chat_id = chat.chat.id.clone();
+
+    // Ensure the live session entry exists so both callers share one startup lock.
+    let live = sessions.get_by_id(&chat_id).await.unwrap();
+
+    // Begin route-time config loading on the stopped chat.
+    let hub_for_config = hub.clone();
+    let config_chat_id = chat_id.clone();
+    let config_handle =
+        tokio::spawn(async move { hub_for_config.chat_config(&config_chat_id).await });
+
+    // Wait until startup is in progress so the prompt overlaps it deterministically.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if live.process_state().await == ProcessState::Starting {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "startup never reached STARTING"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // Submit an ordinary Send while startup is still in progress. It must wait
+    // for and reuse the first startup instead of failing on STARTING.
+    hub.prompt_chat(&chat_id, "hello".into())
+        .await
+        .expect("concurrent prompt must succeed");
+
+    let config_result = config_handle
+        .await
+        .expect("config task panicked")
+        .expect("concurrent config load must succeed");
+    assert!(config_result.is_array());
+
+    await_turn(&log, &chat_id).await;
+
+    // Exactly one ACP session/conversation was created.
+    let session_files: Vec<_> = std::fs::read_dir(&history)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .collect();
+    assert_eq!(
+        session_files.len(),
+        1,
+        "concurrent startup must create exactly one ACP session"
+    );
+
+    // The persisted ACP session id is stable across both operations.
+    let persisted = store
+        .chat(&chat_id)
+        .unwrap()
+        .acp_session_id
+        .expect("startup must persist acp_session_id");
+    assert!(!persisted.is_empty());
+
+    // The prompt completed against that same session.
+    let high = log.high_watermark().unwrap();
+    let events = log.replay_page(1, high, 10_000).unwrap();
+    let chunks: Vec<_> = events
+        .into_iter()
+        .filter(|event| event.session_id == chat_id)
+        .filter_map(|event| match event.payload {
+            EventPayload::MessageChunk { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        chunks
+            .iter()
+            .any(|text| text.starts_with(&format!("{persisted}:"))),
+        "prompt must complete against the shared ACP session {persisted}, got {chunks:?}"
+    );
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn startup_failure_causes_prompt_to_fail_without_events() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

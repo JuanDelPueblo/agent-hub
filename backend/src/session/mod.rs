@@ -39,6 +39,7 @@ pub struct AcpSession {
     event_log: Arc<EventLog>,
     last_activity: RwLock<Instant>,
     turn_guard: Arc<Mutex<()>>,
+    startup_lock: Mutex<()>,
 }
 
 impl AcpSession {
@@ -56,6 +57,7 @@ impl AcpSession {
             event_log,
             last_activity: RwLock::new(Instant::now()),
             turn_guard: Arc::new(Mutex::new(())),
+            startup_lock: Mutex::new(()),
         }
     }
 
@@ -126,6 +128,12 @@ impl AcpSession {
     }
 
     pub async fn ensure_running(&self) -> anyhow::Result<()> {
+        // Serialize startup per chat. A second caller waits here, then
+        // re-reads the process state below and reuses the RUNNING client
+        // instead of failing on STARTING or spawning a second process.
+        // Separate from `turn_guard`: `admit_turn`, `resume`, and
+        // `set_config` can already hold `turn_guard` when they call here.
+        let _startup_guard = self.startup_lock.lock().await;
         if let Some(store) = &self.store {
             let chat = store.chat(&self.id)?;
             anyhow::ensure!(

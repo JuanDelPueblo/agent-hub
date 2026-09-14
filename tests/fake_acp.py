@@ -2,12 +2,14 @@
 import json
 import pathlib
 import sys
+import time
 import uuid
 
 root = pathlib.Path(sys.argv[1])
 mode = sys.argv[2] if len(sys.argv) >= 3 else "load"
 can_load = mode != "no-load"
 reject_config = mode == "reject-config"
+slow_startup = mode == "slow-startup"
 # Deterministic transient failure: succeeds at the transport level but omits
 # the authoritative `configOptions`, so the backend must treat it as a retryable
 # connection/start failure rather than a saved-config rejection.
@@ -38,13 +40,19 @@ for line in sys.stdin:
     msg = json.loads(line)
     method, p, id = msg.get("method"), msg.get("params", {}), msg.get("id")
     if method == "initialize":
+        if slow_startup:
+            time.sleep(1.0)
         reply(id, {"protocolVersion": 1, "agentCapabilities": {"loadSession": can_load,
                    "sessionCapabilities": {"list": {}, "close": {}}}})
     elif method == "session/new":
+        if slow_startup:
+            time.sleep(1.0)
         current = str(uuid.uuid4())
         (root / current).write_text("0")
         reply(id, {"sessionId": current, "configOptions": options()})
     elif method == "session/load":
+        if slow_startup:
+            time.sleep(1.0)
         current = p["sessionId"]
         if not (root / current).exists():
             send({"id": id, "error": {"code": -32001, "message": "Missing history"}})
