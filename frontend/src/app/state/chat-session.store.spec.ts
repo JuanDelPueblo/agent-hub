@@ -102,9 +102,36 @@ describe('ChatSessionStore', () => {
     }));
 
     expect(store.reducersByChat()['chat-1'].items()[0]).toMatchObject({ type: 'turn' });
+    expect(store.reducersByChat()['chat-1'].items()).toHaveLength(1);
     expect(store.findChat('chat-1')).toMatchObject({
       process_state: 'RUNNING',
       turn_state: 'PROMPTING',
+    });
+  });
+
+  it('patches process state without adding a visible transcript item', () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    const event = (seq: number, payload: SessionEvent['payload']): SessionEvent => ({
+      seq,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: `2026-01-01T00:00:0${seq}Z`,
+      payload,
+    });
+
+    const processes = ['STARTING', 'RUNNING', 'STOPPED', 'DEAD'] as const;
+    processes.forEach((process, index) => {
+      store.handleIncomingEvent(event(index + 1, {
+        type: 'state_change',
+        process,
+        turn: 'IDLE',
+      }));
+    });
+
+    expect(store.reducersByChat()['chat-1'].items()).toHaveLength(0);
+    expect(store.findChat('chat-1')).toMatchObject({
+      process_state: 'DEAD',
+      turn_state: 'IDLE',
     });
   });
 

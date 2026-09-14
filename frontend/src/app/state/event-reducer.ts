@@ -2,7 +2,6 @@ import { signal } from '@angular/core';
 import type {
   DisplayError,
   DisplayItem,
-  DisplayStateChange,
   DisplayTurn,
   DisplayUserMessage,
   SessionEvent,
@@ -61,14 +60,7 @@ export class EventReducer {
     }
 
     if (payload.type === 'state_change') {
-      if (!this.shouldDisplayStateChange(payload)) return null;
-      return this.append<DisplayStateChange>({
-        id: this.nextId++,
-        type: 'state_change',
-        process: this.stringValue(payload.process) ?? '',
-        turn: this.stringValue(payload.turn) ?? '',
-        timestamp: event.timestamp,
-      });
+      return null;
     }
 
     return null;
@@ -149,13 +141,6 @@ export class EventReducer {
       'permission_response',
       'turn_complete',
     ].includes(type);
-  }
-
-  private shouldDisplayStateChange(payload: Record<string, unknown>): boolean {
-    return (
-      ['DEAD', 'STARTING', 'STOPPED'].includes(this.stringValue(payload['process']) ?? '') ||
-      this.stringValue(payload['turn']) === 'CANCELLING'
-    );
   }
 
   /** Returns a new turn when the event applies to it, otherwise the same turn. */

@@ -40,20 +40,36 @@ describe('EventReducer', () => {
     ]);
   });
 
-  it('replaces the active plan and displays terminal state changes', () => {
+  it('replaces the active plan without adding transcript items for process state changes', () => {
     const reducer = new EventReducer();
     reducer.ingest(event(1, 'plan', { entries: [{ content: 'Run tests', status: 'in_progress' }] }));
     reducer.ingest(event(2, 'plan', { entries: [{ content: 'Run tests', status: 'completed' }] }));
     reducer.ingest(event(3, 'turn_complete', { stop_reason: 'end_turn' }));
-    reducer.ingest(event(4, 'state_change', { process: 'DEAD', turn: 'IDLE' }));
-    reducer.ingest(event(5, 'state_change', { process: 'RUNNING', turn: 'IDLE' }));
 
     expect(reducer.items()[0]).toMatchObject({ type: 'turn', status: 'complete', stopReason: 'end_turn' });
     expect((reducer.items()[0] as { entries: Array<{ type: string; entries?: unknown[] }> }).entries[0]).toMatchObject({
       type: 'plan',
       entries: [{ content: 'Run tests', status: 'completed' }],
     });
-    expect(reducer.items()).toHaveLength(2);
-    expect(reducer.items()[1]).toMatchObject({ type: 'state_change', process: 'DEAD', turn: 'IDLE' });
+    expect(reducer.items()).toHaveLength(1);
+
+    let seq = 4;
+    for (const process of ['STARTING', 'RUNNING', 'STOPPED', 'DEAD']) {
+      const result = reducer.ingest(event(seq++, 'state_change', { process, turn: 'IDLE' }));
+      expect(result).toBeNull();
+    }
+    expect(reducer.ingest(event(seq++, 'state_change', { process: 'RUNNING', turn: 'CANCELLING' }))).toBeNull();
+    expect(reducer.ingest(event(seq++, 'state_change', { process: 'RUNNING', turn: 'PROMPTING' }))).toBeNull();
+
+    expect(reducer.items()).toHaveLength(1);
+    expect(reducer.items().some((item) => (item as unknown as { type: string }).type === 'state_change')).toBe(false);
+  });
+
+  it('keeps process state events out of an empty transcript', () => {
+    const reducer = new EventReducer();
+    expect(reducer.ingest(event(1, 'state_change', { process: 'STARTING', turn: 'IDLE' }))).toBeNull();
+    expect(reducer.ingest(event(2, 'state_change', { process: 'STOPPED', turn: 'IDLE' }))).toBeNull();
+    expect(reducer.ingest(event(3, 'state_change', { process: 'DEAD', turn: 'IDLE' }))).toBeNull();
+    expect(reducer.items()).toHaveLength(0);
   });
 });

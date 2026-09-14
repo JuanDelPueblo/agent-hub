@@ -149,19 +149,10 @@ export interface DisplayError {
   timestamp: string;
 }
 
-export interface DisplayStateChange {
-  id: number;
-  type: 'state_change';
-  process: string;
-  turn: string;
-  timestamp: string;
-}
-
 export type DisplayItem =
   | DisplayTurn
   | DisplayUserMessage
-  | DisplayError
-  | DisplayStateChange;
+  | DisplayError;
 
 export interface SessionEvent {
   seq: number;
