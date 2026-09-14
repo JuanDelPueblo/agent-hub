@@ -24,6 +24,17 @@ describe('ApiService', () => {
     await expect(promise).resolves.toHaveLength(1);
   });
 
+  it('loads rich installed-agent summaries from the catalog endpoint', async () => {
+    const promise = api.fetchAgents();
+    const request = http.expectOne('/api/agents');
+    expect(request.request.method).toBe('GET');
+    request.flush([{
+      id: 'custom', display_name: 'Custom ACP', source: 'file',
+      availability: 'available', usage_provider: null, metadata: { package: 'custom' },
+    }]);
+    await expect(promise).resolves.toEqual([expect.objectContaining({ id: 'custom', source: 'file' })]);
+  });
+
   it('serializes prompt payloads and URL-encodes chat ids', async () => {
     const promise = api.promptChat('chat/a', 'hello');
     const request = http.expectOne('/api/chats/chat%2Fa/prompt');

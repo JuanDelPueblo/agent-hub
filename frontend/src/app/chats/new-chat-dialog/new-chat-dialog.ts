@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -22,6 +22,9 @@ export class NewChatDialogComponent {
 
   readonly options = signal<WorkspaceOptions | null>(null);
   readonly selectedAgent = signal('');
+  readonly availableAgents = computed(() =>
+    this.state.agents().filter((agent) => agent.availability === 'available'),
+  );
   readonly selectedMode = signal<WorkspaceMode>('managed_worktree');
   readonly selectedBranch = signal('');
   readonly loading = signal(true);
@@ -29,7 +32,12 @@ export class NewChatDialogComponent {
   readonly errorMessage = signal('');
 
   constructor() {
-    this.selectedAgent.set(this.state.agents()[0] ?? '');
+    effect(() => {
+      const agents = this.availableAgents();
+      if (!agents.some((agent) => agent.id === this.selectedAgent())) {
+        this.selectedAgent.set(agents[0]?.id ?? '');
+      }
+    });
     void this.loadOptions();
   }
 

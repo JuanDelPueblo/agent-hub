@@ -3,7 +3,14 @@
 
 import { randomUUID } from 'node:crypto';
 
-export const AGENTS = ['antigravity', 'claude', 'codex', 'opencode'];
+// This is the fake equivalent of the real provider-neutral /api/agents
+// catalog. Keep metadata explicit rather than deriving it from the id.
+export const AGENTS = [
+  { id: 'antigravity', display_name: 'Antigravity', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
+  { id: 'claude', display_name: 'Claude', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
+  { id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
+  { id: 'opencode', display_name: 'OpenCode', source: 'builtin', availability: 'available', usage_provider: null, metadata: {} },
+];
 
 export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-all'];
 

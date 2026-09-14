@@ -18,7 +18,7 @@ pub use error::{ServiceError, ServiceResult};
 pub use view::{ChatHistoryPage, ChatView, ChatWorkspaceSummary};
 pub use workspaces::{WorkspaceBranch, WorkspaceOptions};
 
-use crate::agents::AgentRegistry;
+use crate::agents::{AgentCatalog, AgentSummary};
 use crate::config::Config;
 use crate::events::{EventLog, EventPayload};
 use crate::session::{AcpSession, SessionManager};
@@ -30,7 +30,7 @@ pub struct HubService {
     store: Arc<Store>,
     sessions: Arc<SessionManager>,
     events: Arc<EventLog>,
-    agents: Arc<AgentRegistry>,
+    agents: Arc<AgentCatalog>,
     workspace_lock: tokio::sync::Mutex<()>,
     /// The boundary every project path is validated against.
     project_roots: Vec<String>,
@@ -41,7 +41,7 @@ impl HubService {
     pub fn new(
         store: Arc<Store>,
         sessions: Arc<SessionManager>,
-        agents: Arc<AgentRegistry>,
+        agents: Arc<AgentCatalog>,
         config: &Config,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -65,9 +65,9 @@ impl HubService {
         Some(Self::new(store, sessions, config.agents.clone(), config))
     }
 
-    /// Sorted agent ids.
-    pub fn list_agents(&self) -> Vec<String> {
-        self.agents.ids()
+    /// Sorted provider-neutral catalog summaries.
+    pub fn list_agents(&self) -> Vec<AgentSummary> {
+        self.agents.summaries()
     }
 
     /// Tells every connected client that project or chat metadata moved. A

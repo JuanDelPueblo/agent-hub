@@ -1,6 +1,6 @@
 //! The agent file `--agents-file` names. Server-owned executable definitions;
 //! never accepted from HTTP clients.
-use super::{AgentDefinition, AgentRegistry, AgentSource, DEFAULT_IDLE_TIMEOUT_SECS};
+use super::{AgentCatalog, AgentDefinition, AgentSource, DEFAULT_IDLE_TIMEOUT_SECS};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -29,7 +29,7 @@ fn default_idle() -> u64 {
     DEFAULT_IDLE_TIMEOUT_SECS
 }
 
-pub fn parse_agents(json: &str) -> anyhow::Result<AgentRegistry> {
+pub fn parse_agents(json: &str) -> anyhow::Result<AgentCatalog> {
     let entries: HashMap<String, AgentFileEntry> = serde_json::from_str(json)?;
     anyhow::ensure!(!entries.is_empty(), "At least one agent is required");
     entries

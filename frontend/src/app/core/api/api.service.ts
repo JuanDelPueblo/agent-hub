@@ -11,6 +11,7 @@ import type {
   ChatWorkspaceSelection,
   WorkspaceOptions,
   ChatHistoryPage,
+  AgentSummary,
 } from './types';
 
 export interface AgentStatus {
@@ -184,8 +185,8 @@ export class ApiService {
     });
   }
 
-  fetchAgents(): Promise<string[]> {
-    return this.request<string[]>('/api/agents');
+  fetchAgents(): Promise<AgentSummary[]> {
+    return this.request<AgentSummary[]>('/api/agents');
   }
 
   fetchStatus(): Promise<StatusResponse> {

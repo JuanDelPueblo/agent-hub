@@ -20,7 +20,8 @@ pub struct AgentLaunch {
     pub idle_timeout: Duration,
 }
 
-/// Where a definition came from. The registry phase adds more sources.
+/// Where a definition came from. Sources are explicit metadata; Pueblo never
+/// infers ownership or provider behavior from an agent id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSource {
@@ -29,6 +30,21 @@ pub enum AgentSource {
     Builtin,
     /// Read from the file `--agents-file` names.
     File,
+    /// Managed by Pueblo Hub in a future management surface.
+    PuebloManaged,
+    /// Installed or selected from a future agent registry.
+    Registry,
+    /// Supplied by a future declarative configuration source.
+    Declarative,
+}
+
+/// Whether Pueblo can offer an agent for a new session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentAvailability {
+    #[default]
+    Available,
+    Unavailable,
 }
 
 #[derive(Debug, Clone)]
@@ -40,10 +56,24 @@ pub struct AgentDefinition {
     /// usage subsystem resolves it. Pueblo Hub never infers it from `id`.
     pub usage_provider: Option<String>,
     pub source: AgentSource,
+    pub availability: AgentAvailability,
     /// Opaque to Pueblo Hub today. The registry phase gives it meaning.
     pub metadata: serde_json::Value,
     /// The policy a session uses when no stored chat supplies one.
     pub default_permission_policy: CallbackPolicy,
+}
+
+/// Provider-neutral data intended for the application and future management
+/// surfaces. Launch arguments and environment remain private to the runtime
+/// boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentSummary {
+    pub id: String,
+    pub display_name: String,
+    pub source: AgentSource,
+    pub availability: AgentAvailability,
+    pub usage_provider: Option<String>,
+    pub metadata: serde_json::Value,
 }
 
 /// The subset the session layer and the ACP layer may see. Keeping it separate
@@ -69,6 +99,7 @@ impl AgentDefinition {
             },
             usage_provider: None,
             source: AgentSource::Builtin,
+            availability: AgentAvailability::Available,
             metadata: serde_json::Value::Null,
             default_permission_policy: CallbackPolicy::Ask,
         }
@@ -79,6 +110,17 @@ impl AgentDefinition {
             id: self.id.clone(),
             launch: self.launch.clone(),
             default_permission_policy: self.default_permission_policy.clone(),
+        }
+    }
+
+    pub fn summary(&self) -> AgentSummary {
+        AgentSummary {
+            id: self.id.clone(),
+            display_name: self.display_name.clone(),
+            source: self.source,
+            availability: self.availability,
+            usage_provider: self.usage_provider.clone(),
+            metadata: self.metadata.clone(),
         }
     }
 
@@ -147,6 +189,20 @@ impl AgentDefinition {
 
     pub fn with_source(mut self, source: AgentSource) -> Self {
         self.source = source;
+        self
+    }
+
+    pub fn with_availability(mut self, availability: AgentAvailability) -> Self {
+        self.availability = availability;
+        self
+    }
+
+    pub fn with_available(mut self, available: bool) -> Self {
+        self.availability = if available {
+            AgentAvailability::Available
+        } else {
+            AgentAvailability::Unavailable
+        };
         self
     }
 
@@ -294,5 +350,20 @@ mod tests {
         assert_eq!(runtime.id, "codex");
         assert_eq!(runtime.launch.command, "codex-acp");
         assert_eq!(runtime.launch.idle_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn summary_carries_catalog_metadata_without_runtime_details() {
+        let summary = AgentDefinition::codex_default()
+            .with_display_name("Codex CLI".into())
+            .with_source(AgentSource::Registry)
+            .with_availability(AgentAvailability::Unavailable)
+            .with_metadata(serde_json::json!({"package": "codex"}))
+            .summary();
+        assert_eq!(summary.id, "codex");
+        assert_eq!(summary.display_name, "Codex CLI");
+        assert_eq!(summary.source, AgentSource::Registry);
+        assert_eq!(summary.availability, AgentAvailability::Unavailable);
+        assert_eq!(summary.metadata["package"], "codex");
     }
 }
