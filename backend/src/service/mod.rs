@@ -11,10 +11,12 @@ mod chats;
 mod error;
 mod projects;
 mod view;
+mod workspaces;
 
-pub use chats::ChatEdit;
+pub use chats::{ChatEdit, WorkspaceSelection};
 pub use error::{ServiceError, ServiceResult};
 pub use view::ChatView;
+pub use workspaces::{WorkspaceBranch, WorkspaceOptions};
 
 use crate::agents::AgentRegistry;
 use crate::config::Config;
@@ -29,6 +31,7 @@ pub struct HubService {
     sessions: Arc<SessionManager>,
     events: Arc<EventLog>,
     agents: Arc<AgentRegistry>,
+    workspace_lock: tokio::sync::Mutex<()>,
     /// The boundary every project path is validated against.
     project_roots: Vec<String>,
     prompt_timeout: Option<Duration>,
@@ -46,6 +49,7 @@ impl HubService {
             store,
             sessions,
             agents,
+            workspace_lock: tokio::sync::Mutex::new(()),
             project_roots: config.web.project_roots.clone(),
             prompt_timeout: config.timeouts.prompt.map(Duration::from_secs),
         })

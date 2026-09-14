@@ -160,9 +160,39 @@ impl Store {
         agent: String,
         title: Option<String>,
     ) -> StoreResult<Chat> {
-        let c = chats::new(project_id, agent, title)?;
-        chats::insert(&self.conn.lock().unwrap(), &c)?;
+        let c = self.new_chat(project_id, agent, title)?;
+        self.insert_chat(&c)?;
         Ok(c)
+    }
+
+    /// Build a chat with its final ID without making it visible yet. Services
+    /// use this to name external resources before the durable transaction.
+    pub(crate) fn new_chat(
+        &self,
+        project_id: String,
+        agent: String,
+        title: Option<String>,
+    ) -> StoreResult<Chat> {
+        chats::new(project_id, agent, title)
+    }
+
+    fn insert_chat(&self, chat: &Chat) -> StoreResult<()> {
+        chats::insert(&self.conn.lock().unwrap(), chat)
+    }
+
+    /// Persist a newly-created chat and its workspace as one atomic mutation.
+    /// Neither row is visible if either insert fails.
+    pub(crate) fn insert_chat_with_workspace(
+        &self,
+        chat: &Chat,
+        workspace: &ChatWorkspace,
+    ) -> StoreResult<()> {
+        let mut db = self.conn.lock().unwrap();
+        let tx = db.transaction()?;
+        chats::insert(&tx, chat)?;
+        workspaces::insert(&tx, workspace)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Read/modify/write under one lock so a config notification cannot overwrite a rename.

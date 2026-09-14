@@ -1,0 +1,288 @@
+use agent_hub::{
+    agents::{AgentDefinition, AgentRegistry},
+    config::Config,
+    events::EventLog,
+    service::{HubService, ServiceError, WorkspaceSelection},
+    session::SessionManager,
+    store::{Store, WorkspaceMode},
+    web::{router, AppState},
+};
+use axum::{
+    body::{to_bytes, Body},
+    http::Request,
+};
+use std::{path::Path, process::Command, sync::Arc};
+use tower::ServiceExt;
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?}: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn git_repo(root: &Path) -> std::path::PathBuf {
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-b", "main"]);
+    git(&repo, &["config", "user.email", "test@example.com"]);
+    git(&repo, &["config", "user.name", "Agent Hub tests"]);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    std::fs::create_dir_all(repo.join("nested")).unwrap();
+    std::fs::write(repo.join("nested/project.txt"), "nested\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "base"]);
+    git(&repo, &["branch", "feature"]);
+    repo
+}
+
+fn hub(root: &Path) -> (Arc<HubService>, Arc<Store>) {
+    let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()]));
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.display().to_string()];
+    (
+        HubService::new(store.clone(), sessions, agents, &config),
+        store,
+    )
+}
+
+fn selection(mode: WorkspaceMode, branch: Option<&str>) -> Option<WorkspaceSelection> {
+    Some(WorkspaceSelection {
+        mode,
+        branch: branch.map(str::to_string),
+    })
+}
+
+#[tokio::test]
+async fn workspace_options_enumerate_sorted_local_branches_and_non_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    git(&repo, &["branch", "zzz"]);
+    git(&repo, &["branch", "aaa"]);
+    let (hub, _store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let options = hub.workspace_options(&project.id).await.unwrap();
+    assert!(options.is_git);
+    assert_eq!(options.branch.as_deref(), Some("main"));
+    assert!(!options.dirty);
+    assert_eq!(
+        options
+            .branches
+            .iter()
+            .map(|branch| branch.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["aaa", "feature", "main", "zzz"]
+    );
+    assert!(options
+        .branches
+        .iter()
+        .any(|branch| branch.name == "main" && branch.current));
+
+    let plain = tmp.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let plain_project = hub
+        .create_project("plain".into(), plain.display().to_string())
+        .unwrap();
+    let plain_options = hub.workspace_options(&plain_project.id).await.unwrap();
+    assert!(!plain_options.is_git);
+    assert!(plain_options.branches.is_empty());
+}
+
+#[tokio::test]
+async fn managed_chats_are_isolated_and_can_start_from_selected_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let base = git(&repo, &["rev-parse", "feature"]);
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let first = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("feature")),
+        )
+        .await
+        .unwrap();
+    let second = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let first_ws = store.workspace(&first.chat.id).unwrap().unwrap();
+    let second_ws = store.workspace(&second.chat.id).unwrap().unwrap();
+    assert_eq!(first_ws.mode, WorkspaceMode::ManagedWorktree);
+    assert_eq!(first_ws.base_commit.as_deref(), Some(base.as_str()));
+    assert_ne!(first_ws.workspace_path, second_ws.workspace_path);
+    assert_ne!(first_ws.branch, second_ws.branch);
+    assert!(Path::new(&first_ws.workspace_path).is_dir());
+    assert!(Path::new(&second_ws.workspace_path).is_dir());
+    assert_eq!(
+        git(
+            Path::new(&first_ws.workspace_path),
+            &["branch", "--show-current"]
+        ),
+        first_ws.branch.unwrap()
+    );
+}
+
+#[tokio::test]
+async fn explicit_managed_selection_ignores_dirty_primary_checkout_but_legacy_does_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    std::fs::write(repo.join("dirty.txt"), "keep in primary\n").unwrap();
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let managed = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let ws = store.workspace(&managed.chat.id).unwrap().unwrap();
+    assert!(!Path::new(&ws.workspace_path).join("dirty.txt").exists());
+
+    let error = hub
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ServiceError::Conflict(_)));
+}
+
+#[tokio::test]
+async fn direct_current_branch_preserves_dirty_files_and_switching_refuses_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    std::fs::write(repo.join("README.md"), "dirty\n").unwrap();
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let current = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md")).unwrap(),
+        "dirty\n"
+    );
+    assert_eq!(
+        store.workspace(&current.chat.id).unwrap().unwrap().mode,
+        WorkspaceMode::ProjectCheckout
+    );
+
+    let error = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ProjectCheckout, Some("feature")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert_eq!(git(&repo, &["branch", "--show-current"]), "main");
+}
+
+#[tokio::test]
+async fn nested_project_uses_the_effective_subdirectory_in_each_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let nested = repo.join("nested");
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("nested".into(), nested.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let ws = store.workspace(&chat.chat.id).unwrap().unwrap();
+    assert_eq!(ws.project_subdir, "nested");
+    assert!(Path::new(&ws.workspace_path)
+        .join("nested/project.txt")
+        .is_file());
+}
+
+#[tokio::test]
+async fn http_workspace_options_route_and_chat_workspace_payload_work() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let store = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()]));
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
+    let mut config = Config {
+        agents,
+        ..Default::default()
+    };
+    config.web.project_roots = vec![tmp.path().display().to_string()];
+    let project = store
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let app = router(AppState::new(sessions, Arc::new(config), 0));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/projects/{}/workspace-options", project.id))
+                .header("host", "127.0.0.1:0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let options: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(options["is_git"], true);
+    assert_eq!(options["branch"], "main");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/projects/{}/chats", project.id))
+                .header("host", "127.0.0.1:0")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "agent": "codex",
+                        "workspace": {"mode": "managed_worktree", "branch": "feature"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(store.chats().unwrap().len(), 1);
+    assert_eq!(store.list_workspaces().unwrap().len(), 1);
+}

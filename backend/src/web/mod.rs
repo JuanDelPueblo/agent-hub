@@ -102,6 +102,10 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(hub::edit_project).delete(hub::delete_project),
         )
         .route(
+            "/api/projects/:id/workspace-options",
+            get(hub::workspace_options),
+        )
+        .route(
             "/api/projects/:id/chats",
             get(hub::chats).post(hub::create_chat),
         )

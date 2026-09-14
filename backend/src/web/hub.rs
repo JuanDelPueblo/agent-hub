@@ -1,7 +1,7 @@
 use super::AppState;
 use crate::{
     acp::callbacks::CallbackPolicy,
-    service::{ChatEdit, ChatView, HubService, ServiceError},
+    service::{ChatEdit, ChatView, HubService, ServiceError, WorkspaceOptions, WorkspaceSelection},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -270,18 +270,31 @@ pub async fn chats(
 ) -> Result<Json<Vec<ChatView>>> {
     Ok(Json(hub(&s)?.list_chats(&id).await?))
 }
+
+pub async fn workspace_options(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceOptions>> {
+    Ok(Json(hub(&s)?.workspace_options(&id).await?))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChatInput {
     pub agent: String,
     pub title: Option<String>,
+    pub workspace: Option<WorkspaceSelection>,
 }
 pub async fn create_chat(
     State(s): State<AppState>,
     Path(id): Path<String>,
     Json(c): Json<ChatInput>,
 ) -> Result<Json<ChatView>> {
-    Ok(Json(hub(&s)?.create_chat(&id, &c.agent, c.title).await?))
+    Ok(Json(
+        hub(&s)?
+            .create_chat_with_workspace(&id, &c.agent, c.title, c.workspace)
+            .await?,
+    ))
 }
 pub async fn chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<ChatView>> {
     Ok(Json(hub(&s)?.get_chat(&id).await?))
