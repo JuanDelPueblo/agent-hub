@@ -140,6 +140,12 @@ impl Store {
         events::recent(&self.0.lock().unwrap())
     }
 
+    /// Durable rows needed to repair pending permissions and interrupted
+    /// turns on startup, in sequence order. See `events::recovery`.
+    pub fn recovery_events(&self) -> StoreResult<Vec<crate::events::SessionEvent>> {
+        events::recovery(&self.0.lock().unwrap())
+    }
+
     pub fn event_page(
         &self,
         from_seq: u64,

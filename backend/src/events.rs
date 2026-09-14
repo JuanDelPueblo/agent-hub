@@ -126,18 +126,27 @@ impl EventLog {
         max_entries: usize,
     ) -> anyhow::Result<Self> {
         let mut log = Self::new(max_entries);
-        let events = store.events()?;
-        log.next_seq
-            .store(events.last().map_or(1, |e| e.seq + 1), Ordering::SeqCst);
+        // The replay cache holds only the recent window. Sequence allocation
+        // must follow the durable high watermark instead.
+        let next_seq = store.max_event_seq()?.saturating_add(1).max(1);
+        log.next_seq.store(next_seq, Ordering::SeqCst);
+        // `recent` seeds the in-memory window only; recovery below reads the
+        // complete durable state so old rows outside this window still repair.
+        let mut recent = store.events()?;
+        if recent.len() > max_entries {
+            recent.drain(0..recent.len() - max_entries);
+        }
+        // The recovery scan must see every durable permission/turn row even
+        // when those rows have left the replay window, so query it separately.
+        let recovery = store.recovery_events()?;
         log.min_seq
-            .store(events.first().map_or(0, |e| e.seq), Ordering::SeqCst);
-        *log.events.write().unwrap() = events.into();
+            .store(recent.first().map_or(0, |e| e.seq), Ordering::SeqCst);
+        *log.events.write().unwrap() = recent.into();
         log.store = Some(store);
         // Browser approvals from a previous process can no longer authorize work.
-        let previous = log.events.read().unwrap().clone();
-        let mut pending = std::collections::HashMap::new();
-        let mut active = std::collections::HashMap::new();
-        for e in previous {
+        let mut pending = std::collections::BTreeMap::new();
+        let mut active = std::collections::BTreeMap::new();
+        for e in recovery {
             match &e.payload {
                 EventPayload::PermissionRequest { id, .. } => {
                     pending.insert(id.clone(), (e.session_id.clone(), e.agent.clone()));
@@ -481,5 +490,182 @@ mod tests {
         assert_eq!(events.len(), 105);
         assert_eq!(events.first().unwrap().seq, 1);
         assert_eq!(events.last().unwrap().seq, 105);
+    }
+
+    #[test]
+    fn restart_repairs_permission_and_turn_outside_memory_window() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::store::Store::open(&temp.path().join("events.db")).unwrap());
+        {
+            let before = EventLog::persistent_with_limit(store.clone(), 100).unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::StateChange {
+                        process: "RUNNING".into(),
+                        turn: "PROMPTING".into(),
+                    },
+                )
+                .unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::PermissionRequest {
+                        id: "p1".into(),
+                        method: "edit".into(),
+                        description: "edit a file".into(),
+                        title: None,
+                        kind: None,
+                    },
+                )
+                .unwrap();
+            for index in 0..5 {
+                before
+                    .append(
+                        "chat-other",
+                        "codex",
+                        EventPayload::MessageChunk {
+                            text: format!("filler-{index}"),
+                        },
+                    )
+                    .unwrap();
+            }
+            assert_eq!(store.max_event_seq().unwrap(), 7);
+            // Only the two recovery-relevant rows match the startup scan.
+            assert_eq!(store.recovery_events().unwrap().len(), 2);
+        }
+
+        let after = EventLog::persistent_with_limit(store.clone(), 2).unwrap();
+        // The interrupted rows sat at seq 1-2, far outside the tiny window.
+        assert!(!after
+            .events
+            .read()
+            .unwrap()
+            .iter()
+            .any(|e| e.seq == 1 || e.seq == 2));
+        assert!(after.events.read().unwrap().len() <= 2);
+        assert_eq!(after.next_seq(), 10);
+
+        let ReplayResult::Complete(durable) = after.replay_from(1) else {
+            panic!("persistent replay was partial");
+        };
+        assert_eq!(durable.len(), 9);
+        let denied = &durable[7];
+        assert_eq!(denied.seq, 8);
+        assert_eq!(denied.session_id, "chat-a");
+        assert!(matches!(
+            &denied.payload,
+            EventPayload::PermissionResponse { id, granted: false } if id == "p1"
+        ));
+        let completed = &durable[8];
+        assert_eq!(completed.seq, 9);
+        assert_eq!(completed.session_id, "chat-a");
+        assert!(matches!(
+            &completed.payload,
+            EventPayload::TurnComplete { stop_reason } if stop_reason == "backend_restarted"
+        ));
+
+        // Full durable replay must no longer show the turn as in progress.
+        let mut pending = std::collections::HashSet::new();
+        let mut active = std::collections::HashSet::new();
+        for event in &durable {
+            match &event.payload {
+                EventPayload::PermissionRequest { id, .. } => {
+                    pending.insert(id.clone());
+                }
+                EventPayload::PermissionResponse { id, .. } => {
+                    pending.remove(id);
+                }
+                EventPayload::StateChange { turn, .. } if turn == "PROMPTING" => {
+                    active.insert(event.session_id.clone());
+                }
+                EventPayload::TurnComplete { .. } => {
+                    active.remove(&event.session_id);
+                }
+                _ => {}
+            }
+        }
+        assert!(pending.is_empty());
+        assert!(!active.contains("chat-a"));
+    }
+
+    #[test]
+    fn restart_does_not_duplicate_completed_permission_and_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::store::Store::open(&temp.path().join("events.db")).unwrap());
+        {
+            let before = EventLog::persistent_with_limit(store.clone(), 100).unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::StateChange {
+                        process: "RUNNING".into(),
+                        turn: "PROMPTING".into(),
+                    },
+                )
+                .unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::PermissionRequest {
+                        id: "p1".into(),
+                        method: "edit".into(),
+                        description: "edit a file".into(),
+                        title: None,
+                        kind: None,
+                    },
+                )
+                .unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::PermissionResponse {
+                        id: "p1".into(),
+                        granted: true,
+                    },
+                )
+                .unwrap();
+            before
+                .append(
+                    "chat-a",
+                    "codex",
+                    EventPayload::TurnComplete {
+                        stop_reason: "done".into(),
+                    },
+                )
+                .unwrap();
+            for index in 0..5 {
+                before
+                    .append(
+                        "chat-other",
+                        "codex",
+                        EventPayload::MessageChunk {
+                            text: format!("filler-{index}"),
+                        },
+                    )
+                    .unwrap();
+            }
+            assert_eq!(store.max_event_seq().unwrap(), 9);
+        }
+
+        let after = EventLog::persistent_with_limit(store.clone(), 2).unwrap();
+        assert_eq!(after.next_seq(), 10);
+        let ReplayResult::Complete(durable) = after.replay_from(1) else {
+            panic!("persistent replay was partial");
+        };
+        assert_eq!(durable.len(), 9);
+        assert!(!durable.iter().any(|e| matches!(
+            &e.payload,
+            EventPayload::PermissionResponse { id, granted: false } if id == "p1"
+        )));
+        assert!(!durable.iter().any(|e| matches!(
+            &e.payload,
+            EventPayload::TurnComplete { stop_reason } if stop_reason == "backend_restarted"
+        )));
     }
 }

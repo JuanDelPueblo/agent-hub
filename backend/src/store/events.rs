@@ -19,11 +19,36 @@ pub(crate) fn save(conn: &Connection, event: &SessionEvent) -> StoreResult<()> {
 }
 
 /// The most recent `REPLAY_LIMIT` events, oldest first.
+///
+/// This populates the in-memory replay cache only. Restart recovery must not
+/// use it: the rows it needs can sit outside this window.
 pub(crate) fn recent(conn: &Connection) -> StoreResult<Vec<SessionEvent>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT data FROM (SELECT seq,data FROM events ORDER BY seq DESC LIMIT {REPLAY_LIMIT}) \
          ORDER BY seq"
     ))?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let mut events = Vec::new();
+    for r in rows {
+        let data = r?;
+        events.push(serde_json::from_str(&data)?);
+    }
+    Ok(events)
+}
+
+/// Durable restart-recovery state in sequence order.
+///
+/// Startup-only work: returns every row whose payload can leave a turn
+/// interrupted or a permission pending. `json_extract` avoids a migration;
+/// recovery runs once per start so the per-row JSON parse is acceptable.
+/// Callers must not use this for replay: it omits all other payload types.
+pub(crate) fn recovery(conn: &Connection) -> StoreResult<Vec<SessionEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT data FROM events \
+         WHERE json_extract(data, '$.payload.type') IN \
+         ('permission_request', 'permission_response', 'state_change', 'turn_complete') \
+         ORDER BY seq",
+    )?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     let mut events = Vec::new();
     for r in rows {
