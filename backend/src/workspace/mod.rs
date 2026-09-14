@@ -205,7 +205,7 @@ fn has_git_metadata(path: &Path) -> Result<bool, WorkspaceError> {
                 return Err(WorkspaceError::Failed(format!(
                     "cannot inspect Git metadata at {}: {e}",
                     current.display()
-                )))
+                )));
             }
         }
         let Some(parent) = current.parent() else {
@@ -237,14 +237,14 @@ pub fn inspect(path: &Path) -> Result<RepoInfo, WorkspaceError> {
             return Err(WorkspaceError::Failed(format!(
                 "cannot inspect workspace path {}: {e}",
                 path.display()
-            )))
+            )));
         }
     }
 
     let root_output = match run_git_output(path, &["rev-parse", "--show-toplevel"], GIT_TIMEOUT) {
         Ok(output) => output.stdout,
         Err(error) if is_not_a_repository_error(&error) && !has_git_metadata(path)? => {
-            return Ok(not_git())
+            return Ok(not_git());
         }
         Err(error) => return Err(error),
     };
