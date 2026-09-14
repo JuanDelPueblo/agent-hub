@@ -62,9 +62,10 @@ export class ProjectPageComponent {
       .subscribe(({ matches }) => this.compact.set(matches));
   }
 
-  stateLabel(processState: string | null | undefined): string {
-    const value = processState ?? 'STOPPED';
-    return value.charAt(0) + value.slice(1).toLowerCase();
+  agentLabel(agent: string | null | undefined): string {
+    const value = agent ?? '';
+    if (!value) return value;
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
   }
 
   edit(project: Project): void {

@@ -86,20 +86,12 @@
           [routerLink]="['/projects', chat.project_id, 'chats', chat.id]"
           routerLinkActive="selected"
           (click)="closeRequested.emit()"
-          [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat') + '. Process ' + processStateLabel(chat)"
+          [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
         >
-          <span matListItemIcon class="status-slot">
-            <span
-              class="status-dot"
-              [class.running]="chat.process_state === 'RUNNING'"
-              [class.dead]="chat.process_state === 'DEAD'"
-            ></span>
-            <span class="visually-hidden">Process {{ processStateLabel(chat) }}</span>
-          </span>
           <span matListItemTitle class="chat-title">{{ chat.title || 'Untitled chat' }}</span>
           <span matListItemLine class="chat-meta-line">
             <span class="chat-meta">
-              <span class="agent-badge">{{ chat.agent }}</span>
+              <span class="agent-badge">{{ agentLabel(chat.agent) }}</span>
               @if (chat.archived) { <span class="archived-tag">Archived</span> }
             </span>
           </span>

@@ -53,8 +53,10 @@ export class NavigationComponent {
     return this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived);
   });
 
-  processStateLabel(chat: Chat): string {
-    return (chat.process_state ?? 'STOPPED').toLowerCase();
+  agentLabel(agent: string | null | undefined): string {
+    const value = agent ?? '';
+    if (!value) return value;
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
   }
 
   /**

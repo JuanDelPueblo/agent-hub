@@ -54,17 +54,10 @@
               [attr.aria-label]="'Open chat ' + (chat.title || 'Untitled chat')"
             >
               <div class="chat-top">
-                <span class="agent-badge">{{ chat.agent }}</span>
+                <span class="agent-badge">{{ agentLabel(chat.agent) }}</span>
                 @if (chat.archived) { <span class="archived-tag">Archived</span> }
               </div>
               <h3 class="chat-title">{{ chat.title || 'Untitled chat' }}</h3>
-              <div
-                class="chat-state"
-                [class.running]="chat.process_state === 'RUNNING'"
-                [class.dead]="chat.process_state === 'DEAD'"
-              >
-                <span class="state-dot"></span>{{ stateLabel(chat.process_state) }}
-              </div>
             </a>
           </mat-card>
         }

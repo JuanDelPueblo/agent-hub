@@ -19,6 +19,11 @@ export class ChatHeaderComponent {
   readonly chat = input<Chat | null>(null);
   readonly configRequested = output<void>();
   readonly state = inject(AppStateService);
+  agentLabel(agent: string | null | undefined): string {
+    const value = agent ?? '';
+    if (!value) return value;
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  }
   private readonly dialog = inject(MatDialog);
   toggleNavigation(): void { this.state.setMobileDrawerOpen(!this.state.isMobileDrawerOpen()); }
   rename(): void { const chat = this.chat(); if (chat) this.dialog.open(RenameChatDialogComponent, { width: 'min(480px, calc(100vw - 32px))', data: chat }); }

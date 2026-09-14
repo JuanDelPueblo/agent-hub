@@ -47,7 +47,7 @@ describe('ChatHeaderComponent', () => {
   it('renders the agent badge without icon', () => {
     const badge = fixture.nativeElement.querySelector('.badge.agent');
     expect(badge).toBeTruthy();
-    expect(badge.textContent.trim()).toBe('claude');
+    expect(badge.textContent.trim()).toBe('Claude');
     expect(badge.querySelector('mat-icon')).toBeNull();
   });
 

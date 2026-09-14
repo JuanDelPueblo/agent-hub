@@ -31,7 +31,7 @@ describe('NavigationComponent DOM check', () => {
             id: 'chat-2',
             project_id: 'proj-1',
             agent: 'codex',
-            title: 'Stopped chat',
+            title: 'Draft the migration plan',
             process_state: 'STOPPED',
             turn_state: 'IDLE',
             archived: false,
@@ -40,7 +40,7 @@ describe('NavigationComponent DOM check', () => {
             id: 'chat-3',
             project_id: 'proj-1',
             agent: 'opencode',
-            title: 'Dead chat',
+            title: 'Summarize the router guard',
             process_state: 'DEAD',
             turn_state: 'IDLE',
             archived: false,
@@ -68,22 +68,43 @@ describe('NavigationComponent DOM check', () => {
     fixture.detectChanges();
   });
 
-  it('renders chat items with title and agent badge without icon', () => {
+  it('renders chat items with title and capitalized agent badge and no process state', () => {
     const title = fixture.nativeElement.querySelector('[matListItemTitle]');
     expect(title).toBeTruthy();
     expect(title.textContent).toContain('Review the WebSocket replay path');
 
-    const badge = fixture.nativeElement.querySelector('.agent-badge');
-    expect(badge).toBeTruthy();
-    expect(badge.textContent.trim()).toBe('claude');
-    expect(badge.querySelector('mat-icon')).toBeNull();
+    const badges = Array.from(fixture.nativeElement.querySelectorAll('.agent-badge')).map(
+      (badge: unknown) => (badge as Element).textContent?.trim(),
+    );
+    expect(badges).toEqual(['Claude', 'Codex', 'Opencode']);
+    const firstBadge = fixture.nativeElement.querySelector('.agent-badge');
+    expect(firstBadge.querySelector('mat-icon')).toBeNull();
+
+    const chatList = fixture.nativeElement.querySelector('mat-nav-list');
+    expect(chatList).toBeTruthy();
+    expect(chatList.querySelector('.status-dot')).toBeNull();
+    expect(chatList.querySelector('.status-slot')).toBeNull();
+
+    const text = chatList.textContent as string;
+    for (const state of ['STARTING', 'RUNNING', 'STOPPED', 'DEAD', 'Starting', 'Running', 'Stopped', 'Dead']) {
+      expect(text).not.toContain(state);
+    }
+
     const labels = Array.from(fixture.nativeElement.querySelectorAll('a[mat-list-item]'))
-      .map((item: unknown) => (item as Element).getAttribute('aria-label'));
-    expect(labels).toEqual(expect.arrayContaining([
-      expect.stringContaining('Process running'),
-      expect.stringContaining('Process stopped'),
-      expect.stringContaining('Process dead'),
-    ]));
+      .map((item: unknown) => (item as Element).getAttribute('aria-label') ?? '');
+    expect(labels).toHaveLength(3);
+    for (const label of labels) {
+      expect(label).toMatch(/Open chat/);
+      expect(label).not.toMatch(/process/i);
+      expect(label).not.toMatch(/starting|running|stopped|dead/i);
+    }
+  });
+
+  it('capitalizes agent names for display only', () => {
+    expect(fixture.componentInstance.agentLabel('claude')).toBe('Claude');
+    expect(fixture.componentInstance.agentLabel('codex')).toBe('Codex');
+    expect(fixture.componentInstance.agentLabel('antigravity')).toBe('Antigravity');
+    expect(fixture.componentInstance.agentLabel('opencode')).toBe('Opencode');
   });
 });
 
