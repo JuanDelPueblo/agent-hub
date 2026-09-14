@@ -4,7 +4,6 @@ import { effect, inject, Service, signal } from '@angular/core';
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 const THEME_STORAGE_KEY = 'pueblo-hub-theme';
-const LEGACY_THEME_STORAGE_KEY = 'agent-hub-theme';
 
 @Service()
 export class ThemeService {
@@ -29,8 +28,7 @@ export class ThemeService {
 
   private readMode(): ThemeMode {
     if (typeof localStorage === 'undefined') return 'system';
-    const value = localStorage.getItem(THEME_STORAGE_KEY)
-      ?? localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
     return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
   }
 }

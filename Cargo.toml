@@ -75,12 +75,6 @@ path = "backend/src/lib.rs"
 name = "pueblo-hub"
 path = "backend/src/main.rs"
 
-# Keep the pre-rename executable available to existing service definitions.
-# `pueblo-hub` remains the canonical binary and package entry point.
-[[bin]]
-name = "agent-hub"
-path = "backend/src/main.rs"
-
 [profile.release]
 lto = true
 codegen-units = 1
