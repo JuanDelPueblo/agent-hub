@@ -38,11 +38,16 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     let project = db
         .create_project("test".into(), tmp.path().display().to_string())
         .unwrap();
+    let second_root = tmp.path().join("second-project");
+    std::fs::create_dir_all(&second_root).unwrap();
+    let second_project = db
+        .create_project("second-test".into(), second_root.display().to_string())
+        .unwrap();
     let a = db
         .create_chat(project.id.clone(), "codex".into(), Some("one".into()))
         .unwrap();
     let b = db
-        .create_chat(project.id, "codex".into(), Some("two".into()))
+        .create_chat(second_project.id, "codex".into(), Some("two".into()))
         .unwrap();
     let one = mgr.get_by_id(&a.id).await.unwrap();
     let two = mgr.get_by_id(&b.id).await.unwrap();

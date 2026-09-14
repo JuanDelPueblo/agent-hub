@@ -2,11 +2,13 @@ use crate::acp::{AcpClient, SavedConfigRejected};
 use crate::agents::{AgentRegistry, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
+use crate::store::{Chat, ChatWorkspace, Project, WorkspaceMode};
+use crate::workspace;
 use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
 use agent_client_protocol_schema::{PromptResponse, StopReason};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
@@ -18,6 +20,7 @@ pub struct SessionKey {
 
 pub struct AdmittedTurn {
     _guard: OwnedMutexGuard<()>,
+    _checkout_guard: Option<OwnedMutexGuard<()>>,
     message: String,
     timeout: Option<Duration>,
     start_seq: u64,
@@ -39,11 +42,17 @@ pub struct AcpSession {
     event_log: Arc<EventLog>,
     last_activity: RwLock<Instant>,
     turn_guard: Arc<Mutex<()>>,
+    checkout_guard: Option<Arc<Mutex<()>>>,
     startup_lock: Mutex<()>,
 }
 
 impl AcpSession {
-    pub fn new(key: SessionKey, runtime: Arc<AgentRuntime>, event_log: Arc<EventLog>) -> Self {
+    pub fn new(
+        key: SessionKey,
+        runtime: Arc<AgentRuntime>,
+        event_log: Arc<EventLog>,
+        checkout_guard: Option<Arc<Mutex<()>>>,
+    ) -> Self {
         Self {
             store: None,
             id: uuid::Uuid::new_v4().to_string(),
@@ -57,6 +66,7 @@ impl AcpSession {
             event_log,
             last_activity: RwLock::new(Instant::now()),
             turn_guard: Arc::new(Mutex::new(())),
+            checkout_guard,
             startup_lock: Mutex::new(()),
         }
     }
@@ -141,10 +151,19 @@ impl AcpSession {
                 "Chat is archived; restore it before reconnecting"
             );
             let project = store.project(&chat.project_id)?;
-            anyhow::ensure!(
-                Path::new(&project.path).canonicalize()? == self.key.cwd,
-                "Project directory changed; review the project path"
-            );
+            let workspace = store.workspace(&chat.id)?;
+            let state_worktrees = store.worktrees_dir();
+            let key_cwd = self.key.cwd.clone();
+            tokio::task::spawn_blocking(move || {
+                validate_persistent_workspace(
+                    &chat,
+                    &project,
+                    workspace.as_ref(),
+                    &state_worktrees,
+                    &key_cwd,
+                )
+            })
+            .await??;
         }
         let ps = *self.process_state.read().await;
         if ps == ProcessState::Running && !self.client_disconnected().await {
@@ -307,6 +326,14 @@ impl AcpSession {
             anyhow::bail!("Agent busy (turn state: {})", current_turn);
         }
 
+        let checkout_guard = match &self.checkout_guard {
+            Some(lock) => match lock.clone().try_lock_owned() {
+                Ok(guard) => Some(guard),
+                Err(_) => anyhow::bail!("Another chat is already working in this project checkout"),
+            },
+            None => None,
+        };
+
         self.touch().await;
         self.ensure_running().await?;
 
@@ -325,6 +352,7 @@ impl AcpSession {
 
         Ok(AdmittedTurn {
             _guard: guard,
+            _checkout_guard: checkout_guard,
             message,
             timeout,
             start_seq,
@@ -355,6 +383,7 @@ impl AcpSession {
             message,
             timeout,
             start_seq,
+            ..
         } = admitted;
         let result = self.execute_prompt(&message, timeout, start_seq).await;
         if let Err(error) = &result {
@@ -753,6 +782,178 @@ impl AcpSession {
     }
 }
 
+/// Resolve a relative project subdirectory without allowing durable metadata
+/// to redirect a session outside its checkout.
+fn join_project_subdir(base: &Path, project_subdir: &str) -> anyhow::Result<PathBuf> {
+    let subdir = Path::new(project_subdir);
+    anyhow::ensure!(
+        !subdir.is_absolute(),
+        "workspace project subdirectory must be relative"
+    );
+    for component in subdir.components() {
+        anyhow::ensure!(
+            !matches!(component, Component::ParentDir | Component::Prefix(_)),
+            "workspace project subdirectory escapes the checkout"
+        );
+    }
+    Ok(base.join(subdir))
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn checkout_key(path: &Path) -> PathBuf {
+    let absolute = absolute_path(path);
+    absolute.canonicalize().unwrap_or(absolute)
+}
+
+fn persistent_session_paths(
+    store: &crate::store::Store,
+    chat: &Chat,
+    project: &Project,
+    workspace: Option<&ChatWorkspace>,
+) -> (PathBuf, Option<PathBuf>) {
+    match workspace {
+        Some(workspace) if workspace.mode == WorkspaceMode::ManagedWorktree => {
+            // Use the deterministic location even when the row is corrupt. A
+            // startup validation failure must never cause ACP to follow the
+            // arbitrary managed path stored in the database.
+            let worktree = store.worktrees_dir().join(&chat.id);
+            let cwd = join_project_subdir(&worktree, &workspace.project_subdir)
+                .unwrap_or_else(|_| project.path.clone().into());
+            (cwd, None)
+        }
+        Some(workspace) if workspace.mode == WorkspaceMode::ProjectCheckout => {
+            let checkout = PathBuf::from(&workspace.workspace_path);
+            let cwd = join_project_subdir(&checkout, &workspace.project_subdir)
+                .unwrap_or_else(|_| project.path.clone().into());
+            (
+                cwd,
+                Some(checkout_key(Path::new(&workspace.repository_root))),
+            )
+        }
+        Some(_) | None => {
+            let cwd = PathBuf::from(&project.path);
+            (cwd.clone(), Some(checkout_key(&cwd)))
+        }
+    }
+}
+
+fn ensure_cwd_inside_checkout(base: &Path, project_subdir: &str) -> anyhow::Result<PathBuf> {
+    let cwd = join_project_subdir(base, project_subdir)?;
+    let canonical_base = base
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot validate checkout path {}: {e}", base.display()))?;
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        anyhow::anyhow!(
+            "effective workspace directory {} does not exist: {e}",
+            cwd.display()
+        )
+    })?;
+    anyhow::ensure!(
+        canonical_cwd.starts_with(&canonical_base),
+        "effective workspace directory escapes the checkout"
+    );
+    anyhow::ensure!(
+        canonical_cwd.is_dir(),
+        "effective workspace directory is not a directory"
+    );
+    Ok(cwd)
+}
+
+fn ensure_same_path(left: &Path, right: &Path, message: &str) -> anyhow::Result<()> {
+    let left = left
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot validate path {}: {e}", left.display()))?;
+    let right = right
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot validate path {}: {e}", right.display()))?;
+    anyhow::ensure!(left == right, "{message}");
+    Ok(())
+}
+
+fn validate_persistent_workspace(
+    chat: &Chat,
+    project: &Project,
+    workspace: Option<&ChatWorkspace>,
+    state_worktrees: &Path,
+    key_cwd: &Path,
+) -> anyhow::Result<()> {
+    let Some(workspace) = workspace else {
+        // Keep the pre-workspace behavior for chats created by older builds.
+        anyhow::ensure!(
+            Path::new(&project.path).canonicalize()? == key_cwd,
+            "Project directory changed; review the project path"
+        );
+        return Ok(());
+    };
+
+    anyhow::ensure!(
+        workspace.chat_id == chat.id && workspace.project_id == chat.project_id,
+        "chat workspace metadata does not belong to this chat"
+    );
+
+    match workspace.mode {
+        WorkspaceMode::ManagedWorktree => {
+            let expected_worktree = state_worktrees.join(&chat.id);
+            anyhow::ensure!(
+                Path::new(&workspace.workspace_path) == expected_worktree,
+                "managed workspace path is not Agent Hub's deterministic worktree"
+            );
+
+            let info = workspace::inspect(Path::new(&project.path))
+                .map_err(|e| anyhow::anyhow!("cannot validate managed repository: {e}"))?;
+            let repository_root = info
+                .root
+                .filter(|_| info.is_git)
+                .ok_or_else(|| anyhow::anyhow!("managed workspace repository no longer exists"))?;
+            ensure_same_path(
+                &repository_root,
+                Path::new(&workspace.repository_root),
+                "managed workspace repository mismatch",
+            )?;
+
+            let expected_branch = format!("{}{}", workspace::MANAGED_PREFIX, chat.id);
+            anyhow::ensure!(
+                workspace.branch.as_deref() == Some(expected_branch.as_str()),
+                "managed workspace branch metadata is invalid"
+            );
+            workspace::recover_managed(&repository_root, state_worktrees, &chat.id)
+                .map_err(|e| anyhow::anyhow!("managed workspace recovery failed: {e}"))?;
+            let effective =
+                ensure_cwd_inside_checkout(&expected_worktree, &workspace.project_subdir)?;
+            ensure_same_path(
+                &effective,
+                key_cwd,
+                "persistent session workspace changed; reconnect to refresh it",
+            )?;
+        }
+        WorkspaceMode::ProjectCheckout => {
+            let checkout = Path::new(&workspace.workspace_path);
+            let branch = workspace
+                .branch
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("direct workspace has no persisted branch"))?;
+            workspace::validate_direct(checkout, Path::new(&workspace.repository_root), branch)
+                .map_err(|e| anyhow::anyhow!("direct workspace validation failed: {e}"))?;
+            let effective = ensure_cwd_inside_checkout(checkout, &workspace.project_subdir)?;
+            ensure_same_path(
+                &effective,
+                key_cwd,
+                "persistent session workspace changed; reconnect to refresh it",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 enum PromptAttempt {
     Completed(anyhow::Result<PromptResponse>),
     TimedOut,
@@ -781,6 +982,7 @@ pub struct SessionManager {
     sessions_by_id: RwLock<HashMap<String, Arc<AcpSession>>>,
     agents: Arc<AgentRegistry>,
     event_log: Arc<EventLog>,
+    checkout_guards: StdMutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     pub store: Option<Arc<crate::store::Store>>,
 }
 
@@ -800,6 +1002,7 @@ impl SessionManager {
             sessions_by_id: RwLock::new(HashMap::new()),
             agents,
             event_log,
+            checkout_guards: StdMutex::new(HashMap::new()),
         });
 
         let weak = Arc::downgrade(&mgr);
@@ -845,6 +1048,7 @@ impl SessionManager {
             key.clone(),
             runtime,
             self.event_log.clone(),
+            None,
         ));
         let mut by_id = self.sessions_by_id.write().await;
         sessions.insert(session.id.clone(), session.clone());
@@ -862,13 +1066,18 @@ impl SessionManager {
         let chat = store.chat(session_id).ok()?;
         let project = store.project(&chat.project_id).ok()?;
         let runtime = self.agents.runtime(&chat.agent)?;
+        let workspace = store.workspace(&chat.id).ok().flatten();
+        let (cwd, checkout_key) =
+            persistent_session_paths(store, &chat, &project, workspace.as_ref());
+        let checkout_guard = checkout_key.map(|key| self.checkout_guard(key));
         let mut session = AcpSession::new(
             SessionKey {
                 agent: chat.agent,
-                cwd: project.path.into(),
+                cwd,
             },
             runtime,
             self.event_log.clone(),
+            checkout_guard,
         );
         session.id = chat.id;
         session.store = Some(store.clone());
@@ -876,6 +1085,17 @@ impl SessionManager {
         let session = Arc::new(session);
         sessions.insert(session.id.clone(), session.clone());
         Some(session)
+    }
+
+    fn checkout_guard(&self, key: PathBuf) -> Arc<Mutex<()>> {
+        let mut guards = self
+            .checkout_guards
+            .lock()
+            .expect("checkout guard map poisoned");
+        guards
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     pub async fn list_sessions(&self) -> Vec<crate::web::SessionInfo> {
