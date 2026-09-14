@@ -184,7 +184,7 @@ pub async fn prepare(
             };
             let kind = archive::detect(&spec.archive, &body)?;
             let raw_name = archive::file_name_from_url(&spec.archive);
-            let install_dir = install_directory(install_root, agent_id, &agent.version);
+            let install_dir = install_directory(install_root, agent_id, &agent.version)?;
             let command = extract_into_place(kind, &body, &install_dir, &raw_name, &spec.cmd)?;
             Ok(PreparedInstall {
                 distribution: InstalledDistribution::Binary {
@@ -248,8 +248,25 @@ pub async fn prepare(
 }
 
 /// The deterministic location one registry version installs into.
-pub fn install_directory(install_root: &Path, agent_id: &str, version: &str) -> PathBuf {
-    install_root.join(agent_id).join(version)
+pub fn install_directory(
+    install_root: &Path,
+    agent_id: &str,
+    version: &str,
+) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        safe_component(agent_id) && safe_component(version),
+        "Agent id or registry version is not a safe install path component"
+    );
+    Ok(install_root.join(agent_id).join(version))
+}
+
+fn safe_component(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && Path::new(value).components().count() == 1
+        && !value.contains(['/', '\\'])
+        && !value.chars().any(char::is_control)
 }
 
 /// Extracts into a staging directory and moves it into place only when the
@@ -344,10 +361,28 @@ pub fn ensure_pinned(spec: &str, kind: DistributionKind) -> anyhow::Result<()> {
          Pueblo Hub installs an exact version only."
     );
     anyhow::ensure!(
-        version.starts_with(|c: char| c.is_ascii_digit()),
+        exact_version(version),
         "The {kind} package '{spec}' does not pin an exact version."
     );
     Ok(())
+}
+
+fn exact_version(version: &str) -> bool {
+    let permitted = |part: &str| {
+        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    let (release, build) = version
+        .split_once('+')
+        .map_or((version, None), |(a, b)| (a, Some(b)));
+    let (numeric, pre) = release
+        .split_once('-')
+        .map_or((release, None), |(a, b)| (a, Some(b)));
+    numeric.split('.').count() >= 2
+        && numeric
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        && pre.is_none_or(|part| part.split('.').all(permitted))
+        && build.is_none_or(|part| part.split('.').all(permitted))
 }
 
 #[cfg(test)]
@@ -763,6 +798,9 @@ mod tests {
             "pkg@^1.2.3",
             "pkg@next",
             "pkg@",
+            "pkg@1.x",
+            "pkg@1.2.*",
+            "pkg@1.2.3 || 2.0.0",
         ] {
             assert!(
                 ensure_pinned(spec, DistributionKind::Npx).is_err(),
@@ -770,6 +808,19 @@ mod tests {
             );
         }
         assert!(ensure_pinned("pkg>=1.0", DistributionKind::Uvx).is_err());
+        assert!(ensure_pinned("pkg==1.2.*", DistributionKind::Uvx).is_err());
+    }
+
+    #[test]
+    fn install_directory_refuses_traversal_and_absolute_components() {
+        let root = Path::new("/managed/agents");
+        for version in ["../target", "../../target", "/tmp/target", "", "."] {
+            assert!(
+                install_directory(root, "agent", version).is_err(),
+                "{version} was accepted"
+            );
+        }
+        assert!(install_directory(root, "../agent", "1.2.3").is_err());
     }
 
     #[tokio::test]
@@ -831,7 +882,7 @@ mod tests {
     fn install_directories_are_deterministic() {
         let root = Path::new("/data/agents");
         assert_eq!(
-            install_directory(root, "example", "1.2.3"),
+            install_directory(root, "example", "1.2.3").unwrap(),
             PathBuf::from("/data/agents/example/1.2.3")
         );
     }

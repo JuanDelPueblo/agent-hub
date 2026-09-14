@@ -1238,10 +1238,19 @@ impl SessionManager {
     }
 
     pub async fn get_by_id(&self, session_id: &str) -> Option<Arc<AcpSession>> {
-        {
+        let existing = {
             let sessions = self.sessions.read().await;
-            if let Some(session) = sessions.get(session_id) {
-                return Some(session.clone());
+            sessions.get(session_id).cloned()
+        };
+        if let Some(session) = existing {
+            // A stopped materialized chat has no ACP process and may safely
+            // be rebuilt from the current catalog. This makes edits/updates
+            // apply to the next launch while a starting/running session keeps
+            // its stable runtime handle.
+            if session.process_state().await.can_start() {
+                self.remove_session(session_id).await;
+            } else {
+                return Some(session);
             }
         }
         let store = self.store.as_ref()?;
@@ -1432,13 +1441,13 @@ impl SessionManager {
     /// deduplicated. Agent management asks before it changes or removes a
     /// catalog entry, so a live session is never disturbed.
     pub async fn agent_ids_in_use(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
-            .sessions
-            .read()
-            .await
-            .values()
-            .map(|session| session.key.agent.clone())
-            .collect();
+        let sessions: Vec<Arc<AcpSession>> = self.sessions.read().await.values().cloned().collect();
+        let mut ids = Vec::new();
+        for session in sessions {
+            if session.process_state().await.is_running() {
+                ids.push(session.key.agent.clone());
+            }
+        }
         ids.sort();
         ids.dedup();
         ids

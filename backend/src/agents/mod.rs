@@ -22,8 +22,8 @@ pub use installed::{
     which, HostRuntimeProbe, InstalledAgent, InstalledDistribution, RegistrySnapshot, RuntimeProbe,
 };
 pub use manager::{
-    AgentError, AgentManager, AgentResult, InstallRequest, RegistryCatalogView, RegistryEntryView,
-    RegistryStatus, RemoveOutcome, UpdateOutcome,
+    AgentError, AgentManagementDetail, AgentManager, AgentResult, InstallRequest,
+    RegistryCatalogView, RegistryEntryView, RegistryStatus, RemoveOutcome, UpdateOutcome,
 };
 pub use registry::{DistributionKind, PlatformTarget};
 

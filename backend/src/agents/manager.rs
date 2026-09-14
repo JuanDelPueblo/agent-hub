@@ -191,6 +191,23 @@ pub struct RemoveOutcome {
     pub agent: Option<AgentSummary>,
 }
 
+/// Authenticated management data for an editable Pueblo-managed definition.
+/// Unlike `AgentSummary`, this intentionally includes launch environment
+/// values; it is exposed only by the authenticated per-agent management route.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AgentManagementDetail {
+    pub id: String,
+    pub display_name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub idle_timeout: u64,
+    pub usage_provider: Option<String>,
+    pub metadata: serde_json::Value,
+    pub default_permission_policy: CallbackPolicy,
+    pub description: Option<String>,
+}
+
 pub struct AgentManager {
     store: Arc<Store>,
     catalog: Arc<AgentCatalog>,
@@ -631,10 +648,16 @@ impl AgentManager {
             return;
         };
         let path = PathBuf::from(install_dir);
-        if !path.starts_with(&self.install_root) || path == self.install_root {
+        let Ok(root) = self.install_root.canonicalize() else {
+            return;
+        };
+        let Ok(path) = path.canonicalize() else {
+            return;
+        };
+        if !path.starts_with(&root) || path == root {
             tracing::warn!(
                 path = %path.display(),
-                root = %self.install_root.display(),
+                root = %root.display(),
                 "Refusing to remove an install directory outside the managed install root"
             );
             return;
@@ -702,6 +725,27 @@ impl AgentManager {
 
     pub fn installed_record(&self, id: &str) -> AgentResult<Option<InstalledAgent>> {
         Ok(self.store.installed_agent(id)?)
+    }
+
+    pub fn management_detail(&self, id: &str) -> AgentResult<AgentManagementDetail> {
+        let record = self.require_record(id)?;
+        if record.source != AgentSource::PuebloManaged {
+            return Err(AgentError::Conflict(format!(
+                "Agent '{id}' is not an editable Pueblo-managed definition."
+            )));
+        }
+        Ok(AgentManagementDetail {
+            id: record.id,
+            display_name: record.display_name,
+            command: record.command,
+            args: record.args,
+            env: record.env,
+            idle_timeout: record.idle_timeout_secs,
+            usage_provider: record.usage_provider,
+            metadata: record.metadata,
+            default_permission_policy: record.default_permission_policy,
+            description: record.display.description,
+        })
     }
 
     fn require_record(&self, id: &str) -> AgentResult<InstalledAgent> {
@@ -1391,6 +1435,12 @@ mod tests {
         harness
             .manager
             .remove_install_files(Some(&outside.display().to_string()));
+        assert!(outside.join("notes.txt").is_file());
+
+        let lexical_escape = harness.root.join("..").join("user-data");
+        harness
+            .manager
+            .remove_install_files(Some(&lexical_escape.display().to_string()));
         assert!(outside.join("notes.txt").is_file());
 
         harness

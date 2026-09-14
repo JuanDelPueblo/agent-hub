@@ -150,7 +150,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/agents/:id",
-            axum::routing::patch(agents::edit_agent).delete(agents::remove_agent),
+            get(agents::agent_detail)
+                .patch(agents::edit_agent)
+                .delete(agents::remove_agent),
         )
         .route("/api/agents/:id/update", post(agents::update_agent))
         .route("/api/status", get(api_get_status))

@@ -221,6 +221,7 @@ pub fn parse_catalog(json: &str) -> anyhow::Result<RegistryCatalog> {
                 // A duplicate id makes the entry ambiguous, so neither copy
                 // silently wins.
                 if agents.iter().any(|existing| existing.id == agent.id) {
+                    agents.retain(|existing| existing.id != agent.id);
                     rejected.push(RegistryRejection {
                         id: Some(agent.id.clone()),
                         reason: "duplicate agent id in the registry document".into(),
@@ -467,8 +468,8 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        assert_eq!(catalog.agents.len(), 1);
-        assert_eq!(catalog.agent("dup").unwrap().name, "First");
+        assert!(catalog.agents.is_empty());
+        assert!(catalog.agent("dup").is_none());
         assert_eq!(catalog.rejected.len(), 1);
         assert!(catalog.rejected[0].reason.contains("duplicate"));
     }

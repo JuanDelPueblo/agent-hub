@@ -5,8 +5,8 @@
 //! operation therefore never reaches a running chat.
 use super::{HubService, ServiceError, ServiceResult};
 use crate::agents::{
-    AgentError, AgentSummary, CustomAgentInput, InstallRequest, RegistryCatalogView, RemoveOutcome,
-    UpdateOutcome, ValidationReport,
+    AgentError, AgentManagementDetail, AgentSummary, CustomAgentInput, InstallRequest,
+    RegistryCatalogView, RemoveOutcome, UpdateOutcome, ValidationReport,
 };
 
 impl From<AgentError> for ServiceError {
@@ -100,6 +100,10 @@ impl HubService {
 
     pub fn validate_custom_agent(&self, input: &CustomAgentInput) -> ValidationReport {
         self.agent_manager.validate_custom(input)
+    }
+
+    pub fn agent_management_detail(&self, id: &str) -> ServiceResult<AgentManagementDetail> {
+        Ok(self.agent_manager.management_detail(id)?)
     }
 
     pub async fn create_custom_agent(
