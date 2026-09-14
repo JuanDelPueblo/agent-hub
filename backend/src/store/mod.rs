@@ -276,6 +276,13 @@ impl Store {
         )
     }
 
+    pub fn active_turn_started_at(
+        &self,
+        session_id: &str,
+    ) -> StoreResult<Option<chrono::DateTime<chrono::Utc>>> {
+        events::active_turn_started_at(&self.conn.lock().unwrap(), session_id)
+    }
+
     pub fn max_event_seq(&self) -> StoreResult<u64> {
         events::max_seq(&self.conn.lock().unwrap())
     }

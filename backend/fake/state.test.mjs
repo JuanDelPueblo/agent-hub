@@ -134,6 +134,21 @@ describe('fake backend seed history', () => {
     assert.equal(chat.updated_at, event.timestamp);
   });
 
+  it('derives an active turn start independently of the history page', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const chat = state.createChat(projectId, 'codex', 'Long turn');
+    const user = state.emit(chat.id, chat.agent, { type: 'user_message', text: 'Working' });
+    state.touchChatActivity(chat.id, user.timestamp);
+    state.emit(chat.id, chat.agent, { type: 'message_chunk', text: 'Still working' });
+    state.setRuntime(chat.id, 'RUNNING', 'PROMPTING');
+
+    assert.equal(state.chatView(chat).turn_started_at, user.timestamp);
+
+    state.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'end_turn' });
+    assert.equal(state.chatView(chat).turn_started_at, null);
+  });
+
   it('seeds representative managed and direct workspace summaries without paths', () => {
     const state = new FakeState();
     const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');

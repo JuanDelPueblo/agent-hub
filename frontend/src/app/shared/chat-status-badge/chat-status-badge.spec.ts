@@ -26,6 +26,8 @@ describe('ChatStatusBadgeComponent', () => {
       expect(badge).toBeTruthy();
       expect(badge.textContent?.trim()).toBe(label);
       expect(badge.getAttribute('data-status')).toBe(status);
+      expect(badge.getAttribute('aria-label')).toBe(label);
+      expect(badge.getAttribute('role')).toBeNull();
     });
   }
 });

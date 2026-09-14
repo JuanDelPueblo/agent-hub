@@ -158,7 +158,13 @@ describe('ChatSessionStore', () => {
   });
 
   it('preserves the active turn start across reload replay and older history pages', async () => {
-    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'PROMPTING' }] });
+    store.chatsByProject.set({
+      'project-1': [{
+        ...chat,
+        turn_state: 'PROMPTING',
+        turn_started_at: '2026-01-01T00:00:00Z',
+      }],
+    });
     api.fetchChatHistory
       .mockResolvedValueOnce({
         events: [
@@ -175,7 +181,7 @@ describe('ChatSessionStore', () => {
       });
 
     await store.loadChatHistory('chat-1');
-    expect(store.chatTurnStartedAt('chat-1')).toBe('2026-01-01T00:00:05Z');
+    expect(store.chatTurnStartedAt('chat-1')).toBe('2026-01-01T00:00:00Z');
     await store.loadOlderHistory('chat-1');
     expect(store.chatTurnStartedAt('chat-1')).toBe('2026-01-01T00:00:00Z');
     expect(store.chatActivity('chat-1')).toBe('working');

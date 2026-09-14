@@ -121,6 +121,45 @@ pub(crate) fn chat_page(
     Ok((events, has_older))
 }
 
+/// Returns the start of the currently active turn for one chat.
+///
+/// This is deliberately derived from the durable event stream rather than a
+/// paginated transcript page. The browser needs this metadata on reload even
+/// when the initial history page starts in the middle of a long turn.
+pub(crate) fn active_turn_started_at(
+    conn: &Connection,
+    session_id: &str,
+) -> StoreResult<Option<chrono::DateTime<chrono::Utc>>> {
+    let mut stmt = conn.prepare(
+        "SELECT data FROM events
+         WHERE session_id = ?1
+           AND json_extract(data, '$.payload.type') IN
+               ('user_message', 'state_change', 'turn_complete')
+         ORDER BY seq",
+    )?;
+    let rows = stmt.query_map([session_id], |r| r.get::<_, String>(0))?;
+    let mut started_at = None;
+    for row in rows {
+        let event: SessionEvent = serde_json::from_str(&row?)?;
+        match event.payload {
+            crate::events::EventPayload::UserMessage { .. } => {
+                started_at = Some(event.timestamp);
+            }
+            crate::events::EventPayload::StateChange { turn, .. }
+                if turn == crate::state::TurnState::Prompting.to_string()
+                    && started_at.is_none() =>
+            {
+                started_at = Some(event.timestamp);
+            }
+            crate::events::EventPayload::TurnComplete { .. } => {
+                started_at = None;
+            }
+            _ => {}
+        }
+    }
+    Ok(started_at)
+}
+
 pub(crate) fn max_seq(conn: &Connection) -> StoreResult<u64> {
     let value: i64 =
         conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?;

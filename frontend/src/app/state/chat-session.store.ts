@@ -298,6 +298,11 @@ export class ChatSessionStore {
 
     if (payload.type === 'user_message') {
       this.applyChatActivity(sessionId, event.timestamp);
+      this.applyChatPatch(sessionId, { turn_started_at: event.timestamp });
+    }
+
+    if (payload.type === 'turn_complete') {
+      this.applyChatPatch(sessionId, { turn_started_at: null });
     }
 
     if (payload.type === 'state_change') {
@@ -327,6 +332,10 @@ export class ChatSessionStore {
   }
 
   chatTurnStartedAt(chatId: string): string | null {
+    const chat = this.findChat(chatId);
+    if (chat && Object.prototype.hasOwnProperty.call(chat, 'turn_started_at')) {
+      return chat.turn_started_at ?? null;
+    }
     return this.reducersByChat()[chatId]?.turnStartedAt() ?? null;
   }
 

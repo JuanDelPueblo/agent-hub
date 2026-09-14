@@ -28,6 +28,7 @@ impl From<ChatWorkspace> for ChatWorkspaceSummary {
 pub struct ChatView {
     #[serde(flatten)]
     pub chat: Chat,
+    pub turn_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub process_state: String,
     pub turn_state: String,
     pub workspace: Option<ChatWorkspaceSummary>,

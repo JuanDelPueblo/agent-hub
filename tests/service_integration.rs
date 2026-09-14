@@ -204,6 +204,11 @@ async fn prompt_admission_updates_chat_activity_at_user_event_time() {
     let updated = service.get_chat(&chat.chat.id).await.unwrap();
     assert_ne!(updated.chat.updated_at, before);
     assert_eq!(updated.chat.updated_at, user_event.timestamp.to_rfc3339());
+    assert_eq!(
+        updated.turn_started_at,
+        Some(user_event.timestamp),
+        "the active turn start must come from durable events, not the bounded history page"
+    );
     sessions.shutdown_all().await;
 }
 

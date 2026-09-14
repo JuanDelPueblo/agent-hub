@@ -50,6 +50,7 @@ export interface Chat {
   permission_policy: PermissionPolicy;
   config_values: Record<string, unknown>;
   title_overridden?: boolean;
+  turn_started_at?: string | null;
   process_state?: ProcessState;
   turn_state?: TurnState;
   workspace?: ChatWorkspaceSummary | null;

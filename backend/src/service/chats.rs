@@ -54,8 +54,20 @@ impl HubService {
                 None
             }
         };
+        let turn_started_at = match self.store.active_turn_started_at(&chat.id) {
+            Ok(started_at) => started_at,
+            Err(error) => {
+                tracing::warn!(
+                    chat_id = %chat.id,
+                    %error,
+                    "Failed to read active turn start; omitting timer metadata"
+                );
+                None
+            }
+        };
         ChatView {
             chat,
+            turn_started_at,
             process_state,
             turn_state,
             workspace,

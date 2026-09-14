@@ -207,7 +207,25 @@ export class FakeState {
   /** Adds the live process fields, like `hub::chat_view`. */
   chatView(chat) {
     const runtime = this.runtime.get(chat.id) ?? { process: 'STOPPED', turn: 'IDLE' };
-    return { ...chat, process_state: runtime.process, turn_state: runtime.turn };
+    return {
+      ...chat,
+      turn_started_at: this.activeTurnStartedAt(chat.id),
+      process_state: runtime.process,
+      turn_state: runtime.turn,
+    };
+  }
+
+  activeTurnStartedAt(chatId) {
+    let startedAt = null;
+    for (const event of this.events
+      .filter((candidate) => candidate.session_id === chatId)
+      .sort((left, right) => left.seq - right.seq)) {
+      if (event.payload.type === 'user_message') startedAt = event.timestamp;
+      else if (event.payload.type === 'state_change'
+        && event.payload.turn === 'PROMPTING' && startedAt == null) startedAt = event.timestamp;
+      else if (event.payload.type === 'turn_complete') startedAt = null;
+    }
+    return startedAt;
   }
 
   listChats(projectId) {
