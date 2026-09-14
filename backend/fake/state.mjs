@@ -79,6 +79,7 @@ export class FakeState {
     this.projects = new Map();
     this.chats = new Map();
     this.configByChat = new Map();
+    this.workspaceOptionsByProject = new Map();
     // Live process state, which the real backend holds in the session manager.
     this.runtime = new Map();
 
@@ -128,7 +129,7 @@ export class FakeState {
 
   // -------------------------------------------------------------- projects
 
-  createProject(name, path) {
+  createProject(name, path, workspaceOptions = null) {
     const project = {
       id: randomUUID(),
       name,
@@ -138,7 +139,16 @@ export class FakeState {
       chat_count: 0,
     };
     this.projects.set(project.id, project);
+    this.workspaceOptionsByProject.set(project.id, workspaceOptions ?? {
+      is_git: false, current_branch: null, head_sha: null, dirty: false, branches: [],
+    });
     return project;
+  }
+
+  workspaceOptions(projectId) {
+    const options = this.workspaceOptionsByProject.get(projectId);
+    if (!options) return null;
+    return { ...options, branches: options.branches.map((branch) => ({ ...branch })) };
   }
 
   projectView(project) {
@@ -154,7 +164,7 @@ export class FakeState {
 
   // ----------------------------------------------------------------- chats
 
-  createChat(projectId, agent, title) {
+  createChat(projectId, agent, title, workspace) {
     const chat = {
       id: randomUUID(),
       project_id: projectId,
@@ -167,6 +177,7 @@ export class FakeState {
       permission_policy: 'ask',
       config_values: {},
       title_overridden: Boolean(title),
+      workspace: workspace ? { mode: workspace.mode, branch: workspace.branch } : null,
     };
     this.chats.set(chat.id, chat);
     this.configByChat.set(chat.id, defaultConfigOptions(agent));
@@ -202,7 +213,17 @@ export class FakeState {
   // ------------------------------------------------------------------ seed
 
   seed() {
-    const hub = this.createProject('agent-hub', `${PROJECT_ROOT}/agent-hub`);
+    const hub = this.createProject('agent-hub', `${PROJECT_ROOT}/agent-hub`, {
+      is_git: true,
+      current_branch: 'master',
+      head_sha: '1111111111111111111111111111111111111111',
+      dirty: true,
+      branches: [
+        { name: 'master', sha: '1111111111111111111111111111111111111111', current: true },
+        { name: 'feature/ui', sha: '2222222222222222222222222222222222222222', current: false },
+        { name: 'release', sha: '3333333333333333333333333333333333333333', current: false },
+      ],
+    });
     const firmware = this.createProject('corolla-firmware', `${PROJECT_ROOT}/corolla-firmware`);
     this.createProject('scratch', `${PROJECT_ROOT}/scratch`);
 

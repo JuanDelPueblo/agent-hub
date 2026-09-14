@@ -7,6 +7,7 @@ import type {
   ProcessState,
   SessionEvent,
   TurnState,
+  ChatWorkspaceSelection,
 } from '../core/api/types';
 import { deriveChatActivity, type ChatActivity } from './chat-activity';
 import { EventReducer } from './event-reducer';
@@ -222,8 +223,8 @@ export class ChatSessionStore {
     await this.retryConnection(chatId);
   }
 
-  async createChat(projectId: string, agent: string, title?: string): Promise<Chat> {
-    const created = await this.api.createChat(projectId, agent, title);
+  async createChat(projectId: string, agent: string, title?: string, workspace?: ChatWorkspaceSelection): Promise<Chat> {
+    const created = await this.api.createChat(projectId, agent, title, workspace);
     this.chatsByProject.update((current) => ({
       ...current,
       [projectId]: [...(current[projectId] ?? []), created],

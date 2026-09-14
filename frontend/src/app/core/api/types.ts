@@ -11,6 +11,27 @@ export interface Project {
   chat_count?: number;
 }
 
+export type WorkspaceMode = 'managed_worktree' | 'project_checkout';
+
+export interface WorkspaceBranch {
+  name: string;
+  sha: string;
+  current: boolean;
+}
+
+export interface WorkspaceOptions {
+  is_git: boolean;
+  current_branch: string | null;
+  head_sha: string | null;
+  dirty: boolean;
+  branches: WorkspaceBranch[];
+}
+
+export interface ChatWorkspaceSelection {
+  mode: WorkspaceMode;
+  branch: string;
+}
+
 export interface Chat {
   id: string;
   project_id: string;
@@ -25,6 +46,7 @@ export interface Chat {
   title_overridden?: boolean;
   process_state?: ProcessState;
   turn_state?: TurnState;
+  workspace?: ChatWorkspaceSelection | null;
 }
 
 export interface ConfigOptionSelectGroup {

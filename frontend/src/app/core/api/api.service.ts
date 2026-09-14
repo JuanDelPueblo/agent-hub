@@ -8,6 +8,8 @@ import type {
   DirectoryListing,
   PermissionPolicy,
   Project,
+  ChatWorkspaceSelection,
+  WorkspaceOptions,
 } from './types';
 
 export interface AgentStatus {
@@ -97,10 +99,14 @@ export class ApiService {
     return this.request<Chat[]>(`/api/projects/${encodeURIComponent(projectId)}/chats`);
   }
 
-  createChat(projectId: string, agent: string, title?: string): Promise<Chat> {
+  fetchWorkspaceOptions(projectId: string): Promise<WorkspaceOptions> {
+    return this.request<WorkspaceOptions>(`/api/projects/${encodeURIComponent(projectId)}/workspace-options`);
+  }
+
+  createChat(projectId: string, agent: string, title?: string, workspace?: ChatWorkspaceSelection): Promise<Chat> {
     return this.request<Chat>(`/api/projects/${encodeURIComponent(projectId)}/chats`, {
       method: 'POST',
-      body: { agent, title: title || undefined },
+      body: { agent, title: title || undefined, ...(workspace ? { workspace } : {}) },
     });
   }
 

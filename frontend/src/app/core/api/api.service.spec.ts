@@ -32,4 +32,22 @@ describe('ApiService', () => {
     request.flush(null);
     await expect(promise).resolves.toBeUndefined();
   });
+
+  it('fetches workspace options and sends the Phase 2 workspace selection', async () => {
+    const optionsPromise = api.fetchWorkspaceOptions('git/project');
+    const optionsRequest = http.expectOne('/api/projects/git%2Fproject/workspace-options');
+    expect(optionsRequest.request.method).toBe('GET');
+    optionsRequest.flush({ is_git: true, current_branch: 'main', head_sha: 'a'.repeat(40), dirty: false, branches: [] });
+    await expect(optionsPromise).resolves.toMatchObject({ current_branch: 'main' });
+
+    const chatPromise = api.createChat('git/project', 'codex', undefined, {
+      mode: 'project_checkout', branch: 'feature/ui',
+    });
+    const chatRequest = http.expectOne('/api/projects/git%2Fproject/chats');
+    expect(chatRequest.request.body).toEqual({
+      agent: 'codex', title: undefined, workspace: { mode: 'project_checkout', branch: 'feature/ui' },
+    });
+    chatRequest.flush({ id: 'chat-1' });
+    await expect(chatPromise).resolves.toMatchObject({ id: 'chat-1' });
+  });
 });

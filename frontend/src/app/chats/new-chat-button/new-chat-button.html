@@ -2,7 +2,7 @@
   mat-flat-button
   type="button"
   class="new-chat-trigger"
-  [matMenuTriggerFor]="agentMenu"
+  (click)="open()"
   [disabled]="creating()"
   aria-label="New chat: choose an agent"
 >
@@ -14,14 +14,3 @@
   <span class="new-chat-text">New chat</span>
   <mat-icon iconPositionEnd class="new-chat-caret">arrow_drop_down</mat-icon>
 </button>
-
-<mat-menu #agentMenu="matMenu" class="hub-agent-menu" [overlapTrigger]="false">
-  <div class="agent-menu-heading" role="presentation">Start a chat with</div>
-  @for (agent of state.agents(); track agent) {
-    <button mat-menu-item type="button" (click)="create(agent)">
-      <span class="agent-menu-name">{{ agent }}</span>
-    </button>
-  } @empty {
-    <div class="agent-menu-empty" role="presentation">No agents are configured.</div>
-  }
-</mat-menu>

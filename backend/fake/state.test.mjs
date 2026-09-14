@@ -72,4 +72,21 @@ describe('fake backend seed history', () => {
     const fresh = state.createChat(projectId, 'codex');
     assert.equal(historyFor(state, fresh.id).length, 0);
   });
+
+  it('provides Git and non-Git workspace options and retains selections', () => {
+    const state = new FakeState();
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');
+    const nonGitProject = [...state.projects.values()].find((project) => project.name === 'scratch');
+    const options = state.workspaceOptions(gitProject.id);
+    assert.equal(options.is_git, true);
+    assert.equal(options.current_branch, 'master');
+    assert.equal(options.dirty, true);
+    assert.ok(options.branches.some((branch) => branch.name === 'feature/ui'));
+    assert.equal(state.workspaceOptions(nonGitProject.id).is_git, false);
+
+    const chat = state.createChat(gitProject.id, 'codex', undefined, {
+      mode: 'project_checkout', branch: 'feature/ui',
+    });
+    assert.deepEqual(chat.workspace, { mode: 'project_checkout', branch: 'feature/ui' });
+  });
 });

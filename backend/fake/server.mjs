@@ -29,6 +29,7 @@ const routes = [
   ['PATCH', /^\/api\/projects\/([^/]+)$/, editProject],
   ['DELETE', /^\/api\/projects\/([^/]+)$/, deleteProject],
   ['GET', /^\/api\/projects\/([^/]+)\/chats$/, listChats],
+  ['GET', /^\/api\/projects\/([^/]+)\/workspace-options$/, workspaceOptions],
   ['POST', /^\/api\/projects\/([^/]+)\/chats$/, createChat],
   ['GET', /^\/api\/chats\/([^/]+)$/, getChat],
   ['PATCH', /^\/api\/chats\/([^/]+)$/, editChat],
@@ -214,12 +215,30 @@ function listChats({ params }) {
   return json(state.listChats(params[0]));
 }
 
+function workspaceOptions({ params }) {
+  const options = state.workspaceOptions(params[0]);
+  if (!options) throw httpError(404, 'Project not found');
+  return json(options);
+}
+
 function createChat({ params, body }) {
   if (!state.projects.has(params[0])) throw httpError(404, 'Project not found');
   const agent = requireString(body, 'agent');
   if (!AGENTS.includes(agent)) throw httpError(400, 'Unknown agent');
 
-  const chat = state.createChat(params[0], agent, body.title);
+  const workspace = body.workspace;
+  if (workspace !== undefined) {
+    if (!workspace || !['managed_worktree', 'project_checkout'].includes(workspace.mode)) {
+      throw httpError(400, 'Unknown workspace mode');
+    }
+    const options = state.workspaceOptions(params[0]);
+    if (!options?.is_git) throw httpError(400, 'Workspace selection is only available for Git projects');
+    if (typeof workspace.branch !== 'string' || !options.branches.some((branch) => branch.name === workspace.branch)) {
+      throw httpError(400, 'Branch is not a local branch');
+    }
+  }
+
+  const chat = state.createChat(params[0], agent, body.title, workspace);
   state.metadataChanged();
   return json(state.chatView(chat));
 }

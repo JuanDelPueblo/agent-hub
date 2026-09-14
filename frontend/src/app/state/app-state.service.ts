@@ -2,7 +2,7 @@ import { computed, inject, Service } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs';
 import { EventSocketService } from '../core/event-socket.service';
-import type { CloneProjectInput, PermissionPolicy, SessionEvent } from '../core/api/types';
+import type { ChatWorkspaceSelection, CloneProjectInput, PermissionPolicy, SessionEvent } from '../core/api/types';
 import { EventReducer } from './event-reducer';
 import type { ChatActivity } from './chat-activity';
 import { ChatSessionStore } from './chat-session.store';
@@ -103,8 +103,8 @@ export class AppStateService {
   createProject(name: string, path: string) { return this.projectStore.createProject(name, path); }
   cloneProject(input: CloneProjectInput) { return this.projectStore.cloneProject(input); }
 
-  async createChat(projectId: string, agent: string, title?: string) {
-    const created = await this.chatStore.createChat(projectId, agent, title);
+  async createChat(projectId: string, agent: string, title?: string, workspace?: ChatWorkspaceSelection) {
+    const created = await this.chatStore.createChat(projectId, agent, title, workspace);
     this.projectStore.incrementChatCount(projectId);
     return created;
   }
