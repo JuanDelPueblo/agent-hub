@@ -407,6 +407,3 @@ pub async fn remote_sessions(
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.remote_sessions(&id, q.cursor).await?))
 }
-pub async fn agents(State(s): State<AppState>) -> Result<Json<Value>> {
-    Ok(Json(json!(hub(&s)?.list_agents())))
-}

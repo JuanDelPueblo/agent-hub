@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FakeState } from './state.mjs';
+import { AGENTS, FakeState, validateCustomInput } from './state.mjs';
 
 function historyFor(state, chatId) {
   return state.events.filter((event) => event.session_id === chatId);
@@ -12,6 +12,19 @@ function payloadTypes(history) {
 }
 
 describe('fake backend seed history', () => {
+  it('mirrors the extended agent summary contract', () => {
+    for (const agent of AGENTS) {
+      assert.ok(['editable', 'registry_managed', 'read_only'].includes(agent.mutability));
+      assert.equal(typeof agent.display, 'object');
+      assert.equal('unavailable_reason' in agent, false);
+    }
+  });
+
+  it('reports structural custom-agent validation failures without mutation', () => {
+    const report = validateCustomInput({ id: 'not valid', command: '' });
+    assert.equal(report.valid, false);
+    assert.deepEqual(report.issues.map((issue) => issue.field), ['id', 'command']);
+  });
   it('seeds four chats, each with a completed conversation', () => {
     const state = new FakeState();
     const chats = [...state.chats.values()];

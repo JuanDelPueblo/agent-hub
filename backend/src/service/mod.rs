@@ -7,6 +7,7 @@
 //!
 //! This layer coordinates the store, the session manager, the event log, and
 //! the agent registry. It never speaks ACP itself; that stays in `acp/`.
+mod agents;
 mod chats;
 mod error;
 mod projects;
@@ -18,7 +19,7 @@ pub use error::{ServiceError, ServiceResult};
 pub use view::{ChatHistoryPage, ChatView, ChatWorkspaceSummary};
 pub use workspaces::{WorkspaceBranch, WorkspaceOptions};
 
-use crate::agents::{AgentCatalog, AgentSummary};
+use crate::agents::{AgentCatalog, AgentManager, AgentSummary, HostRuntimeProbe};
 use crate::config::Config;
 use crate::events::{EventLog, EventPayload};
 use crate::session::{AcpSession, SessionManager};
@@ -31,6 +32,8 @@ pub struct HubService {
     sessions: Arc<SessionManager>,
     events: Arc<EventLog>,
     agents: Arc<AgentCatalog>,
+    /// Installed-agent management over the same catalog the sessions use.
+    agent_manager: Arc<AgentManager>,
     workspace_lock: tokio::sync::Mutex<()>,
     /// The boundary every project path is validated against.
     project_roots: Vec<String>,
@@ -44,11 +47,32 @@ impl HubService {
         agents: Arc<AgentCatalog>,
         config: &Config,
     ) -> Arc<Self> {
+        let agent_manager = AgentManager::new(
+            store.clone(),
+            agents.clone(),
+            config.registry.client(config.paths.registry_cache.clone()),
+            config.paths.installed_agents.clone(),
+            Arc::new(HostRuntimeProbe),
+        );
+        Self::with_agent_manager(store, sessions, agents, agent_manager, config)
+    }
+
+    /// The same service with an agent manager the caller built. Startup uses
+    /// it so one manager loads the durable rows and then serves requests, and
+    /// tests use it to supply a fixture registry instead of the network.
+    pub fn with_agent_manager(
+        store: Arc<Store>,
+        sessions: Arc<SessionManager>,
+        agents: Arc<AgentCatalog>,
+        agent_manager: Arc<AgentManager>,
+        config: &Config,
+    ) -> Arc<Self> {
         Arc::new(Self {
             events: sessions.event_log().clone(),
             store,
             sessions,
             agents,
+            agent_manager,
             workspace_lock: tokio::sync::Mutex::new(()),
             project_roots: config.web.project_roots.clone(),
             prompt_timeout: config.timeouts.prompt.map(Duration::from_secs),
@@ -62,7 +86,20 @@ impl HubService {
         config: &Config,
     ) -> Option<Arc<Self>> {
         let store = sessions.store.clone()?;
-        Some(Self::new(store, sessions, config.agents.clone(), config))
+        match config.agent_manager.clone() {
+            Some(manager) => Some(Self::with_agent_manager(
+                store,
+                sessions,
+                config.agents.clone(),
+                manager,
+                config,
+            )),
+            None => Some(Self::new(store, sessions, config.agents.clone(), config)),
+        }
+    }
+
+    pub fn agent_manager(&self) -> &Arc<AgentManager> {
+        &self.agent_manager
     }
 
     /// Sorted provider-neutral catalog summaries.

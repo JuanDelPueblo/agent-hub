@@ -1,3 +1,4 @@
+mod agents;
 mod auth;
 mod git;
 mod handlers;
@@ -5,6 +6,7 @@ mod hub;
 mod static_files;
 mod websocket;
 
+pub use agents::*;
 pub use auth::*;
 pub use git::*;
 pub use handlers::*;
@@ -130,7 +132,27 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(hub::clear_config),
         )
         .route("/api/chats/:id/remote-sessions", get(hub::remote_sessions))
-        .route("/api/agents", get(hub::agents))
+        // The installed-agent catalog. The static `registry` segments come
+        // before `:id`, so a browse never matches the per-agent routes.
+        .route(
+            "/api/agents",
+            get(agents::agents).post(agents::create_agent),
+        )
+        .route("/api/agents/validate", post(agents::validate_agent))
+        .route("/api/agents/registry", get(agents::registry))
+        .route(
+            "/api/agents/registry/refresh",
+            post(agents::refresh_registry),
+        )
+        .route(
+            "/api/agents/registry/install",
+            post(agents::install_registry_agent),
+        )
+        .route(
+            "/api/agents/:id",
+            axum::routing::patch(agents::edit_agent).delete(agents::remove_agent),
+        )
+        .route("/api/agents/:id/update", post(agents::update_agent))
         .route("/api/status", get(api_get_status))
         .route("/ws", get(ws_handler))
         .fallback(static_handler)

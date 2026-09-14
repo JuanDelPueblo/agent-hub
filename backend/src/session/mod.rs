@@ -1428,6 +1428,22 @@ impl SessionManager {
         self.agents.is_available(name)
     }
 
+    /// The agent id of every session this manager still holds, sorted and
+    /// deduplicated. Agent management asks before it changes or removes a
+    /// catalog entry, so a live session is never disturbed.
+    pub async fn agent_ids_in_use(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .map(|session| session.key.agent.clone())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     pub async fn remove_session(&self, key: &str) -> Option<Arc<AcpSession>> {
         let session = self.sessions.write().await.remove(key);
         if let Some(session) = &session {

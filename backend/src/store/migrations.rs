@@ -123,6 +123,26 @@ pub const MIGRATIONS: &[Migration] = &[
         );",
         precondition: None,
     },
+    Migration {
+        version: 6,
+        name: "installed_agents",
+        // Durable installed-agent records. Registry installs and
+        // Pueblo-managed definitions share one table, because they share one
+        // runtime catalog. `source` stays a column so ownership checks and
+        // collision checks do not parse the blob. No foreign key points at
+        // this table: a chat names its agent by id, and that chat must stay
+        // readable after the agent is uninstalled.
+        sql: "CREATE TABLE IF NOT EXISTS installed_agents (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL CHECK(source IN ('pueblo_managed', 'registry')),
+            data TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_installed_agents_source ON installed_agents(source);",
+        // `CREATE TABLE/INDEX IF NOT EXISTS` is already idempotent.
+        precondition: None,
+    },
 ];
 
 pub fn latest_version() -> i64 {

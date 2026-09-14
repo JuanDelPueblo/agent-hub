@@ -1,4 +1,7 @@
-use crate::agents::{AgentCatalog, AgentDefinition};
+use crate::agents::{
+    registry::{default_fetch, HttpFetch, RegistryClient, DEFAULT_REGISTRY_URL},
+    AgentCatalog, AgentDefinition, AgentManager,
+};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -143,12 +146,52 @@ fn default_state_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
+/// How Pueblo Hub reaches the ACP Registry.
+#[derive(Clone)]
+pub struct RegistryConfig {
+    pub url: String,
+    /// The transport. Tests replace it with fixtures, so no test reaches the
+    /// public registry.
+    pub http: Arc<dyn HttpFetch>,
+}
+
+impl Default for RegistryConfig {
+    fn default() -> Self {
+        Self {
+            url: DEFAULT_REGISTRY_URL.to_string(),
+            http: default_fetch(),
+        }
+    }
+}
+
+impl std::fmt::Debug for RegistryConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistryConfig")
+            .field("url", &self.url)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RegistryConfig {
+    pub fn client(&self, cache_dir: PathBuf) -> Arc<RegistryClient> {
+        Arc::new(RegistryClient::new(
+            self.url.clone(),
+            cache_dir,
+            self.http.clone(),
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub paths: PuebloPaths,
     pub server: ServerConfig,
     /// Shared with `SessionManager`, so the two can never drift apart.
     pub agents: Arc<AgentCatalog>,
+    /// The manager that owns the durable installed-agent rows. Startup builds
+    /// one, loads the rows, and passes it here so every surface shares it.
+    pub agent_manager: Option<Arc<AgentManager>>,
+    pub registry: RegistryConfig,
     pub timeouts: TimeoutConfig,
     pub web: WebConfig,
 }
@@ -164,6 +207,8 @@ impl Default for Config {
                 AgentDefinition::opencode_default(),
                 AgentDefinition::claudecode_default(),
             ])),
+            agent_manager: None,
+            registry: RegistryConfig::default(),
             timeouts: TimeoutConfig::default(),
             web: WebConfig::default(),
         }

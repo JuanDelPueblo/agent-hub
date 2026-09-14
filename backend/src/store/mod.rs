@@ -4,6 +4,7 @@
 //! the SQL for one entity and takes a `&Connection`, so this facade decides how
 //! long the lock is held and which calls share a transaction. Domain modules
 //! never take the lock themselves, because `std::sync::Mutex` is not reentrant.
+mod agents;
 mod chats;
 mod events;
 pub mod migrations;
@@ -252,6 +253,44 @@ impl Store {
 
     pub fn list_project_workspaces(&self, project_id: &str) -> StoreResult<Vec<ChatWorkspace>> {
         workspaces::list_for_project(&self.conn.lock().unwrap(), project_id)
+    }
+
+    /// Every installed-agent record, sorted by id. This is the durable half
+    /// of the one runtime catalog.
+    pub fn installed_agents(&self) -> StoreResult<Vec<crate::agents::InstalledAgent>> {
+        agents::list(&self.conn.lock().unwrap())
+    }
+
+    pub fn installed_agent(&self, id: &str) -> StoreResult<Option<crate::agents::InstalledAgent>> {
+        agents::get(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn insert_agent(&self, agent: &crate::agents::InstalledAgent) -> StoreResult<()> {
+        agents::insert(&self.conn.lock().unwrap(), agent)
+    }
+
+    pub fn update_agent(&self, agent: &crate::agents::InstalledAgent) -> StoreResult<()> {
+        agents::update(&self.conn.lock().unwrap(), agent)
+    }
+
+    pub fn delete_agent(&self, id: &str) -> StoreResult<()> {
+        agents::delete(&self.conn.lock().unwrap(), id)
+    }
+
+    /// How many chats name this agent. Uninstall reads it before it decides
+    /// whether a row may go away or must be retired instead.
+    pub fn chat_count_for_agent(&self, agent_id: &str) -> StoreResult<u64> {
+        agents::chat_count_for_agent(&self.conn.lock().unwrap(), agent_id)
+    }
+
+    pub fn referenced_agent_ids(&self) -> StoreResult<Vec<String>> {
+        agents::referenced_agent_ids(&self.conn.lock().unwrap())
+    }
+
+    pub fn installed_agent_sources(
+        &self,
+    ) -> StoreResult<Vec<(String, crate::agents::AgentSource)>> {
+        agents::sources(&self.conn.lock().unwrap())
     }
 
     pub fn save_event(&self, event: &crate::events::SessionEvent) -> StoreResult<()> {

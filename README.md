@@ -64,6 +64,7 @@ frontend:
 result/bin/pueblo-hub \
   --project-root /path/to/projects \
   --agents-file agents.json \
+  --registry-url https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json \
   --public-origin https://example.com \
   --port 9123
 ```
@@ -182,6 +183,21 @@ Definitions accept optional `args` (array), `env` (object), `idle_timeout`
 (seconds), `display_name` (string), `usage_provider` (string), and `metadata`
 (object). Pueblo Hub never derives a usage provider from the agent name.
 The server binds to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing Pueblo Hub remotely.
+
+`--registry-url` (or `PUEBLO_HUB_REGISTRY_URL`) selects the HTTPS ACP Registry
+catalog. Registry installs store a pinned launch snapshot locally; browsing or
+refreshing the catalog is never required to resume a chat.
+
+The agent-management API is provider-neutral:
+
+- `GET` / `POST /api/agents`, `PATCH` / `DELETE /api/agents/:id`, and `POST /api/agents/validate` manage custom definitions.
+- `GET /api/agents/registry`, `POST /api/agents/registry/refresh`, and `POST /api/agents/registry/install` browse and install registry entries.
+- `POST /api/agents/:id/update` updates an installed registry agent.
+
+Built-in and `agents.json` definitions are read-only through this API. Agent
+summaries report source, availability, mutability, display metadata, and an
+unavailable reason when applicable; launch commands and environment values are
+never returned.
 
 ### Developing Pueblo Hub
 

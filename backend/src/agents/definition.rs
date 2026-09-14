@@ -30,12 +30,90 @@ pub enum AgentSource {
     Builtin,
     /// Read from the file `--agents-file` names.
     File,
-    /// Managed by Pueblo Hub in a future management surface.
+    /// Created and owned by Pueblo Hub through the management API.
     PuebloManaged,
-    /// Installed or selected from a future agent registry.
+    /// Installed from the ACP Registry.
     Registry,
     /// Supplied by a future declarative configuration source.
     Declarative,
+}
+
+impl AgentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::File => "file",
+            Self::PuebloManaged => "pueblo_managed",
+            Self::Registry => "registry",
+            Self::Declarative => "declarative",
+        }
+    }
+
+    /// Who may change this definition. The management API checks this before
+    /// any mutation, so a read-only source never changes through a write API.
+    pub fn mutability(self) -> AgentMutability {
+        match self {
+            Self::PuebloManaged => AgentMutability::Editable,
+            Self::Registry => AgentMutability::RegistryManaged,
+            Self::Builtin | Self::File | Self::Declarative => AgentMutability::ReadOnly,
+        }
+    }
+}
+
+impl std::fmt::Display for AgentSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for AgentSource {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "builtin" => Ok(Self::Builtin),
+            "file" => Ok(Self::File),
+            "pueblo_managed" => Ok(Self::PuebloManaged),
+            "registry" => Ok(Self::Registry),
+            "declarative" => Ok(Self::Declarative),
+            other => Err(format!("Unknown agent source '{other}'")),
+        }
+    }
+}
+
+/// How a management surface may change one catalog entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMutability {
+    /// Pueblo Hub owns the definition, so the mutable APIs accept it.
+    Editable,
+    /// Registry lifecycle operations own the definition: update and uninstall.
+    RegistryManaged,
+    /// A declarative definition. Change the source, not Pueblo Hub.
+    ReadOnly,
+}
+
+/// Provider-neutral presentation metadata. The ACP Registry supplies most of
+/// it; a Pueblo-managed definition may supply any of it too. None of it ever
+/// changes how a process starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentDisplay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authors: Vec<String>,
 }
 
 /// Whether Pueblo can offer an agent for a new session.
@@ -57,10 +135,15 @@ pub struct AgentDefinition {
     pub usage_provider: Option<String>,
     pub source: AgentSource,
     pub availability: AgentAvailability,
-    /// Opaque to Pueblo Hub today. The registry phase gives it meaning.
+    /// Opaque to Pueblo Hub. Registry installs and Pueblo-managed definitions
+    /// both store their caller-supplied blob here; Pueblo never reads it.
     pub metadata: serde_json::Value,
     /// The policy a session uses when no stored chat supplies one.
     pub default_permission_policy: CallbackPolicy,
+    /// Presentation metadata. Never used to start a process.
+    pub display: AgentDisplay,
+    /// Why the entry cannot start a session, when it cannot.
+    pub unavailable_reason: Option<String>,
 }
 
 /// Provider-neutral data intended for the application and future management
@@ -74,6 +157,10 @@ pub struct AgentSummary {
     pub availability: AgentAvailability,
     pub usage_provider: Option<String>,
     pub metadata: serde_json::Value,
+    pub mutability: AgentMutability,
+    pub display: AgentDisplay,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
 }
 
 /// The subset the session layer and the ACP layer may see. Keeping it separate
@@ -102,6 +189,8 @@ impl AgentDefinition {
             availability: AgentAvailability::Available,
             metadata: serde_json::Value::Null,
             default_permission_policy: CallbackPolicy::Ask,
+            display: AgentDisplay::default(),
+            unavailable_reason: None,
         }
     }
 
@@ -121,6 +210,9 @@ impl AgentDefinition {
             availability: self.availability,
             usage_provider: self.usage_provider.clone(),
             metadata: self.metadata.clone(),
+            mutability: self.source.mutability(),
+            display: self.display.clone(),
+            unavailable_reason: self.unavailable_reason.clone(),
         }
     }
 
@@ -208,6 +300,19 @@ impl AgentDefinition {
 
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = metadata;
+        self
+    }
+
+    pub fn with_display(mut self, display: AgentDisplay) -> Self {
+        self.display = display;
+        self
+    }
+
+    /// Marks the entry unusable and records why. A chat that already names
+    /// this agent keeps its rows and its history; only new sessions stop.
+    pub fn with_unavailable_reason(mut self, reason: impl Into<String>) -> Self {
+        self.availability = AgentAvailability::Unavailable;
+        self.unavailable_reason = Some(reason.into());
         self
     }
 }

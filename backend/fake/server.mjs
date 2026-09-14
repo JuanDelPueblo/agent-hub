@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 import { upgrade } from './websocket.mjs';
-import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions } from './state.mjs';
+import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions, validateCustomInput } from './state.mjs';
 import { answerPermission, cancel, isRunning, startTurn } from './turns.mjs';
 
 const options = parseArgs(process.argv.slice(2));
@@ -45,6 +45,14 @@ const routes = [
   ['DELETE', /^\/api\/chats\/([^/]+)\/config\/([^/]+)$/, clearConfig],
   ['GET', /^\/api\/chats\/([^/]+)\/remote-sessions$/, remoteSessions],
   ['GET', /^\/api\/agents$/, () => json(AGENTS)],
+  ['POST', /^\/api\/agents$/, createAgent],
+  ['POST', /^\/api\/agents\/validate$/, validateAgent],
+  ['GET', /^\/api\/agents\/registry$/, registryAgents],
+  ['POST', /^\/api\/agents\/registry\/refresh$/, refreshRegistry],
+  ['POST', /^\/api\/agents\/registry\/install$/, installRegistryAgent],
+  ['POST', /^\/api\/agents\/([^/]+)\/update$/, updateRegistryAgent],
+  ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
+  ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
   ['GET', /^\/api\/status$/, getStatus],
 ];
 
@@ -246,6 +254,49 @@ function createChat({ params, body }) {
   const chat = state.createChat(params[0], agent, body.title, workspace);
   state.metadataChanged();
   return json(state.chatView(chat));
+}
+
+function validateAgent({ body }) { return json(validateCustomInput(body)); }
+
+function createAgent({ body }) {
+  const report = validateCustomInput(body);
+  if (!report.valid) throw httpError(400, report.issues.map((issue) => `${issue.field}: ${issue.message}`).join('; '));
+  return json(state.createCustomAgent(body), 200);
+}
+
+function editAgent({ params, body }) {
+  const report = validateCustomInput(body);
+  if (!report.valid) throw httpError(400, report.issues.map((issue) => `${issue.field}: ${issue.message}`).join('; '));
+  return json(state.editCustomAgent(params[0], body));
+}
+
+function removeAgent({ params }) { return json(state.removeAgent(params[0])); }
+
+function registryAgents({ url }) {
+  const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+  const agents = [{
+    id: 'example-acp', name: 'Example ACP', version: '1.0.0',
+    description: 'A representative ACP Registry entry for frontend development.',
+    distributions: ['npx'], platforms: [], selected_distribution: 'npx', update_available: false,
+  }].filter((agent) => !query || `${agent.id} ${agent.name} ${agent.description}`.toLowerCase().includes(query));
+  return json({ status: 'cached', source_url: 'https://registry.example.invalid/registry.json', registry_version: '1.0.0', fetched_at: '2026-01-01T00:00:00Z', host: 'fake-host', rejected: [], agents });
+}
+
+function refreshRegistry({ url }) { return registryAgents({ url }); }
+
+function installRegistryAgent({ body }) {
+  if (body.registry_id !== 'example-acp') throw httpError(404, 'Registry agent not found');
+  const id = body.agent_id?.trim() || body.registry_id;
+  if (state.agent(id)) throw httpError(409, 'An agent already uses that id');
+  const agent = { id, display_name: body.display_name?.trim() || 'Example ACP', source: 'registry', availability: 'available', usage_provider: body.usage_provider ?? null, metadata: body.metadata ?? null, mutability: 'registry_managed', display: { description: 'A representative ACP Registry entry for frontend development.', version: '1.0.0' } };
+  AGENTS.push(agent); state.metadataChanged(); return json(agent);
+}
+
+function updateRegistryAgent({ params }) {
+  const agent = state.agent(params[0]);
+  if (!agent) throw httpError(404, 'Agent not found');
+  if (agent.source !== 'registry') throw httpError(409, 'Only registry agents can update');
+  return json({ updated: false, from_version: agent.display.version ?? '1.0.0', to_version: agent.display.version ?? '1.0.0', agent });
 }
 
 function getChat({ params }) {

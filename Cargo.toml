@@ -53,6 +53,23 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # ACP protocol types
 agent-client-protocol-schema = { version = "1.7", default-features = false }
 
+# ACP Registry download. `rustls-tls` keeps the trust anchors in the binary,
+# so a Nix build needs no system OpenSSL and no system certificate store.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "http2",
+    "charset",
+] }
+
+# Registry archive integrity and extraction. The registry format allows
+# `.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, and raw binaries.
+sha2 = "0.10"
+tar = "0.4"
+flate2 = "1.1"
+# The default feature selects the pure-Rust `libbz2-rs-sys` backend.
+bzip2 = "0.6"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
 # Process group / Job Object wrapper for cross-platform child process cleanup
 process-wrap = { version = "6", default-features = false, features = ["tokio1", "job-object", "kill-on-drop", "process-group"] }
 
