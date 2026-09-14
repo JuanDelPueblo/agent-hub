@@ -121,4 +121,6 @@ nix build .#agent-hub
 
 GPL-3.0-only.
 
+Backend forked from github.com/missdeer/ccgonext.
+
 Pueblo Hub does not include proprietary agent binaries.
