@@ -13,7 +13,7 @@
           pkgs = import nixpkgs { inherit system; };
           pueblo-hub-frontend = pkgs.buildNpmPackage {
             pname = "pueblo-hub-frontend";
-            version = "0.2.0";
+            version = "0.3.0";
             src = ./frontend;
             npmDepsHash = "sha256-sfE4FiYhZL24PSU+hRlXW3ltkkXN1PM1D7Rc0aqGqHk=";
             preBuild = ''
@@ -42,7 +42,7 @@
               };
               commonArgs = {
                 pname = "pueblo-hub";
-                version = "0.2.0";
+                version = "0.3.0";
                 src = rustSrc;
                 strictDeps = true;
                 # Packaging builds the release artifact only. Source-level

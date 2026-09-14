@@ -1,4 +1,4 @@
-# Pueblo Hub v0.2
+# Pueblo Hub
 
 An uncomplicated hub to connect and manage all your ACP agents together.
 
