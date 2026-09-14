@@ -8,7 +8,7 @@ This roadmap follows the current v0.2 frontend overhaul. Each phase should be im
 | --- | --- | --- | --- | --- |
 | 0 | P0 | Backend architectural foundations | Current v0.2 | ✅ |
 | 1 | P1 | Usage quotas/status | Phase 0 | ❌ |
-| 2 | P1 | Hub-managed per-chat Git worktrees | Phase 0 | ❌ |
+| 2 | P1 | Hub-managed per-chat Git workspaces | Phase 0 | ✅ |
 | 3 | P1 | Per-turn git/file diffs | Phase 2 | ❌ |
 | 4 | P2 | Native authentication | Phase 0 | ❌ |
 | 5 | P2 | Browser/Web Push notifications | Phase 4 | ❌ |
@@ -143,9 +143,16 @@ The project/chat UI can display agent availability and quota/reset information, 
 
 ---
 
-## Phase 2 — Hub-managed per-chat Git worktrees
+## Phase 2 — Hub-managed per-chat Git workspaces
 
-Give every chat in a Git-backed project its own isolated Git worktree managed by Agent Hub.
+Support two explicit workspace modes for Git-backed projects. **Managed
+worktree** is the default: an isolated Hub-managed branch and worktree per
+chat. **Project checkout** is opt-in: the chat uses the existing real project
+checkout and the selected local branch.
+
+Chats created before Phase 2 have no workspace row and remain legacy
+direct-checkout sessions. They use the same repository-level checkout
+concurrency rules as Project checkout chats.
 
 The Hub, not the ACP agent, owns worktree creation, validation, reuse, and cleanup. Agents should simply be launched with the chat worktree as their working directory and should not need to know how Agent Hub created it.
 
@@ -162,7 +169,9 @@ ChatWorkspace
   created_at
 ```
 
-For a Git project, creating a chat should create or attach a dedicated branch/worktree before the ACP process starts. Use deterministic Hub-owned naming, for example a branch namespace such as:
+For a Git project using Managed worktree, creating a chat should create or
+attach a dedicated branch/worktree before the ACP process starts. Users choose
+the starting local branch. Use deterministic Hub-owned naming:
 
 ```text
 agent-hub/chat/<chat-id>
@@ -174,13 +183,17 @@ Store managed worktrees beneath Agent Hub state or another explicitly configured
 
 ### Workspace semantics
 
-A chat's ACP process must always use its managed worktree path as `cwd`. All file callbacks, terminal commands, turn snapshots, and later review operations therefore naturally operate on that chat's isolated working tree.
+A Managed worktree chat's ACP process always uses its worktree path as `cwd`.
+Project checkout chats use the real project checkout. All file callbacks and
+terminal commands therefore operate in the selected workspace.
 
 A newly created chat should start from a well-defined Git revision, normally the selected/current project base ref at chat creation time. Persist that base so restart behavior is deterministic.
 
 Do not silently copy uncommitted changes from the project's primary checkout into a new worktree. If the primary checkout is dirty and that matters to chat creation, report it clearly or require an explicit supported workflow rather than producing an ambiguous starting state.
 
-Existing chats keep their own branch/worktree as the project advances. Do not automatically rebase, merge, reset, or fast-forward a chat branch behind the user's back.
+Existing managed chats keep their own branch/worktree as the project advances.
+Do not automatically rebase, merge, reset, fast-forward, or switch a direct
+chat back to its expected branch during resume.
 
 Multiple chats for the same project must be able to run concurrently without writing into one another's files.
 
@@ -199,13 +212,17 @@ Handle at least:
 
 Do not silently discard work when recovering from an inconsistent state.
 
-Archiving/stopping a chat must not destroy its worktree. Chat deletion may offer cleanup, but uncommitted changes and commits that are not safely reachable elsewhere must not be deleted implicitly. Worktree removal and branch deletion should be separate, deliberate lifecycle operations where data loss is possible.
+Archiving/stopping a chat must not destroy its worktree. Deleting a clean
+managed chat removes only its worktree and retains its branch. Deletion refuses
+dirty or untracked managed-worktree files. Direct and legacy deletion leaves
+the checkout and Git state untouched. Branch deletion remains a separate,
+deliberate operation.
 
 Project deletion/path changes should account for managed chat worktrees and refuse unsafe operations.
 
 Use ordinary Git plumbing/commands from the Hub backend. The ACP protocol layer should remain unaware of worktree management.
 
-Non-Git projects should continue to function without worktree isolation, using the existing project-directory behavior unless a later workspace abstraction provides a better fallback.
+Non-Git projects continue to use the existing project-directory behavior.
 
 ### Scope
 
@@ -213,9 +230,20 @@ This phase is workspace isolation, not branch integration automation. Do not add
 
 The resulting branch is a normal Git branch, so commits created by the agent remain inspectable and can be integrated through normal Git workflows.
 
+### Safety guarantees
+
+This phase does not add automatic merge, rebase, reset, fast-forward, stash,
+clean, cherry-pick, review, or branch deletion. It never silently copies dirty
+files, switches branches during resume, destructively repairs a workspace, or
+implicitly deletes a managed branch.
+
 ### Completion
 
-Two chats can operate concurrently on the same Git repository while each agent sees a separate working tree and branch. Agent Hub creates, persists, validates, and safely manages those worktrees without requiring the agents themselves to invoke `git worktree`.
+Managed chats can operate concurrently on the same Git repository while each
+agent sees a separate worktree and branch; direct and legacy chats are safely
+serialized on the shared checkout. Agent Hub creates, persists, validates,
+recovers, and safely deletes managed worktrees without requiring agents to
+invoke `git worktree`. Phase 2 is complete.
 
 ---
 

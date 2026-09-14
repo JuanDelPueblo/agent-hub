@@ -1,6 +1,8 @@
 use agent_hub::{
     agents::{AgentDefinition, AgentRegistry},
+    config::Config,
     events::EventLog,
+    service::HubService,
     session::SessionManager,
     state::TurnState,
     store::{ChatWorkspace, Store, WorkspaceMode},
@@ -205,6 +207,65 @@ async fn managed_sessions_use_nested_worktrees_and_recover_missing_worktrees() {
     session.ask("hello".into(), None).await.unwrap();
     assert!(Path::new(&metadata.workspace_path).join("nested").is_dir());
     fixture.manager.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn managed_workspace_recovers_through_fresh_service_and_preserves_dirty_files() {
+    let fixture = Fixture::new();
+    let project = fixture.project();
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            fixture._temp.path().join("history").display().to_string(),
+            "load".into(),
+        ])]));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![fixture._temp.path().display().to_string()];
+    let events = Arc::new(EventLog::persistent(fixture.store.clone()).unwrap());
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(fixture.store.clone()));
+    let hub = HubService::new(fixture.store.clone(), sessions.clone(), agents, &config);
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = fixture.store.workspace(&chat.chat.id).unwrap().unwrap();
+    let worktree = Path::new(&workspace.workspace_path);
+    std::fs::remove_dir_all(worktree).unwrap();
+    sessions.shutdown_all().await;
+
+    let store = Arc::new(Store::open(&fixture._temp.path().join("hub.db")).unwrap());
+    let history = fixture._temp.path().join("history");
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "load".into(),
+        ])]));
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
+    let hub = HubService::new(store.clone(), sessions.clone(), agents, &config);
+    let session = sessions.get_by_id(&chat.chat.id).await.unwrap();
+    hub.get_chat(&chat.chat.id).await.unwrap();
+    session.ask("recover".into(), None).await.unwrap();
+    assert!(worktree.join("nested").is_dir());
+
+    std::fs::write(worktree.join("keep.txt"), "do not discard\n").unwrap();
+    sessions.shutdown_all().await;
+
+    let store = Arc::new(Store::open(&fixture._temp.path().join("hub.db")).unwrap());
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let sessions = SessionManager::with_store(config.agents.clone(), events, Some(store.clone()));
+    let hub = HubService::new(store, sessions.clone(), config.agents.clone(), &config);
+    let session = sessions.get_by_id(&chat.chat.id).await.unwrap();
+    hub.get_chat(&chat.chat.id).await.unwrap();
+    session.ask("dirty restart".into(), None).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("keep.txt")).unwrap(),
+        "do not discard\n"
+    );
+    sessions.shutdown_all().await;
 }
 
 #[tokio::test]

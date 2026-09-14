@@ -7,7 +7,7 @@ A single-owner, persistent web supervisor for local ACP coding agents (such as C
 - **Angular Material Adaptive UI**: A standalone Angular application using Angular Material/CDK primitives and adaptive layouts responsive to compact, medium, and expanded window sizes.
 - **Persistent Projects & Chats**: Multiple independent chats per project across different or identical agents. Full process lifecycle management with automatic session resumption, cancel, stop, and reconnect.
 - **Server-Side Project Creation**: Create projects by browsing existing server directories with boundary enforcement or cloning remote Git repositories directly.
-- **Streamlined Chat Flow**: New chat creation with simple agent selection; automatically connects ACP session and displays configuration options immediately before the first prompt.
+- **Streamlined Chat Flow**: New chat creation lets users choose the starting local branch and workspace mode for Git projects; Agent Hub automatically connects ACP session and displays configuration options immediately before the first prompt.
 - **Dynamic Titles**: ACP agents automatically supply chat titles after conversations start, with persistent storage and optional manual rename overrides.
 - **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Agent Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
 - **Single-Service Architecture**: Single Rust binary embeds production-hashed frontend assets with optimized HTTP caching and WebSocket streaming.
@@ -104,6 +104,25 @@ The fake backend is a development tool. It keeps everything in memory, so a rest
 ## Projects and Chats
 
 Create a project pointing to an existing directory under a configured project root or clone from a Git repository. Canonical paths reject missing directories and symlink escapes. Create as many chats as needed, including several using the same agent in one project. Each chat has a stable UUID, independent process, ACP session ID, turn lock, permission policy, and selected ACP configuration values.
+
+### Git chat workspaces
+
+Git chats default to **Isolated worktree**. When creating a chat, choose the
+starting local branch; Agent Hub creates a deterministic branch named
+`agent-hub/chat/<chat-id>` and a separate managed worktree. Uncommitted changes
+in the primary checkout are not copied into it. The branch and workspace
+identity are visible in the chat header and configuration panel.
+
+Users may explicitly choose **Project checkout**, which operates on the real
+project checkout and the selected branch. Switching that checkout is allowed
+only when it is safe (clean and not in use). Direct and legacy chats share the
+same repository checkout turn lock and therefore cannot work concurrently.
+Agent Hub never silently switches a direct chat back to its expected branch on
+resume.
+
+Deleting a clean managed chat removes its worktree but retains its branch.
+Deletion refuses to discard dirty or untracked managed-worktree files. Direct
+and legacy chat deletion leaves the repository checkout and Git state alone.
 
 Opening a chat automatically connects the agent process and loads ACP configuration options immediately. Sending a prompt also connects automatically if stopped. `session/load` or advertised `session/resume` restores agent-owned conversation state.
 

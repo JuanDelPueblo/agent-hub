@@ -82,36 +82,47 @@ async fn set_config_when_idle(
 #[tokio::test]
 async fn full_chat_lifecycle_without_http() {
     let tmp = tempfile::tempdir().unwrap();
-    let (hub, sessions) = hub(tmp.path());
+    let (service, sessions) = hub(tmp.path());
     let log = sessions.event_log().clone();
 
-    let project = hub
+    let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    assert_eq!(hub.list_projects().unwrap().len(), 1);
+    assert_eq!(service.list_projects().unwrap().len(), 1);
 
-    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
     assert_eq!(chat.process_state, "STOPPED");
     assert_eq!(chat.turn_state, "IDLE");
     assert!(chat.workspace.is_none());
-    assert_eq!(hub.list_chats(&project.id).await.unwrap().len(), 1);
+    assert_eq!(service.list_chats(&project.id).await.unwrap().len(), 1);
 
-    hub.prompt_chat(&chat.chat.id, "hello".into())
+    service
+        .prompt_chat(&chat.chat.id, "hello".into())
         .await
         .unwrap();
     await_turn(&log, &chat.chat.id).await;
     assert_eq!(
-        hub.get_chat(&chat.chat.id).await.unwrap().process_state,
+        service.get_chat(&chat.chat.id).await.unwrap().process_state,
         "RUNNING"
     );
 
-    let options = hub.chat_config(&chat.chat.id).await.unwrap();
+    let options = service.chat_config(&chat.chat.id).await.unwrap();
     let option_id = options[0]["id"].as_str().unwrap().to_string();
     // `TurnComplete` is appended before `ask` returns, so the turn lock can
     // still be held for a moment after the event arrives.
-    set_config_when_idle(&hub, &chat.chat.id, &option_id, serde_json::json!("large")).await;
+    set_config_when_idle(
+        &service,
+        &chat.chat.id,
+        &option_id,
+        serde_json::json!("large"),
+    )
+    .await;
     assert_eq!(
-        hub.get_chat(&chat.chat.id)
+        service
+            .get_chat(&chat.chat.id)
             .await
             .unwrap()
             .chat
@@ -119,7 +130,7 @@ async fn full_chat_lifecycle_without_http() {
         serde_json::json!("large")
     );
 
-    let renamed = hub
+    let renamed = service
         .edit_chat(
             &chat.chat.id,
             ChatEdit {
@@ -132,18 +143,32 @@ async fn full_chat_lifecycle_without_http() {
     assert_eq!(renamed.chat.title, "renamed");
     assert!(renamed.chat.title_overridden);
 
-    hub.stop_chat(&chat.chat.id).await.unwrap();
+    service.stop_chat(&chat.chat.id).await.unwrap();
     assert_eq!(
-        hub.get_chat(&chat.chat.id).await.unwrap().process_state,
+        service.get_chat(&chat.chat.id).await.unwrap().process_state,
         "STOPPED"
     );
 
-    hub.delete_chat(&chat.chat.id).await.unwrap();
-    assert!(hub.list_chats(&project.id).await.unwrap().is_empty());
-    hub.delete_project(&project.id).unwrap();
-    assert!(hub.list_projects().unwrap().is_empty());
-
     sessions.shutdown_all().await;
+    let (restarted_hub, restarted_sessions) = hub(tmp.path());
+    assert_eq!(
+        restarted_hub
+            .get_chat(&chat.chat.id)
+            .await
+            .unwrap()
+            .process_state,
+        "STOPPED"
+    );
+    restarted_hub.delete_chat(&chat.chat.id).await.unwrap();
+    assert!(restarted_hub
+        .list_chats(&project.id)
+        .await
+        .unwrap()
+        .is_empty());
+    restarted_hub.delete_project(&project.id).unwrap();
+    assert!(restarted_hub.list_projects().unwrap().is_empty());
+
+    restarted_sessions.shutdown_all().await;
 }
 
 #[tokio::test]
