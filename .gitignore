@@ -17,3 +17,4 @@ frontend/.angular/
 # Generated frontend assets
 /static/*
 !/static/.gitkeep
+.angular/
