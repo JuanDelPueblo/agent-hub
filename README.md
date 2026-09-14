@@ -25,10 +25,6 @@ Prompts have no silence timeout by default, so a quiet long-running tool call is
 not killed. Set `--prompt-timeout <seconds>` (or
 `PUEBLO_HUB_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
 
-The `PUEBLO_HUB_*` environment variables are canonical. The previous
-`AGENT_HUB_*` names remain accepted as compatibility aliases when the new name
-is not set. Existing managed chats using `agent-hub/chat/<chat-id>` branches
-are recovered and removed in place; new chats use `pueblo-hub/chat/<chat-id>`.
 - **A proper interface for agent work** - Follow conversations, streaming responses, tool calls, plans, permission requests, and agent state through a responsive Material 3 interface. Pueblo Hub is designed for desktop and mobile layouts so your agents aren't tied to the terminal where you started them.
 
 - **Agent configuration** - Configure available agents and their launch commands in one place while keeping per-chat options and permission policies close to the conversation. Pueblo Hub talks to agents through ACP rather than maintaining a separate chat implementation for every provider.

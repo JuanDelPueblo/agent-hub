@@ -8,8 +8,6 @@ pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Branch prefix for managed chat worktrees.
 pub const MANAGED_PREFIX: &str = "pueblo-hub/chat/";
-/// Branch prefix used by pre-rename installations.
-pub const LEGACY_MANAGED_PREFIX: &str = "agent-hub/chat/";
 
 /// Bounded error type. `Conflict` signals a safe refusal, never a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,25 +356,18 @@ fn managed_branch(chat_id: &str) -> String {
     format!("{MANAGED_PREFIX}{chat_id}")
 }
 
-fn legacy_managed_branch(chat_id: &str) -> String {
-    format!("{LEGACY_MANAGED_PREFIX}{chat_id}")
-}
-
-/// Whether persisted metadata names either the canonical or legacy managed
-/// branch for this chat.
+/// Whether persisted metadata names the canonical managed branch for this chat.
 pub fn managed_branch_matches(branch: &str, chat_id: &str) -> bool {
-    branch == managed_branch(chat_id) || branch == legacy_managed_branch(chat_id)
+    branch == managed_branch(chat_id)
 }
 
 fn existing_managed_branch(repo: &Path, chat_id: &str) -> Result<String, WorkspaceError> {
-    for branch in [managed_branch(chat_id), legacy_managed_branch(chat_id)] {
-        if local_branch_tip(repo, &branch)?.is_some() {
-            return Ok(branch);
-        }
+    let branch = managed_branch(chat_id);
+    if local_branch_tip(repo, &branch)?.is_some() {
+        return Ok(branch);
     }
     Err(WorkspaceError::Failed(format!(
-        "managed branch missing: {}",
-        managed_branch(chat_id)
+        "managed branch missing: {branch}"
     )))
 }
 
@@ -737,7 +728,7 @@ pub fn recover_managed(
 }
 
 /// Recover a managed worktree using the branch recorded by persisted chat
-/// metadata. This preserves worktrees created before the product rename.
+/// metadata, verified against the canonical name before any Git command runs.
 pub fn recover_managed_on_branch(
     repo: &Path,
     workspace_root: &Path,
@@ -788,8 +779,8 @@ pub fn remove_managed(
     remove_managed_on_branch(repo, workspace_root, chat_id, &branch)
 }
 
-/// Remove a managed worktree using persisted branch metadata, retaining the
-/// legacy branch name when an installation predates the product rename.
+/// Remove a managed worktree using persisted branch metadata, verified
+/// against the canonical name before any Git command runs.
 pub fn remove_managed_on_branch(
     repo: &Path,
     workspace_root: &Path,

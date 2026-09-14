@@ -42,9 +42,6 @@
               mainProgram = "pueblo-hub";
             };
           };
-          # Compatibility attribute for deployments that still select
-          # `.#agent-hub`; new consumers should use `.#pueblo-hub`.
-          agent-hub = pueblo-hub;
           default = pueblo-hub;
         });
 

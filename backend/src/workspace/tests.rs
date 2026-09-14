@@ -144,29 +144,6 @@ fn managed_recovery_and_removal() {
 }
 
 #[test]
-fn legacy_managed_branch_is_recovered_and_removed_in_place() {
-    let td = init_repo();
-    let base = resolve_ref(td.path(), "main").unwrap();
-    let ws = tempfile::tempdir().unwrap();
-    let chat_id = "legacy";
-    let branch = format!("{LEGACY_MANAGED_PREFIX}{chat_id}");
-    let worktree = ws.path().join(chat_id);
-    git(td.path(), &["branch", &branch]);
-    git(
-        td.path(),
-        &["worktree", "add", worktree.to_str().unwrap(), &branch],
-    );
-
-    assert!(managed_branch_matches(&branch, chat_id));
-    assert!(matches!(
-        recover_managed(td.path(), ws.path(), chat_id).unwrap(),
-        Recovered::Reused(_)
-    ));
-    remove_managed(td.path(), ws.path(), chat_id).unwrap();
-    assert_eq!(resolve_ref(td.path(), &branch).unwrap(), base);
-}
-
-#[test]
 fn remove_missing_worktree_preserves_branch() {
     let td = init_repo();
     let base = resolve_ref(td.path(), "main").unwrap();

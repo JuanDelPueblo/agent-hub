@@ -200,9 +200,8 @@ pueblo-hub/
   Write each migration so a second run is safe: prefer `IF NOT EXISTS`, and give
   it a `precondition` query when no such form exists. Pueblo Hub v0.2 reset
   `user_version` on every open, so a downgraded database can arrive claiming an
-  old version with a new schema. Existing managed chats may retain the
-  pre-rename `agent-hub/chat/<chat-id>` branch prefix; new chats use
-  `pueblo-hub/chat/<chat-id>` and recovery accepts both.
+  old version with a new schema. Managed chats use the `pueblo-hub/chat/<chat-id>`
+  branch prefix.
 - **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
   `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
   facade controls the lock and any shared transaction.
