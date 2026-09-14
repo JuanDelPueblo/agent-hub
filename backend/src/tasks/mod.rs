@@ -47,6 +47,8 @@ pub struct TerminalBuffer {
     pub truncated: bool,
 }
 
+pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+
 pub struct ManagedTask {
     pub id: String,
     pub chat_id: String,
@@ -57,7 +59,7 @@ pub struct ManagedTask {
     pub state: RwLock<TaskState>,
     pub exit_code: RwLock<Option<i32>>,
     pub buffer: RwLock<TerminalBuffer>,
-    pub output_limit: Option<usize>,
+    pub output_limit: usize,
     pub exit_notify: Arc<Notify>,
     pub kill_tx: std::sync::Mutex<Option<oneshot::Sender<()>>>,
     pub killed_by_user: AtomicBool,
@@ -85,7 +87,10 @@ impl ManagedTask {
                 output: String::new(),
                 truncated: false,
             }),
-            output_limit: output_limit.and_then(|limit| usize::try_from(limit).ok()),
+            output_limit: match output_limit.and_then(|limit| usize::try_from(limit).ok()) {
+                Some(requested) => requested.min(DEFAULT_MAX_OUTPUT_BYTES),
+                None => DEFAULT_MAX_OUTPUT_BYTES,
+            },
             exit_notify: Arc::new(Notify::new()),
             kill_tx: std::sync::Mutex::new(None),
             killed_by_user: AtomicBool::new(false),
@@ -97,15 +102,13 @@ impl ManagedTask {
         let mut buffer = self.buffer.write().await;
         buffer.output.push_str(chunk);
 
-        if let Some(limit) = self.output_limit {
-            if buffer.output.len() > limit {
-                let mut trim_at = buffer.output.len() - limit;
-                while trim_at < buffer.output.len() && !buffer.output.is_char_boundary(trim_at) {
-                    trim_at += 1;
-                }
-                buffer.output.drain(..trim_at);
-                buffer.truncated = true;
+        if buffer.output.len() > self.output_limit {
+            let mut trim_at = buffer.output.len() - self.output_limit;
+            while trim_at < buffer.output.len() && !buffer.output.is_char_boundary(trim_at) {
+                trim_at += 1;
             }
+            buffer.output.drain(..trim_at);
+            buffer.truncated = true;
         }
     }
 
@@ -284,5 +287,90 @@ impl TerminalTaskTracker {
         for task in tasks.iter() {
             task.stop();
         }
+    }
+
+    pub async fn forget_chat(&self, chat_id: &str) {
+        let mut by_chat = self.tasks_by_chat.write().await;
+        let mut by_id = self.tasks_by_id.write().await;
+        if let Some(tasks) = by_chat.remove(chat_id) {
+            for task in tasks {
+                by_id.remove(&task.id);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_output_limit_default_and_agent_override() {
+        let task_default = ManagedTask::new(
+            "task-1".into(),
+            "chat-1".into(),
+            "test".into(),
+            PathBuf::from("/tmp"),
+            None,
+        );
+        assert_eq!(task_default.output_limit, DEFAULT_MAX_OUTPUT_BYTES);
+
+        let task_small = ManagedTask::new(
+            "task-2".into(),
+            "chat-1".into(),
+            "test".into(),
+            PathBuf::from("/tmp"),
+            Some(20),
+        );
+        assert_eq!(task_small.output_limit, 20);
+        task_small
+            .append_output("hello world 1234567890 extra bytes")
+            .await;
+        let details = task_small.details().await;
+        assert_eq!(details.output.len(), 20);
+        assert!(details.truncated);
+
+        let task_large = ManagedTask::new(
+            "task-3".into(),
+            "chat-1".into(),
+            "test".into(),
+            PathBuf::from("/tmp"),
+            Some(100 * 1024 * 1024),
+        );
+        assert_eq!(task_large.output_limit, DEFAULT_MAX_OUTPUT_BYTES);
+    }
+
+    #[tokio::test]
+    async fn test_forget_chat_clears_tasks_and_indexes() {
+        let tracker = TerminalTaskTracker::new(10);
+        let task1 = Arc::new(ManagedTask::new(
+            "t1".into(),
+            "c1".into(),
+            "echo 1".into(),
+            PathBuf::from("/tmp"),
+            None,
+        ));
+        let task2 = Arc::new(ManagedTask::new(
+            "t2".into(),
+            "c2".into(),
+            "echo 2".into(),
+            PathBuf::from("/tmp"),
+            None,
+        ));
+
+        tracker.register_task(task1.clone()).await;
+        tracker.register_task(task2.clone()).await;
+
+        assert_eq!(tracker.list_chat_tasks("c1").await.len(), 1);
+        assert_eq!(tracker.list_chat_tasks("c2").await.len(), 1);
+        assert!(tracker.get_task("t1").await.is_some());
+        assert!(tracker.get_task("t2").await.is_some());
+
+        tracker.forget_chat("c1").await;
+
+        assert_eq!(tracker.list_chat_tasks("c1").await.len(), 0);
+        assert!(tracker.get_task("t1").await.is_none());
+        assert_eq!(tracker.list_chat_tasks("c2").await.len(), 1);
+        assert!(tracker.get_task("t2").await.is_some());
     }
 }

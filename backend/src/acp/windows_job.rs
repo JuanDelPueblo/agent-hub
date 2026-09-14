@@ -118,6 +118,7 @@ pub fn spawn(
         .stderr(Stdio::piped())
         .creation_flags(CREATE_SUSPENDED)
         .kill_on_drop(true);
+    cmd.env_clear();
     for (k, v) in env_vars {
         cmd.env(k, v);
     }

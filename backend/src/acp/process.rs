@@ -44,6 +44,7 @@ impl AcpProcess {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            cmd.env_clear();
             for (k, v) in env_vars {
                 cmd.env(k, v);
             }

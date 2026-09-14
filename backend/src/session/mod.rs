@@ -45,6 +45,7 @@ pub struct AcpSession {
     checkout_guard: Option<Arc<Mutex<()>>>,
     startup_lock: Mutex<()>,
     task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
+    cached_env: RwLock<Option<HashMap<String, String>>>,
 }
 
 impl AcpSession {
@@ -71,11 +72,24 @@ impl AcpSession {
             checkout_guard,
             startup_lock: Mutex::new(()),
             task_tracker,
+            cached_env: RwLock::new(None),
         }
     }
 
     pub fn cwd(&self) -> &Path {
         &self.key.cwd
+    }
+
+    pub async fn cached_env(&self) -> Option<HashMap<String, String>> {
+        self.cached_env.read().await.clone()
+    }
+
+    pub async fn invalidate_cached_env(&self) {
+        *self.cached_env.write().await = None;
+    }
+
+    pub async fn set_cached_env(&self, env: HashMap<String, String>) {
+        *self.cached_env.write().await = Some(env);
     }
 
     pub async fn process_state(&self) -> ProcessState {
@@ -183,11 +197,20 @@ impl AcpSession {
         self.set_states(ProcessState::Starting, TurnState::Idle)
             .await?;
 
-        let workspace_env = match crate::workspace_env::resolve_workspace_env(&self.key.cwd).await {
-            Ok(env) => env,
-            Err(e) => {
-                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
-                return Err(e.into());
+        let workspace_env = {
+            let cached = self.cached_env.read().await.clone();
+            match cached {
+                Some(env) => env,
+                None => match crate::workspace_env::resolve_workspace_env(&self.key.cwd).await {
+                    Ok(env) => {
+                        *self.cached_env.write().await = Some(env.clone());
+                        env
+                    }
+                    Err(e) => {
+                        self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                        return Err(e.into());
+                    }
+                },
             }
         };
         let agent_env =
@@ -1458,6 +1481,7 @@ impl SessionManager {
         let session = self.sessions.write().await.remove(key);
         if let Some(session) = &session {
             self.sessions_by_id.write().await.remove(&session.id);
+            self.task_tracker.forget_chat(&session.id).await;
         }
         session
     }

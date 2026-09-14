@@ -413,6 +413,7 @@ impl HubService {
         })?;
         self.events.forget_chat(chat_id);
         self.sessions.remove_session(chat_id).await;
+        self.sessions.task_tracker().forget_chat(chat_id).await;
         self.notify_metadata_changed();
         Ok(())
     }

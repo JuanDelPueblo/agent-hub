@@ -55,11 +55,18 @@ pub fn has_envrc(cwd: &Path) -> bool {
 pub async fn resolve_workspace_env(
     cwd: &Path,
 ) -> Result<HashMap<String, String>, WorkspaceEnvError> {
+    resolve_workspace_env_internal("direnv", cwd).await
+}
+
+pub(crate) async fn resolve_workspace_env_internal(
+    bin: &str,
+    cwd: &Path,
+) -> Result<HashMap<String, String>, WorkspaceEnvError> {
     if !has_envrc(cwd) {
         return Ok(std::env::vars().collect());
     }
 
-    let output = match tokio::process::Command::new("direnv")
+    let output = match tokio::process::Command::new(bin)
         .arg("export")
         .arg("json")
         .current_dir(cwd)
@@ -126,7 +133,11 @@ pub async fn resolve_workspace_env(
 }
 
 pub async fn direnv_allow(cwd: &Path) -> Result<(), WorkspaceEnvError> {
-    let output = match tokio::process::Command::new("direnv")
+    direnv_allow_internal("direnv", cwd).await
+}
+
+pub(crate) async fn direnv_allow_internal(bin: &str, cwd: &Path) -> Result<(), WorkspaceEnvError> {
+    let output = match tokio::process::Command::new(bin)
         .arg("allow")
         .current_dir(cwd)
         .output()
@@ -194,6 +205,7 @@ pub fn merge_terminal_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncBufReadExt;
 
     #[test]
     fn test_merge_precedence() {
@@ -215,5 +227,143 @@ mod tests {
         )];
         let term_merged = merge_terminal_env(&merged, &terminal_overlay);
         assert_eq!(term_merged.get("OVERRIDE").unwrap(), "terminal");
+    }
+
+    #[tokio::test]
+    async fn test_no_envrc_returns_base_env() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(!has_envrc(temp_dir.path()));
+        let env = resolve_workspace_env(temp_dir.path()).await.unwrap();
+        assert_eq!(env.get("PATH"), std::env::var("PATH").ok().as_ref());
+    }
+
+    #[tokio::test]
+    async fn test_missing_direnv_executable() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join(".envrc"), "export TEST_VAR=123\n").unwrap();
+        assert!(has_envrc(temp_dir.path()));
+
+        let err = resolve_workspace_env_internal("nonexistent-direnv-cmd-9999", temp_dir.path())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WorkspaceEnvError::DirenvNotFound));
+
+        let err_allow = direnv_allow_internal("nonexistent-direnv-cmd-9999", temp_dir.path())
+            .await
+            .unwrap_err();
+        assert!(matches!(err_allow, WorkspaceEnvError::DirenvNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_blocked_envrc_and_direnv_allow_flow() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let envrc_path = temp_dir.path().join(".envrc");
+        std::fs::write(&envrc_path, "export DIREnv_TEST_VAR=pueblo_test_123\n").unwrap();
+
+        // 1. Unapproved .envrc must return EnvrcBlocked
+        let err = resolve_workspace_env(temp_dir.path()).await.unwrap_err();
+        match err {
+            WorkspaceEnvError::EnvrcBlocked { path, message } => {
+                let expected_canonical = envrc_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| envrc_path.clone());
+                let actual_canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                assert_eq!(actual_canonical, expected_canonical);
+                let lower = message.to_lowercase();
+                assert!(lower.contains("blocked") || lower.contains("allow"));
+            }
+            other => panic!("expected EnvrcBlocked, got {:?}", other),
+        }
+
+        // 2. Authorize via direnv_allow
+        direnv_allow(temp_dir.path())
+            .await
+            .expect("direnv allow should succeed");
+
+        // 3. Now resolve_workspace_env must succeed and include exported variable
+        let resolved = resolve_workspace_env(temp_dir.path())
+            .await
+            .expect("resolve should succeed after allow");
+        assert_eq!(
+            resolved.get("DIREnv_TEST_VAR").map(|s| s.as_str()),
+            Some("pueblo_test_123")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unset_variable_propagation_and_spawn() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_unset_key = "PUEBLO_TEST_INHERITED_UNSET_VAR";
+        unsafe {
+            std::env::set_var(test_unset_key, "should_be_removed_by_direnv");
+        }
+
+        std::fs::write(
+            temp_dir.path().join(".envrc"),
+            format!(
+                "unset {}\nexport PUEBLO_RETAINED_TEST=kept\n",
+                test_unset_key
+            ),
+        )
+        .unwrap();
+
+        direnv_allow(temp_dir.path()).await.unwrap();
+
+        let resolved = resolve_workspace_env(temp_dir.path()).await.unwrap();
+        assert!(!resolved.contains_key(test_unset_key));
+        assert_eq!(
+            resolved.get("PUEBLO_RETAINED_TEST").map(|s| s.as_str()),
+            Some("kept")
+        );
+
+        let proc = crate::acp::process::AcpProcess::spawn(
+            "sh",
+            &[
+                "-c".into(),
+                format!(
+                    "echo UNSET=${} RETAINED=$PUEBLO_RETAINED_TEST",
+                    test_unset_key
+                ),
+            ],
+            &resolved,
+            temp_dir.path(),
+        )
+        .expect("spawn sh should succeed");
+
+        let mut reader = proc.stdout;
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert_eq!(line.trim(), "UNSET= RETAINED=kept");
+
+        unsafe {
+            std::env::remove_var(test_unset_key);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_worktree_and_direct_checkout_nested_envrc() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        let envrc_path = root.join(".envrc");
+        std::fs::write(&envrc_path, "export WORKTREE_TEST_VAR=nested_authorized\n").unwrap();
+
+        let nested_worktree = root.join("worktrees").join("branch-xyz");
+        std::fs::create_dir_all(&nested_worktree).unwrap();
+
+        assert!(has_envrc(&nested_worktree));
+        let found = find_envrc_path(&nested_worktree).unwrap();
+        let expected_canonical = envrc_path
+            .canonicalize()
+            .unwrap_or_else(|_| envrc_path.clone());
+        let found_canonical = found.canonicalize().unwrap_or_else(|_| found.clone());
+        assert_eq!(found_canonical, expected_canonical);
+
+        direnv_allow(root).await.unwrap();
+
+        let resolved = resolve_workspace_env(&nested_worktree).await.unwrap();
+        assert_eq!(
+            resolved.get("WORKTREE_TEST_VAR").map(|s| s.as_str()),
+            Some("nested_authorized")
+        );
     }
 }

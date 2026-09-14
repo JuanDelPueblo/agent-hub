@@ -1042,3 +1042,26 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 }
 "#
 }
+
+#[tokio::test]
+async fn test_session_cached_env_lifecycle() {
+    let configs = vec![AgentDefinition::codex_default()];
+    let event_log = Arc::new(EventLog::new(100));
+    let mgr = SessionManager::new(Arc::new(AgentRegistry::new(configs)), event_log);
+
+    let session = mgr
+        .get_or_create("codex", std::path::Path::new("/tmp"))
+        .await
+        .unwrap();
+
+    assert!(session.cached_env().await.is_none());
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("SESSION_VAR".into(), "1".into());
+    session.set_cached_env(env.clone()).await;
+
+    assert_eq!(session.cached_env().await, Some(env));
+
+    session.invalidate_cached_env().await;
+    assert!(session.cached_env().await.is_none());
+}

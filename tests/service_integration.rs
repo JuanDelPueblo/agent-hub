@@ -913,3 +913,79 @@ async fn startup_failure_causes_prompt_to_fail_without_events() {
 
     sessions.shutdown_all().await;
 }
+
+#[tokio::test]
+async fn authorize_chat_environment_security_and_path_validation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+
+    let project = hub
+        .create_project("test_proj".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+
+    // 1. Unknown chat returns ChatNotFound
+    let err_unknown = hub
+        .authorize_chat_environment("nonexistent-chat-id")
+        .await
+        .unwrap_err();
+    assert!(matches!(err_unknown, ServiceError::NotFound(_)));
+
+    // 2. Archived chat returns Invalid
+    hub.edit_chat(
+        &chat.chat.id,
+        ChatEdit {
+            title: None,
+            archived: Some(true),
+            permission_policy: None,
+        },
+    )
+    .await
+    .unwrap();
+    let err_archived = hub
+        .authorize_chat_environment(&chat.chat.id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err_archived, ServiceError::Invalid(_)));
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn task_cleanup_on_chat_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+
+    let project = hub
+        .create_project("test_proj".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+
+    let task = Arc::new(pueblo_hub::tasks::ManagedTask::new(
+        "task-test-del".into(),
+        chat.chat.id.clone(),
+        "echo hi".into(),
+        tmp.path().to_path_buf(),
+        None,
+    ));
+    sessions.task_tracker().register_task(task.clone()).await;
+
+    assert_eq!(hub.list_chat_tasks(&chat.chat.id).await.unwrap().len(), 1);
+    let details = hub
+        .get_chat_task(&chat.chat.id, "task-test-del")
+        .await
+        .unwrap();
+    assert_eq!(details.id, "task-test-del");
+
+    // Delete chat -> task tracker must forget all tasks associated with chat
+    hub.delete_chat(&chat.chat.id).await.unwrap();
+
+    assert!(hub.list_chat_tasks(&chat.chat.id).await.is_err());
+    assert!(sessions
+        .task_tracker()
+        .get_task("task-test-del")
+        .await
+        .is_none());
+
+    sessions.shutdown_all().await;
+}
