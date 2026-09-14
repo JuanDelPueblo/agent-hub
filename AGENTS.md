@@ -1,6 +1,6 @@
 # Agent Hub Agent Guide
 
-This file contains implementation rules for coding agents. It is intentionally compact: product scope belongs in GitHub Issues, release grouping in milestones, and high-level direction in `ROADMAP.md`.
+This file contains implementation rules for coding agents. It is intentionally compact: product scope belongs in GitHub Issues and release grouping in milestones.
 
 ## Start here
 
@@ -9,7 +9,7 @@ For each task:
 1. Read the assigned issue/task first.
 2. Inspect only the relevant source and tests; follow imports/callers outward as needed.
 3. Search for existing patterns before introducing new abstractions.
-4. Read `README.md`, `ROADMAP.md`, or other docs only when the task needs that context.
+4. Read `README.md` or other docs only when the task needs that context.
 5. Make the smallest correct change. Avoid unrelated refactors, dependency upgrades, cleanup, or future work.
 
 Do not inventory the whole repository by default. Source and tests are the authority for current implementation details.
@@ -142,6 +142,6 @@ Do not run expensive unrelated verification solely for a docs-only or narrowly i
 - Add dependencies only when the task genuinely needs them; prefer existing dependencies and platform facilities.
 - Preserve public/API compatibility unless the issue explicitly changes it.
 - Update tests with behavior changes; do not weaken tests to make an implementation pass.
-- Keep `ROADMAP.md` high-level. Put implementation requirements in Issues rather than duplicating them in roadmap prose.
+- Put implementation requirements in Issues rather than duplicating them in repository prose.
 - Unless the task is explicitly an integration task on `master`, work only on the current task branch/workspace; do not switch branches, merge/rebase `master`, or push directly to `master`.
 - Commit and push the current task branch after verification passes.
