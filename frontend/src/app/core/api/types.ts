@@ -32,6 +32,12 @@ export interface ChatWorkspaceSelection {
   branch: string;
 }
 
+export interface ChatWorkspaceSummary {
+  mode: WorkspaceMode;
+  branch: string | null;
+  base_commit: string | null;
+}
+
 export interface Chat {
   id: string;
   project_id: string;
@@ -46,7 +52,7 @@ export interface Chat {
   title_overridden?: boolean;
   process_state?: ProcessState;
   turn_state?: TurnState;
-  workspace?: ChatWorkspaceSelection | null;
+  workspace?: ChatWorkspaceSummary | null;
 }
 
 export interface ConfigOptionSelectGroup {

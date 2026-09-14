@@ -142,6 +142,19 @@ async fn managed_chats_are_isolated_and_can_start_from_selected_branch() {
     let second = hub.create_chat(&project.id, "codex", None).await.unwrap();
     let first_ws = store.workspace(&first.chat.id).unwrap().unwrap();
     let second_ws = store.workspace(&second.chat.id).unwrap().unwrap();
+    assert_eq!(
+        first.workspace.as_ref().unwrap().mode,
+        WorkspaceMode::ManagedWorktree
+    );
+    assert_eq!(first.workspace.as_ref().unwrap().branch, first_ws.branch);
+    assert_eq!(
+        first.workspace.as_ref().unwrap().base_commit,
+        first_ws.base_commit
+    );
+    let serialized = serde_json::to_value(&first).unwrap();
+    assert!(serialized["workspace"].get("repository_root").is_none());
+    assert!(serialized["workspace"].get("workspace_path").is_none());
+    assert!(serialized["workspace"].get("project_subdir").is_none());
     assert_eq!(first_ws.mode, WorkspaceMode::ManagedWorktree);
     assert_eq!(first_ws.base_commit.as_deref(), Some(base.as_str()));
     assert_ne!(first_ws.workspace_path, second_ws.workspace_path);
@@ -212,6 +225,14 @@ async fn direct_current_branch_preserves_dirty_files_and_switching_refuses_them(
     assert_eq!(
         store.workspace(&current.chat.id).unwrap().unwrap().mode,
         WorkspaceMode::ProjectCheckout
+    );
+    assert_eq!(
+        current.workspace.as_ref().unwrap().mode,
+        WorkspaceMode::ProjectCheckout
+    );
+    assert_eq!(
+        current.workspace.as_ref().unwrap().branch.as_deref(),
+        Some("main")
     );
 
     let error = hub

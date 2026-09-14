@@ -177,7 +177,12 @@ export class FakeState {
       permission_policy: 'ask',
       config_values: {},
       title_overridden: Boolean(title),
-      workspace: workspace ? { mode: workspace.mode, branch: workspace.branch } : null,
+      workspace: workspace ? {
+        mode: workspace.mode,
+        branch: workspace.mode === 'managed_worktree' ? `agent-hub/chat/${chat.id}` : workspace.branch,
+        base_commit: workspace.base_commit ?? this.workspaceOptionsByProject.get(projectId)?.branches
+          ?.find((branch) => branch.name === workspace.branch)?.sha ?? null,
+      } : null,
     };
     this.chats.set(chat.id, chat);
     this.configByChat.set(chat.id, defaultConfigOptions(agent));
@@ -228,6 +233,11 @@ export class FakeState {
     this.createProject('scratch', `${PROJECT_ROOT}/scratch`);
 
     const review = this.createChat(hub.id, 'claude', 'Review the WebSocket replay path');
+    review.workspace = {
+      mode: 'managed_worktree',
+      branch: `agent-hub/chat/${review.id}`,
+      base_commit: '1111111111111111111111111111111111111111',
+    };
     review.acp_session_id = 'acp-session-1';
     this.runtime.set(review.id, { process: 'RUNNING', turn: 'IDLE' });
 
@@ -235,6 +245,11 @@ export class FakeState {
     migrate.archived = true;
 
     const theme = this.createChat(hub.id, 'opencode', 'Frontend theme cleanup');
+    theme.workspace = {
+      mode: 'project_checkout',
+      branch: 'feature/ui',
+      base_commit: '2222222222222222222222222222222222222222',
+    };
 
     const flash = this.createChat(firmware.id, 'claude', 'Unscramble the calibration block');
     flash.permission_policy = 'read-only';

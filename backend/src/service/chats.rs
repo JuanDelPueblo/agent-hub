@@ -39,10 +39,22 @@ impl HubService {
             ),
             None => ("STOPPED".into(), "IDLE".into()),
         };
+        let workspace = match self.store.workspace(&chat.id) {
+            Ok(workspace) => workspace.map(Into::into),
+            Err(error) => {
+                tracing::warn!(
+                    chat_id = %chat.id,
+                    %error,
+                    "Failed to read chat workspace metadata; omitting display summary"
+                );
+                None
+            }
+        };
         ChatView {
             chat,
             process_state,
             turn_state,
+            workspace,
         }
     }
 

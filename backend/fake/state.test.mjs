@@ -87,6 +87,25 @@ describe('fake backend seed history', () => {
     const chat = state.createChat(gitProject.id, 'codex', undefined, {
       mode: 'project_checkout', branch: 'feature/ui',
     });
-    assert.deepEqual(chat.workspace, { mode: 'project_checkout', branch: 'feature/ui' });
+    assert.deepEqual(chat.workspace, {
+      mode: 'project_checkout',
+      branch: 'feature/ui',
+      base_commit: '2222222222222222222222222222222222222222',
+    });
+  });
+
+  it('seeds representative managed and direct workspace summaries without paths', () => {
+    const state = new FakeState();
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');
+    const chats = state.listChats(gitProject.id);
+    const managed = chats.find((chat) => chat.workspace?.mode === 'managed_worktree');
+    const direct = chats.find((chat) => chat.workspace?.mode === 'project_checkout');
+    assert.ok(managed?.workspace?.branch?.startsWith(`agent-hub/chat/${managed.id}`));
+    assert.equal(direct?.workspace?.branch, 'feature/ui');
+    for (const chat of [managed, direct]) {
+      assert.ok(chat);
+      assert.equal('workspace_path' in chat.workspace, false);
+      assert.equal('repository_root' in chat.workspace, false);
+    }
   });
 });

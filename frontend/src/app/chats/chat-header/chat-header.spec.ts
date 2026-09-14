@@ -91,4 +91,31 @@ describe('ChatHeaderComponent', () => {
       expect(text).not.toContain(process);
     }
   });
+
+  it('renders a truncated branch badge with the full mode tooltip', () => {
+    const branch = 'agent-hub/chat/chat-1-with-a-deliberately-long-generated-branch-name';
+    fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
+      mode: 'managed_worktree', branch, base_commit: 'abcdef1234567890',
+    } });
+    fixture.detectChanges();
+
+    const badge = fixture.nativeElement.querySelector('.workspace-badge') as HTMLElement;
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain(branch);
+    expect(fixture.componentInstance.workspaceTooltip({ mode: 'managed_worktree', branch, base_commit: null }))
+      .toBe(`${branch} — Isolated worktree`);
+    expect(fixture.componentInstance.workspaceTooltip({ mode: 'project_checkout', branch, base_commit: null }))
+      .toBe(`${branch} — Project checkout`);
+  });
+
+  it('does not render a workspace badge when workspace or branch is absent', () => {
+    fixture.componentRef.setInput('chat', { ...mockChat, workspace: null });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.workspace-badge')).toBeNull();
+    fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
+      mode: 'project_checkout', branch: null, base_commit: null,
+    } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.workspace-badge')).toBeNull();
+  });
 });

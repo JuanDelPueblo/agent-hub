@@ -93,6 +93,7 @@ async fn full_chat_lifecycle_without_http() {
     let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
     assert_eq!(chat.process_state, "STOPPED");
     assert_eq!(chat.turn_state, "IDLE");
+    assert!(chat.workspace.is_none());
     assert_eq!(hub.list_chats(&project.id).await.unwrap().len(), 1);
 
     hub.prompt_chat(&chat.chat.id, "hello".into())
