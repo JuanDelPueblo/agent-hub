@@ -36,6 +36,21 @@ describe('MessageItemComponent', () => {
     expect(thought.classList.contains('mat-expanded')).toBe(true);
   });
 
+  it('renders persisted user and turn timestamps as local date/time values', () => {
+    const message = TestBed.createComponent(MessageItemComponent);
+    message.componentRef.setInput('item', {
+      id: 1,
+      type: 'user_message',
+      text: 'Timestamped prompt',
+      timestamp: '2026-09-13T12:34:56Z',
+    });
+    message.detectChanges();
+
+    const time = message.nativeElement.querySelector('time') as HTMLTimeElement;
+    expect(time.getAttribute('datetime')).toBe('2026-09-13T12:34:56Z');
+    expect(time.textContent).not.toBe('');
+  });
+
   it('hides ACP process lifecycle events from the transcript', () => {
     const reducer = new EventReducer();
     const event = (seq: number, process: string, turn: string): SessionEvent => ({

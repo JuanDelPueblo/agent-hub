@@ -13,6 +13,7 @@ import { map } from 'rxjs';
 import type { Chat, Project } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 import { chatActivityLabel, type ChatActivity } from '../../state/chat-activity';
+import { compareChatsByRecency } from '../../state/chat-session.store';
 import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { NewChatButtonComponent } from '../../chats/new-chat-button/new-chat-button';
 import { DeleteProjectDialogComponent } from '../../projects/delete-project-dialog/delete-project-dialog';
@@ -51,7 +52,8 @@ export class ProjectPageComponent {
   );
   readonly chats = computed(() => this.state.chatsByProject()[this.projectId()] ?? []);
   readonly visibleChats = computed(() =>
-    this.state.showArchived() ? this.chats() : this.chats().filter((chat) => !chat.archived),
+    [...(this.state.showArchived() ? this.chats() : this.chats().filter((chat) => !chat.archived))]
+      .sort(compareChatsByRecency),
   );
 
   constructor() {
@@ -76,7 +78,10 @@ export class ProjectPageComponent {
   }
 
   chatAriaLabel(chat: Chat): string {
-    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(this.activityFor(chat))}`;
+    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(
+      this.activityFor(chat),
+      this.state.chatTurnStartedAt(chat.id),
+    )}`;
   }
 
   edit(project: Project): void {

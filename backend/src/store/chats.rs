@@ -49,7 +49,10 @@ pub(crate) fn new(project_id: String, agent: String, title: Option<String>) -> S
 }
 
 pub(crate) fn list(conn: &Connection) -> StoreResult<Vec<Chat>> {
-    let mut stmt = conn.prepare("SELECT data FROM chats ORDER BY rowid")?;
+    let mut stmt = conn.prepare(
+        "SELECT data FROM chats
+         ORDER BY json_extract(data, '$.updated_at') DESC, id DESC",
+    )?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     let mut chats = Vec::new();
     for r in rows {
@@ -94,6 +97,26 @@ pub(crate) fn update(
     let mut c: Chat = serde_json::from_str(&data)?;
     edit(&mut c);
     c.updated_at = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE chats SET data=?2 WHERE id=?1",
+        params![id, serde_json::to_string(&c)?],
+    )?;
+    Ok(c)
+}
+
+/// Records conversation activity without changing any other chat metadata.
+/// The caller supplies the event timestamp so the durable chat row and the
+/// durable user-message event describe the same activity instant.
+pub(crate) fn touch(conn: &Connection, id: &str, updated_at: &str) -> StoreResult<Chat> {
+    let data: Option<String> = conn
+        .query_row("SELECT data FROM chats WHERE id=?1", [id], |r| r.get(0))
+        .optional()?;
+    let data = match data {
+        Some(d) => d,
+        None => return Err(StoreError::NotFound("Chat not found".into())),
+    };
+    let mut c: Chat = serde_json::from_str(&data)?;
+    c.updated_at = updated_at.to_string();
     conn.execute(
         "UPDATE chats SET data=?2 WHERE id=?1",
         params![id, serde_json::to_string(&c)?],

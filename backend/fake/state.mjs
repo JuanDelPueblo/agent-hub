@@ -213,7 +213,15 @@ export class FakeState {
   listChats(projectId) {
     return [...this.chats.values()]
       .filter((chat) => chat.project_id === projectId)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
       .map((chat) => this.chatView(chat));
+  }
+
+  touchChatActivity(chatId, updatedAt = now()) {
+    const chat = this.chats.get(chatId);
+    if (!chat) return null;
+    chat.updated_at = updatedAt;
+    return chat;
   }
 
   setRuntime(chatId, process, turn) {
@@ -291,10 +299,11 @@ export class FakeState {
    * chat shows history without duplicating `emit()` blocks.
    */
   seedConversation(chat, script) {
-    this.emit(chat.id, chat.agent, {
+    const userEvent = this.emit(chat.id, chat.agent, {
       type: 'user_message',
       text: script.user,
     });
+    this.touchChatActivity(chat.id, userEvent.timestamp);
     if (script.thought) {
       this.emit(chat.id, chat.agent, {
         type: 'thought_chunk',
@@ -311,10 +320,11 @@ export class FakeState {
   /** Writes a finished turn, so a freshly opened UI already shows content. */
   seedTranscript(chat) {
     const agent = chat.agent;
-    this.emit(chat.id, agent, {
+    const userEvent = this.emit(chat.id, agent, {
       type: 'user_message',
       text: 'Why does the WebSocket drop events after a reconnect?',
     });
+    this.touchChatActivity(chat.id, userEvent.timestamp);
     this.emit(chat.id, agent, {
       type: 'thought_chunk',
       text: 'The client sends from_seq. I must check how the log replays it.',

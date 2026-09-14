@@ -79,6 +79,7 @@ export class AppStateService {
   loadChats(projectId: string): Promise<void> { return this.chatStore.loadChats(projectId); }
   findChat(chatId: string) { return this.chatStore.findChat(chatId); }
   chatActivity(chatId: string): ChatActivity { return this.chatStore.chatActivity(chatId); }
+  chatTurnStartedAt(chatId: string): string | null { return this.chatStore.chatTurnStartedAt(chatId); }
   autoConnectChat(chatId: string): Promise<void> { return this.chatStore.autoConnectChat(chatId); }
   loadChatHistory(chatId: string): Promise<void> { return this.chatStore.loadChatHistory(chatId); }
   loadOlderHistory(chatId: string): Promise<void> { return this.chatStore.loadOlderHistory(chatId); }

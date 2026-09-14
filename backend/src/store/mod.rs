@@ -200,6 +200,10 @@ impl Store {
         chats::update(&self.conn.lock().unwrap(), id, edit)
     }
 
+    pub fn touch_chat(&self, id: &str, updated_at: &str) -> StoreResult<Chat> {
+        chats::touch(&self.conn.lock().unwrap(), id, updated_at)
+    }
+
     /// A chat and its events go together, so one transaction covers both tables.
     /// The workspace row goes away through the `chat_workspaces` foreign key.
     pub fn delete_chat(&self, id: &str) -> StoreResult<()> {
@@ -366,6 +370,34 @@ mod tests {
                 .is_some_and(|s| s.starts_with("acp-")),
             "ACP session id was lost"
         );
+    }
+
+    #[test]
+    fn chats_are_listed_by_activity_newest_first_with_id_tie_breaker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Store::open(&tmp.path().join("hub.db")).unwrap();
+        let project = db
+            .create_project("project".into(), tmp.path().display().to_string())
+            .unwrap();
+        let older = db
+            .create_chat(project.id.clone(), "codex".into(), Some("older".into()))
+            .unwrap();
+        let newer = db
+            .create_chat(project.id, "codex".into(), Some("newer".into()))
+            .unwrap();
+
+        db.touch_chat(&older.id, "2026-01-01T00:00:00Z").unwrap();
+        db.touch_chat(&newer.id, "2026-02-01T00:00:00Z").unwrap();
+        let listed = db.chats().unwrap();
+        assert_eq!(listed[0].id, newer.id);
+        assert_eq!(listed[1].id, older.id);
+
+        db.touch_chat(&older.id, "2026-02-01T00:00:00Z").unwrap();
+        let tied = db.chats().unwrap();
+        let mut expected = [newer.id.clone(), older.id.clone()];
+        expected.sort_by(|left, right| right.cmp(left));
+        assert_eq!(tied[0].id, expected[0]);
+        assert_eq!(tied[1].id, expected[1]);
     }
 
     #[test]

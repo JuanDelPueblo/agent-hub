@@ -21,6 +21,9 @@ export class EventReducer {
   private readonly eventsBySeq = new Map<number, SessionEvent>();
   private readonly itemList = signal<DisplayItem[]>([]);
   readonly items = this.itemList.asReadonly();
+  private readonly turnStart = signal<string | null>(null);
+  readonly turnStartedAt = this.turnStart.asReadonly();
+  private turnStartSource: 'user' | 'state' | 'inferred' | null = null;
   private currentTurnId: number | null = null;
 
   constructor(initialEvents: SessionEvent[] = []) {
@@ -44,6 +47,8 @@ export class EventReducer {
   private rebuild(): void {
     this.nextId = 1;
     this.currentTurnId = null;
+    this.turnStart.set(null);
+    this.turnStartSource = null;
     this.itemList.set([]);
     const ordered = [...this.eventsBySeq.values()].sort((a, b) => a.seq - b.seq);
     for (const event of ordered) this.ingestOrdered(event);
@@ -52,6 +57,24 @@ export class EventReducer {
   private ingestOrdered(event: SessionEvent): DisplayItem | null {
     const payload = event.payload;
     if (!payload) return null;
+
+    if (payload.type === 'user_message') {
+      this.turnStart.set(event.timestamp);
+      this.turnStartSource = 'user';
+    } else if (
+      payload.type === 'state_change'
+      && payload.turn === 'PROMPTING'
+      && this.turnStartSource !== 'user'
+    ) {
+      this.turnStart.set(event.timestamp);
+      this.turnStartSource = 'state';
+    } else if (payload.type === 'turn_complete') {
+      this.turnStart.set(null);
+      this.turnStartSource = null;
+    } else if (this.isTurnScoped(payload.type) && !this.turnStart()) {
+      this.turnStart.set(event.timestamp);
+      this.turnStartSource = 'inferred';
+    }
 
     if (this.isTurnScoped(payload.type)) {
       return this.ingestTurnEvent(event);

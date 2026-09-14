@@ -17,9 +17,9 @@ describe('ProjectPageComponent chat status', () => {
       agents: signal(['claude', 'codex', 'opencode']),
       chatsByProject: signal({
         'proj-1': [
-          { id: 'chat-1', project_id: 'proj-1', agent: 'claude', title: 'First chat', archived: false, turn_state: 'IDLE' },
-          { id: 'chat-2', project_id: 'proj-1', agent: 'codex', title: 'Second chat', archived: false, turn_state: 'PROMPTING' },
-          { id: 'chat-3', project_id: 'proj-1', agent: 'opencode', title: 'Third chat', archived: false, turn_state: 'IDLE' },
+          { id: 'chat-1', project_id: 'proj-1', agent: 'claude', title: 'First chat', updated_at: '2026-09-13T12:03:00Z', archived: false, turn_state: 'IDLE' },
+          { id: 'chat-2', project_id: 'proj-1', agent: 'codex', title: 'Second chat', updated_at: '2026-09-13T12:02:00Z', archived: false, turn_state: 'PROMPTING' },
+          { id: 'chat-3', project_id: 'proj-1', agent: 'opencode', title: 'Third chat', updated_at: '2026-09-13T12:01:00Z', archived: false, turn_state: 'IDLE' },
         ],
       }),
       showArchived: signal(false),
@@ -27,6 +27,7 @@ describe('ProjectPageComponent chat status', () => {
       loadChats: vi.fn(async () => undefined),
       chatActivity: (chatId: string) =>
         chatId === 'chat-1' ? 'idle' : chatId === 'chat-2' ? 'waiting' : 'error',
+      chatTurnStartedAt: () => null,
     };
 
     const route = {

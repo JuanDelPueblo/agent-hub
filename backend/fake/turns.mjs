@@ -78,7 +78,8 @@ async function runTurn(state, chat, text, latency, turn) {
     }
   };
 
-  emit({ type: 'user_message', text });
+  const userEvent = emit({ type: 'user_message', text });
+  state.touchChatActivity(chat.id, userEvent.timestamp);
   state.setRuntime(chat.id, 'RUNNING', 'PROMPTING');
   await pause(200);
 

@@ -336,12 +336,18 @@ impl AcpSession {
         self.touch().await;
         self.ensure_running().await?;
 
-        self.event_log.append(
+        let turn_started_at = chrono::Utc::now();
+        if let Some(store) = &self.store {
+            store.touch_chat(&self.id, &turn_started_at.to_rfc3339())?;
+        }
+
+        self.event_log.append_at(
             &self.id,
             &self.key.agent,
             EventPayload::UserMessage {
                 text: message.clone(),
             },
+            turn_started_at,
         )?;
 
         self.set_states(ProcessState::Running, TurnState::Prompting)

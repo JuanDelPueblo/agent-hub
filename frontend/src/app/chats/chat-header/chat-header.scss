@@ -10,6 +10,8 @@
 .title-text { display: block; min-width: 0; max-width: min(calc(50vw - 24px), 536px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-button:hover { text-decoration: underline; }
 .badges { flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chat-timestamps { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 5px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
+.chat-timestamps time { color: inherit; }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
 .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); text-transform: capitalize; }
 .workspace-badge { min-width: 0; max-width: min(42vw, 320px); }

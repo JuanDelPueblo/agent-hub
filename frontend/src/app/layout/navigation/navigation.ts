@@ -10,11 +10,13 @@ import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import type { Chat } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 import { chatActivityLabel, type ChatActivity } from '../../state/chat-activity';
+import { compareChatsByRecency } from '../../state/chat-session.store';
 import { NewChatButtonComponent } from '../../chats/new-chat-button/new-chat-button';
 import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { ProjectDialogComponent } from '../../projects/project-dialog/project-dialog';
 import { ConnectionStatusComponent } from '../connection-status/connection-status';
 import { ThemeService } from '../../core/theme.service';
+import { ActivityClockService } from '../../shared/chat-status-badge/activity-clock.service';
 
 /**
  * The navigation drawer for a selected project. It holds the project switcher
@@ -46,6 +48,7 @@ export class NavigationComponent {
   readonly theme = inject(ThemeService);
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
+  private readonly clock = inject(ActivityClockService);
 
   /** The project overview page carries its own button, so the drawer hides one. */
   readonly showNewChat = computed(() => this.state.activeChatId() !== null);
@@ -53,7 +56,8 @@ export class NavigationComponent {
   readonly visibleChats = computed(() => {
     const projectId = this.state.activeProjectId();
     const chats = projectId ? this.state.chatsByProject()[projectId] ?? [] : [];
-    return this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived);
+    return [...(this.state.showArchived() ? chats : chats.filter((chat) => !chat.archived))]
+      .sort(compareChatsByRecency);
   });
 
   agentLabel(agent: string | null | undefined): string {
@@ -67,7 +71,15 @@ export class NavigationComponent {
   }
 
   chatAriaLabel(chat: Chat): string {
-    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(this.activityFor(chat))}`;
+    return `Open chat ${chat.title || 'Untitled chat'}, ${chatActivityLabel(
+      this.activityFor(chat),
+      this.state.chatTurnStartedAt(chat.id),
+      this.clock.now(),
+    )}`;
+  }
+
+  turnStartedAtFor(chat: Chat): string | null {
+    return this.state.chatTurnStartedAt(chat.id);
   }
 
   /**
@@ -98,10 +110,7 @@ export class NavigationComponent {
     const visible = this.state.showArchived()
       ? chats
       : chats.filter((candidate) => !candidate.archived);
-    return visible.reduce<Chat | null>(
-      (latest, chat) => (!latest || chat.updated_at > latest.updated_at ? chat : latest),
-      null,
-    );
+    return [...visible].sort(compareChatsByRecency)[0] ?? null;
   }
 
   goHome(): void {

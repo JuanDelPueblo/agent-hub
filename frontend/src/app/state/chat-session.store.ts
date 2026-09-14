@@ -19,6 +19,14 @@ type BooleanMap = Record<string, boolean>;
 type ErrorMap = Record<string, string>;
 type CursorMap = Record<string, number | null>;
 
+export function compareChatsByRecency(left: Chat, right: Chat): number {
+  const leftTime = Date.parse(left.updated_at);
+  const rightTime = Date.parse(right.updated_at);
+  const validLeft = Number.isFinite(leftTime) ? leftTime : Number.NEGATIVE_INFINITY;
+  const validRight = Number.isFinite(rightTime) ? rightTime : Number.NEGATIVE_INFINITY;
+  return validRight - validLeft || right.id.localeCompare(left.id);
+}
+
 /** Owns chat collections, ACP session state, configuration, and event reduction. */
 @Service()
 export class ChatSessionStore {
@@ -52,7 +60,10 @@ export class ChatSessionStore {
       this.setSetValue(this.loadingChats, projectId, true);
       try {
         const chats = await this.api.fetchChats(projectId);
-        this.chatsByProject.update((current) => ({ ...current, [projectId]: chats }));
+        this.chatsByProject.update((current) => ({
+          ...current,
+          [projectId]: [...chats].sort(compareChatsByRecency),
+        }));
       } catch (error) {
         console.error('Failed to load chats for project', projectId, error);
       } finally {
@@ -254,7 +265,7 @@ export class ChatSessionStore {
     const created = await this.api.createChat(projectId, agent, title, workspace);
     this.chatsByProject.update((current) => ({
       ...current,
-      [projectId]: [...(current[projectId] ?? []), created],
+      [projectId]: [...(current[projectId] ?? []), created].sort(compareChatsByRecency),
     }));
     return created;
   }
@@ -285,6 +296,10 @@ export class ChatSessionStore {
     reducers[sessionId] = reducer;
     this.reducersByChat.set(reducers);
 
+    if (payload.type === 'user_message') {
+      this.applyChatActivity(sessionId, event.timestamp);
+    }
+
     if (payload.type === 'state_change') {
       const process = this.processState(payload.process);
       const turn = this.turnState(payload.turn);
@@ -311,6 +326,10 @@ export class ChatSessionStore {
     });
   }
 
+  chatTurnStartedAt(chatId: string): string | null {
+    return this.reducersByChat()[chatId]?.turnStartedAt() ?? null;
+  }
+
   private setConfig(chatId: string, options: ConfigOption[]): void {
     this.configOptionsByChat.update((current) => ({ ...current, [chatId]: options }));
     this.configLoadedByChat.update((current) => ({ ...current, [chatId]: true }));
@@ -320,7 +339,28 @@ export class ChatSessionStore {
     this.chatsByProject.update((current) => {
       const next = { ...current };
       for (const [projectId, chats] of Object.entries(next)) {
-        next[projectId] = chats.map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat));
+        next[projectId] = chats
+          .map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat))
+          .sort(compareChatsByRecency);
+      }
+      return next;
+    });
+  }
+
+  private applyChatActivity(chatId: string, updatedAt: string): void {
+    this.chatsByProject.update((current) => {
+      const next = { ...current };
+      for (const [projectId, chats] of Object.entries(next)) {
+        next[projectId] = chats
+          .map((chat) => {
+            if (chat.id !== chatId) return chat;
+            const currentTime = Date.parse(chat.updated_at);
+            const activityTime = Date.parse(updatedAt);
+            return !Number.isFinite(currentTime) || activityTime >= currentTime
+              ? { ...chat, updated_at: updatedAt }
+              : chat;
+          })
+          .sort(compareChatsByRecency);
       }
       return next;
     });

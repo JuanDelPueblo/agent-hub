@@ -172,6 +172,42 @@ async fn full_chat_lifecycle_without_http() {
 }
 
 #[tokio::test]
+async fn prompt_admission_updates_chat_activity_at_user_event_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+    let before = chat.chat.updated_at.clone();
+    let mut events = sessions.event_log().subscribe();
+
+    service
+        .prompt_chat(&chat.chat.id, "activity timestamp".into())
+        .await
+        .unwrap();
+
+    let user_event = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.session_id == chat.chat.id
+            && matches!(event.payload, EventPayload::UserMessage { .. })
+        {
+            break event;
+        }
+    };
+    let updated = service.get_chat(&chat.chat.id).await.unwrap();
+    assert_ne!(updated.chat.updated_at, before);
+    assert_eq!(updated.chat.updated_at, user_event.timestamp.to_rfc3339());
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn failed_turn_emits_error_then_exactly_one_completion() {
     let tmp = tempfile::tempdir().unwrap();
     let (hub, sessions) = hub(tmp.path());

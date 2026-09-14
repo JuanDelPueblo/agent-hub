@@ -4,6 +4,7 @@ import { EventReducer } from './event-reducer';
 import {
   chatActivityLabel,
   deriveChatActivity,
+  formatElapsed,
 } from './chat-activity';
 
 function ingestAll(reducer: EventReducer, types: Array<{ type: string; extra?: Record<string, unknown> }>): void {
@@ -40,6 +41,9 @@ describe('deriveChatActivity', () => {
     expect(deriveChatActivity({ turnState: 'PROMPTING', items: [] })).toBe('working');
     expect(deriveChatActivity({ turnState: 'CANCELLING', items: [] })).toBe('working');
     expect(chatActivityLabel('working')).toBe('Working…');
+    expect(chatActivityLabel('working', '2026-09-13T11:58:36Z', Date.parse('2026-09-13T12:00:00Z')))
+      .toBe('Working… 1m 24s');
+    expect(formatElapsed(3_661_000)).toBe('1h 1m 1s');
   });
 
   it('prefers Waiting for you over Working for an unresolved permission', () => {

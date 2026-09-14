@@ -89,4 +89,29 @@ describe('EventReducer', () => {
       entries: [{ type: 'message_chunk', text: 'replyreply' }],
     });
   });
+
+  it('reconstructs the active turn start from replayed state and user events', () => {
+    const reducer = new EventReducer();
+    reducer.ingest({
+      ...event(4, 'message_chunk', { text: 'reply' }),
+      timestamp: '2026-09-13T12:01:00Z',
+    });
+    reducer.ingest({
+      ...event(5, 'state_change', { process: 'RUNNING', turn: 'PROMPTING' }),
+      timestamp: '2026-09-13T12:00:05Z',
+    });
+    expect(reducer.turnStartedAt()).toBe('2026-09-13T12:00:05Z');
+
+    reducer.ingest({
+      ...event(1, 'user_message', { text: 'question' }),
+      timestamp: '2026-09-13T12:00:00Z',
+    });
+    expect(reducer.turnStartedAt()).toBe('2026-09-13T12:00:00Z');
+
+    reducer.ingest({
+      ...event(6, 'turn_complete', { stop_reason: 'end_turn' }),
+      timestamp: '2026-09-13T12:01:10Z',
+    });
+    expect(reducer.turnStartedAt()).toBeNull();
+  });
 });

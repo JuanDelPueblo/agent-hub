@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { ChatHeaderComponent } from './chat-header';
 import { AppStateService } from '../../state/app-state.service';
 import type { Chat } from '../../core/api/types';
@@ -38,7 +38,8 @@ describe('ChatHeaderComponent', () => {
             stopChatProcess: async () => undefined,
             retryConnection: async () => undefined,
             archiveChat: async () => undefined,
-            chatActivity: () => activitySignal(),
+          chatActivity: () => activitySignal(),
+          chatTurnStartedAt: () => null,
           },
         },
       ],
@@ -60,6 +61,15 @@ describe('ChatHeaderComponent', () => {
     const titleBtn = fixture.nativeElement.querySelector('.title-button');
     expect(titleBtn).toBeTruthy();
     expect(titleBtn.textContent).toContain('Review the WebSocket replay path');
+  });
+
+  it('renders persisted created and last-updated local date/time values', () => {
+    const timestamps = fixture.nativeElement.querySelector('.chat-timestamps') as HTMLElement;
+    expect(timestamps.textContent).toContain('Created');
+    expect(timestamps.textContent).toContain('Last updated');
+    expect(timestamps.querySelectorAll('time')).toHaveLength(2);
+    expect(timestamps.querySelector('time')?.getAttribute('datetime')).toBe(mockChat.created_at);
+    expect(timestamps.querySelectorAll('time')[1].getAttribute('datetime')).toBe(mockChat.updated_at);
   });
 
   it('does not render process controls or status labels', () => {
@@ -117,5 +127,43 @@ describe('ChatHeaderComponent', () => {
     } });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.workspace-badge')).toBeNull();
+  });
+});
+
+describe('ChatHeaderComponent working duration', () => {
+  let fixture: ComponentFixture<ChatHeaderComponent>;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-13T12:00:00Z') });
+    await TestBed.configureTestingModule({
+      imports: [ChatHeaderComponent],
+      providers: [{
+        provide: AppStateService,
+        useValue: {
+          isMobileDrawerOpen: () => false,
+          setMobileDrawerOpen: () => undefined,
+          chatActivity: () => 'working',
+          chatTurnStartedAt: () => '2026-09-13T11:58:36Z',
+          archiveChat: async () => undefined,
+        },
+      }],
+    }).compileComponents();
+    fixture = TestBed.createComponent(ChatHeaderComponent);
+    fixture.componentRef.setInput('chat', {
+      id: 'chat-1', project_id: 'proj-1', agent: 'codex', title: 'Active work',
+      created_at: '2026-09-13T11:00:00Z', updated_at: '2026-09-13T12:00:00Z',
+      archived: false, permission_policy: 'ask', config_values: {}, turn_state: 'PROMPTING',
+    });
+    fixture.detectChanges();
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('shows and advances the working duration in the active header', () => {
+    expect(fixture.nativeElement.querySelector('.chat-status').textContent.trim()).toBe('Working… 1m 24s');
+    vi.advanceTimersByTime(1000);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.chat-status').textContent.trim()).toBe('Working… 1m 25s');
+    expect(fixture.nativeElement.querySelector('.chat-status').getAttribute('aria-label')).toBe('Working… 1m 25s');
   });
 });

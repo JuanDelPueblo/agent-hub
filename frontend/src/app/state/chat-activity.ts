@@ -10,8 +10,33 @@ export const CHAT_ACTIVITY_LABELS: Record<ChatActivity, string> = {
   error: 'Error',
 };
 
-export function chatActivityLabel(activity: ChatActivity): string {
-  return CHAT_ACTIVITY_LABELS[activity];
+export function chatActivityLabel(
+  activity: ChatActivity,
+  turnStartedAt?: string | null,
+  now = Date.now(),
+): string {
+  if (activity !== 'working' || !turnStartedAt) return CHAT_ACTIVITY_LABELS[activity];
+  const started = Date.parse(turnStartedAt);
+  if (!Number.isFinite(started)) return CHAT_ACTIVITY_LABELS[activity];
+  return `${CHAT_ACTIVITY_LABELS[activity]} ${formatElapsed(now - started)}`;
+}
+
+export function formatElapsed(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+export function formatLocalDateTime(value: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? ''
+    : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export interface ChatActivityInput {

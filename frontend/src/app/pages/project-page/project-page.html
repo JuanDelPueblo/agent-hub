@@ -55,7 +55,7 @@
             >
               <div class="chat-top">
                 <span class="agent-badge">{{ agentLabel(chat.agent) }}</span>
-                <hub-chat-status-badge [status]="activityFor(chat)" />
+                <hub-chat-status-badge [status]="activityFor(chat)" [turnStartedAt]="state.chatTurnStartedAt(chat.id)" />
                 @if (chat.archived) { <span class="archived-tag">Archived</span> }
               </div>
               <h3 class="chat-title">{{ chat.title || 'Untitled chat' }}</h3>

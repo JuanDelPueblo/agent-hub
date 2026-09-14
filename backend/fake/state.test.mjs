@@ -112,6 +112,28 @@ describe('fake backend seed history', () => {
     });
   });
 
+  it('sorts chat collections by activity newest first with a deterministic tie-breaker', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const older = state.createChat(projectId, 'codex', 'Older');
+    const newer = state.createChat(projectId, 'codex', 'Newer');
+    state.touchChatActivity(older.id, '2026-01-01T00:00:00.000Z');
+    state.touchChatActivity(newer.id, '2026-02-01T00:00:00.000Z');
+    assert.deepEqual(
+      state.listChats(projectId).slice(-2).map((chat) => chat.id),
+      [newer.id, older.id],
+    );
+  });
+
+  it('records prompt activity at the durable user-message timestamp', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const chat = state.createChat(projectId, 'codex', 'Prompt activity');
+    const event = state.emit(chat.id, chat.agent, { type: 'user_message', text: 'Hello' });
+    state.touchChatActivity(chat.id, event.timestamp);
+    assert.equal(chat.updated_at, event.timestamp);
+  });
+
   it('seeds representative managed and direct workspace summaries without paths', () => {
     const state = new FakeState();
     const gitProject = [...state.projects.values()].find((project) => project.name === 'agent-hub');

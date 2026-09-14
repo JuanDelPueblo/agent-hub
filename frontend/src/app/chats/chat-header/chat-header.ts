@@ -10,6 +10,7 @@ import type { ChatActivity } from '../../state/chat-activity';
 import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { DeleteChatDialogComponent } from '../delete-chat-dialog/delete-chat-dialog';
 import { RenameChatDialogComponent } from '../rename-chat-dialog/rename-chat-dialog';
+import { formatLocalDateTime } from '../../state/chat-activity';
 
 @Component({
   selector: 'hub-chat-header',
@@ -26,6 +27,10 @@ export class ChatHeaderComponent {
     if (!chat) return 'idle';
     return this.state.chatActivity(chat.id);
   });
+  readonly turnStartedAt = computed(() => {
+    const chat = this.chat();
+    return chat ? this.state.chatTurnStartedAt(chat.id) : null;
+  });
   agentLabel(agent: string | null | undefined): string {
     const value = agent ?? '';
     if (!value) return value;
@@ -34,6 +39,7 @@ export class ChatHeaderComponent {
   workspaceTooltip(workspace: NonNullable<Chat['workspace']>): string {
     return `${workspace.branch ?? ''} — ${workspace.mode === 'managed_worktree' ? 'Isolated worktree' : 'Project checkout'}`;
   }
+  formatDateTime(value: string): string { return formatLocalDateTime(value); }
   private readonly dialog = inject(MatDialog);
   toggleNavigation(): void { this.state.setMobileDrawerOpen(!this.state.isMobileDrawerOpen()); }
   rename(): void { const chat = this.chat(); if (chat) this.dialog.open(RenameChatDialogComponent, { width: 'min(480px, calc(100vw - 32px))', data: chat }); }

@@ -188,6 +188,16 @@ impl EventLog {
         agent: &str,
         payload: EventPayload,
     ) -> anyhow::Result<u64> {
+        self.append_at(session_id, agent, payload, chrono::Utc::now())
+    }
+
+    pub fn append_at(
+        &self,
+        session_id: &str,
+        agent: &str,
+        payload: EventPayload,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<u64> {
         // Sequence allocation, persistence and publication share ordering.
         let mut events = self.events.write().unwrap();
         if let Some(error) = self.persistence_error.lock().unwrap().as_ref() {
@@ -196,7 +206,7 @@ impl EventLog {
         let seq = self.next_seq.load(Ordering::SeqCst);
         let event = SessionEvent {
             seq,
-            timestamp: chrono::Utc::now(),
+            timestamp,
             session_id: session_id.to_string(),
             agent: agent.to_string(),
             payload,

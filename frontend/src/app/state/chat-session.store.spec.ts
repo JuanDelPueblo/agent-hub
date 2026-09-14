@@ -157,6 +157,30 @@ describe('ChatSessionStore', () => {
     expect(store.reducersByChat()['chat-1'].items().map((item) => item.type)).toEqual(['user_message', 'user_message']);
   });
 
+  it('preserves the active turn start across reload replay and older history pages', async () => {
+    store.chatsByProject.set({ 'project-1': [{ ...chat, turn_state: 'PROMPTING' }] });
+    api.fetchChatHistory
+      .mockResolvedValueOnce({
+        events: [
+          { seq: 2, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:05Z', payload: { type: 'state_change', process: 'RUNNING', turn: 'PROMPTING' } },
+          { seq: 3, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:10Z', payload: { type: 'message_chunk', text: 'Working' } },
+        ],
+        next_cursor: 2,
+        has_older: true,
+      })
+      .mockResolvedValueOnce({
+        events: [{ seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:00Z', payload: { type: 'user_message', text: 'Prompt' } }],
+        next_cursor: null,
+        has_older: false,
+      });
+
+    await store.loadChatHistory('chat-1');
+    expect(store.chatTurnStartedAt('chat-1')).toBe('2026-01-01T00:00:05Z');
+    await store.loadOlderHistory('chat-1');
+    expect(store.chatTurnStartedAt('chat-1')).toBe('2026-01-01T00:00:00Z');
+    expect(store.chatActivity('chat-1')).toBe('working');
+  });
+
   it('treats process state as diagnostic only and allows sending prompts while stopped', async () => {
     const stoppedChat: Chat = { ...chat, process_state: 'STOPPED', turn_state: 'IDLE' };
     store.chatsByProject.set({ 'project-1': [stoppedChat] });
@@ -196,6 +220,23 @@ describe('ChatSessionStore', () => {
       process_state: 'RUNNING',
       turn_state: 'PROMPTING',
     });
+  });
+
+  it('moves a chat to the newest position when a live user message arrives', () => {
+    const older = { ...chat, id: 'chat-older', updated_at: '2026-01-01T00:00:00Z' };
+    const newer = { ...chat, id: 'chat-newer', updated_at: '2026-01-02T00:00:00Z' };
+    store.chatsByProject.set({ 'project-1': [newer, older] });
+    store.handleIncomingEvent({
+      seq: 1,
+      session_id: 'chat-older',
+      agent: 'codex',
+      timestamp: '2026-01-03T00:00:00Z',
+      payload: { type: 'user_message', text: 'Make this chat recent' },
+    });
+
+    expect(store.chatsByProject()['project-1'].map((candidate) => candidate.id))
+      .toEqual(['chat-older', 'chat-newer']);
+    expect(store.findChat('chat-older')?.updated_at).toBe('2026-01-03T00:00:00Z');
   });
 
   it('patches process state without adding a visible transcript item', () => {

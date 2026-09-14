@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { NavigationComponent } from './navigation';
 import { AppStateService } from '../../state/app-state.service';
 import { ThemeService } from '../../core/theme.service';
@@ -23,6 +23,7 @@ describe('NavigationComponent DOM check', () => {
             project_id: 'proj-1',
             agent: 'claude',
             title: 'Review the WebSocket replay path',
+            updated_at: '2026-09-13T12:03:00Z',
             process_state: 'RUNNING',
             turn_state: 'IDLE',
             archived: false,
@@ -32,6 +33,7 @@ describe('NavigationComponent DOM check', () => {
             project_id: 'proj-1',
             agent: 'codex',
             title: 'Draft the migration plan',
+            updated_at: '2026-09-13T12:02:00Z',
             process_state: 'STOPPED',
             turn_state: 'IDLE',
             archived: false,
@@ -41,6 +43,7 @@ describe('NavigationComponent DOM check', () => {
             project_id: 'proj-1',
             agent: 'opencode',
             title: 'Summarize the router guard',
+            updated_at: '2026-09-13T12:01:00Z',
             process_state: 'DEAD',
             turn_state: 'IDLE',
             archived: false,
@@ -54,6 +57,7 @@ describe('NavigationComponent DOM check', () => {
       wsError: signal(''),
       chatActivity: (chatId: string) =>
         chatId === 'chat-1' ? 'working' : chatId === 'chat-2' ? 'waiting' : 'error',
+      chatTurnStartedAt: () => null,
     };
 
     await TestBed.configureTestingModule({
@@ -161,6 +165,7 @@ describe('NavigationComponent project switching', () => {
       wsError: signal(''),
       loadChats: vi.fn(async () => {}),
       chatActivity: () => 'idle',
+      chatTurnStartedAt: () => null,
     };
   }
 
@@ -229,5 +234,53 @@ describe('NavigationComponent project switching', () => {
     await fixture.whenStable();
 
     expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('NavigationComponent working duration', () => {
+  let fixture: ComponentFixture<NavigationComponent>;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-13T12:00:00Z') });
+    const chat = {
+      id: 'chat-working', project_id: 'proj-1', agent: 'codex', title: 'Active work',
+      created_at: '2026-09-13T11:00:00Z', updated_at: '2026-09-13T12:00:00Z',
+      archived: false, permission_policy: 'ask', config_values: {}, turn_state: 'PROMPTING',
+    };
+    const state = {
+      activeProjectId: signal('proj-1'),
+      activeProject: signal({ id: 'proj-1', name: 'Agent Hub', path: '/work' }),
+      projects: signal([]),
+      chatsByProject: signal({ 'proj-1': [chat] }),
+      showArchived: signal(false),
+      activeChatId: signal('chat-working'),
+      isMobileDrawerOpen: signal(false),
+      wsStatus: signal('connected'),
+      wsError: signal(''),
+      chatActivity: () => 'working',
+      chatTurnStartedAt: () => '2026-09-13T11:58:36Z',
+    };
+    await TestBed.configureTestingModule({
+      imports: [NavigationComponent],
+      providers: [
+        { provide: AppStateService, useValue: state },
+        { provide: ThemeService, useValue: { label: () => 'Dark', cycle: () => {}, icon: () => 'dark_mode' } },
+        provideRouter([]),
+        { provide: MatDialog, useValue: { open: () => {} } },
+      ],
+    }).compileComponents();
+    fixture = TestBed.createComponent(NavigationComponent);
+    fixture.detectChanges();
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('shows and advances the working duration in the sidebar status', () => {
+    expect(fixture.nativeElement.querySelector('.chat-status').textContent.trim()).toBe('Working… 1m 24s');
+    vi.advanceTimersByTime(1000);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.chat-status').textContent.trim()).toBe('Working… 1m 25s');
+    expect(fixture.nativeElement.querySelector('a[mat-list-item]').getAttribute('aria-label'))
+      .toContain('Working… 1m 25s');
   });
 });
