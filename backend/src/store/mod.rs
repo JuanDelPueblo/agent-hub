@@ -16,6 +16,7 @@ pub use projects::Project;
 pub use validation::{validate_name, validate_project_path};
 pub use workspaces::{ChatWorkspace, WorkspaceMode};
 
+use crate::config::{PathOverrides, PuebloPaths};
 use rusqlite::{Connection, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
@@ -70,31 +71,34 @@ impl From<anyhow::Error> for StoreError {
 pub struct Store {
     conn: Mutex<Connection>,
     state_dir: PathBuf,
-}
-
-/// Resolve the directory that holds Hub state for a database path.
-///
-/// The managed-worktree root lives directly below it. Relative database
-/// paths resolve against the current working directory so the root stays
-/// deterministic no matter when the caller asks for it.
-pub(crate) fn state_dir_for_database(path: &Path) -> PathBuf {
-    if path.as_os_str() == ":memory:" {
-        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    }
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    };
-    absolute.parent().map(Path::to_path_buf).unwrap_or(absolute)
+    managed_worktrees: PathBuf,
 }
 
 impl Store {
     pub fn open(path: &Path) -> StoreResult<Self> {
-        let state_dir = state_dir_for_database(path);
-        let mut db = Connection::open(path)?;
+        let paths = PuebloPaths::from_overrides(PathOverrides {
+            database: Some(path.to_path_buf()),
+            ..Default::default()
+        });
+        Self::open_with_paths(&paths)
+    }
+
+    pub fn open_with_paths(paths: &PuebloPaths) -> StoreResult<Self> {
+        if paths.database.as_os_str() != ":memory:" {
+            if let Some(parent) = paths
+                .database
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    StoreError::Internal(anyhow::anyhow!(
+                        "cannot create database directory {}: {error}",
+                        parent.display()
+                    ))
+                })?;
+            }
+        }
+        let mut db = Connection::open(&paths.database)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         migrations::check_version(&db)?;
         // Both pragmas must run outside a transaction. SQLite rejects
@@ -103,7 +107,8 @@ impl Store {
         migrations::migrate(&mut db)?;
         Ok(Self {
             conn: Mutex::new(db),
-            state_dir,
+            state_dir: paths.state_dir.clone(),
+            managed_worktrees: paths.managed_worktrees.clone(),
         })
     }
 
@@ -116,7 +121,7 @@ impl Store {
     /// `<database parent>/worktrees`. The directory is resolved, never
     /// created here; worktree creation stays outside `Store`.
     pub fn worktrees_dir(&self) -> PathBuf {
-        self.state_dir.join("worktrees")
+        self.managed_worktrees.clone()
     }
 
     /// Alias for the managed-worktree root. Same value as `worktrees_dir`.
@@ -503,15 +508,45 @@ mod tests {
     }
 
     #[test]
+    fn configured_worktrees_are_used_by_the_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = PuebloPaths::from_overrides(PathOverrides {
+            database: Some(tmp.path().join("hub.db")),
+            managed_worktrees: Some(tmp.path().join("managed")),
+            ..Default::default()
+        });
+        let db = Store::open_with_paths(&paths).unwrap();
+        assert_eq!(db.worktrees_dir(), tmp.path().join("managed"));
+    }
+
+    #[test]
+    fn open_with_paths_creates_only_missing_database_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let database_parent = tmp.path().join("new").join("nested");
+        let paths = PuebloPaths::from_overrides(PathOverrides {
+            database: Some(database_parent.join("hub.db")),
+            ..Default::default()
+        });
+
+        assert!(!database_parent.exists());
+        let store = Store::open_with_paths(&paths).unwrap();
+        assert!(database_parent.is_dir());
+        assert!(paths.database.is_file());
+        assert!(!tmp.path().join("config").exists());
+        assert!(!tmp.path().join("logs").exists());
+        assert_eq!(store.worktrees_dir(), database_parent.join("worktrees"));
+    }
+
+    #[test]
     fn relative_database_paths_resolve_under_cwd() {
         let cwd = std::env::current_dir().unwrap();
-        let resolved = state_dir_for_database(Path::new("hub.db"));
+        let resolved = PuebloPaths::state_dir_for_database(Path::new("hub.db"));
         assert_eq!(resolved, cwd);
-        let resolved = state_dir_for_database(Path::new("data/hub.db"));
+        let resolved = PuebloPaths::state_dir_for_database(Path::new("data/hub.db"));
         assert_eq!(resolved, cwd.join("data"));
         let absolute = std::path::PathBuf::from("/var/lib/pueblo-hub/hub.db");
         assert_eq!(
-            state_dir_for_database(&absolute),
+            PuebloPaths::state_dir_for_database(&absolute),
             std::path::PathBuf::from("/var/lib/pueblo-hub")
         );
     }

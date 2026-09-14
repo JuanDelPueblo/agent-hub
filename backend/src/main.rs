@@ -1,6 +1,10 @@
 use clap::Parser;
 use pueblo_hub::{
-    agents::parse_agents, config::Config, events::EventLog, session::SessionManager, store::Store,
+    agents::parse_agents,
+    config::{Config, PathOverrides, PuebloPaths},
+    events::EventLog,
+    session::SessionManager,
+    store::Store,
     web::WebServer,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -9,11 +13,23 @@ use std::{path::PathBuf, sync::Arc};
 #[command(about = "Persistent single-owner ACP project/chat supervisor", version)]
 struct Args {
     #[arg(long, env = "PUEBLO_HUB_DATABASE")]
-    database: PathBuf,
+    database: Option<PathBuf>,
+    #[arg(long, env = "PUEBLO_HUB_DATA_DIR")]
+    data_dir: Option<PathBuf>,
+    #[arg(long, env = "PUEBLO_HUB_CONFIG_DIR")]
+    config_dir: Option<PathBuf>,
+    #[arg(long, env = "PUEBLO_HUB_STATE_DIR")]
+    state_dir: Option<PathBuf>,
+    #[arg(long, env = "PUEBLO_HUB_LOG_DIR")]
+    log_dir: Option<PathBuf>,
+    #[arg(long, env = "PUEBLO_HUB_WORKTREES_DIR")]
+    worktrees_dir: Option<PathBuf>,
     #[arg(long, env = "PUEBLO_HUB_AGENTS_FILE")]
     agents_file: Option<PathBuf>,
     #[arg(long, default_value_t = 8765, env = "PUEBLO_HUB_PORT")]
     port: u16,
+    #[arg(long, default_value = "127.0.0.1", env = "PUEBLO_HUB_HOST")]
+    host: String,
     #[arg(long, env = "PUEBLO_HUB_PUBLIC_ORIGIN")]
     public_origin: Option<String>,
     /// Optional inactivity watchdog for prompts. Unset means no silence timeout.
@@ -34,10 +50,22 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let args = Args::parse();
-    let store = Arc::new(Store::open(&args.database)?);
+    let paths = PuebloPaths::from_overrides(PathOverrides {
+        database: args.database,
+        data_dir: args.data_dir,
+        config_dir: args.config_dir,
+        state_dir: args.state_dir,
+        log_dir: args.log_dir,
+        managed_worktrees: args.worktrees_dir,
+    });
+    let store = Arc::new(Store::open_with_paths(&paths)?);
     let events = Arc::new(EventLog::persistent(store.clone())?);
-    let mut config = Config::default();
+    let mut config = Config {
+        paths,
+        ..Config::default()
+    };
     config.server.port = args.port;
+    config.server.host = args.host;
     config.web.public_origin = args.public_origin;
     config.web.project_roots = args.project_root;
     config.timeouts.prompt = args.prompt_timeout;
