@@ -948,6 +948,35 @@ async fn authorize_chat_environment_security_and_path_validation() {
         .unwrap_err();
     assert!(matches!(err_archived, ServiceError::Invalid(_)));
 
+    // 3. Project without .envrc refuses to authorize ancestor .envrc above workspace boundary
+    let root = tmp.path().join("boundary_test_root");
+    let project_dir = root.join("subproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(root.join(".envrc"), "export ANCESTOR_INTRUSION=1\n").unwrap();
+
+    let project2 = hub
+        .create_project("boundary_proj".into(), project_dir.display().to_string())
+        .unwrap();
+    let chat2 = hub.create_chat(&project2.id, "codex", None).await.unwrap();
+
+    let err_boundary = hub
+        .authorize_chat_environment(&chat2.chat.id)
+        .await
+        .unwrap_err();
+    match err_boundary {
+        ServiceError::Invalid(msg) => {
+            assert!(
+                msg.contains("No .envrc found within validated workspace boundary"),
+                "expected boundary escape message, got: {}",
+                msg
+            );
+        }
+        other => panic!(
+            "expected ServiceError::Invalid with boundary error, got: {:?}",
+            other
+        ),
+    }
+
     sessions.shutdown_all().await;
 }
 

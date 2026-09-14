@@ -432,6 +432,7 @@ impl CallbackHandler {
             kill_rx,
             drain_handles,
             self.event_log.clone(),
+            self.task_tracker.clone(),
         ));
         let _ = self
             .event_log
@@ -575,6 +576,7 @@ async fn supervise_terminal(
     mut kill_rx: oneshot::Receiver<()>,
     drain_handles: Vec<tokio::task::JoinHandle<()>>,
     event_log: Arc<crate::events::EventLog>,
+    task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
 ) {
     let status = loop {
         tokio::select! {
@@ -598,6 +600,7 @@ async fn supervise_terminal(
     }
 
     task.record_exit(status).await;
+    task_tracker.prune_chat_tasks(&task.chat_id).await;
     let _ = event_log.append("", "", EventPayload::MetadataChanged {});
 }
 

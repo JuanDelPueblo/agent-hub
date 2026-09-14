@@ -490,7 +490,11 @@ impl HubService {
         .await
         .map_err(|e| ServiceError::Internal(e.into()))??;
 
-        crate::workspace_env::direnv_allow(session.cwd()).await?;
+        let boundary = session.workspace_boundary().to_path_buf();
+        crate::workspace_env::direnv_allow(session.cwd(), &boundary).await?;
+        session.invalidate_cached_env().await;
+        let new_env = crate::workspace_env::resolve_workspace_env(session.cwd(), &boundary).await?;
+        session.set_cached_env(new_env).await;
         self.resume_chat(chat_id).await
     }
 

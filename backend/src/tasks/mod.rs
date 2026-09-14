@@ -198,10 +198,15 @@ impl ManagedTask {
     }
 }
 
+#[derive(Default)]
+struct TrackerInner {
+    tasks_by_chat: HashMap<String, VecDeque<Arc<ManagedTask>>>,
+    tasks_by_id: HashMap<String, Arc<ManagedTask>>,
+}
+
 pub struct TerminalTaskTracker {
     max_tasks_per_chat: usize,
-    tasks_by_chat: RwLock<HashMap<String, VecDeque<Arc<ManagedTask>>>>,
-    tasks_by_id: RwLock<HashMap<String, Arc<ManagedTask>>>,
+    inner: RwLock<TrackerInner>,
 }
 
 impl Default for TerminalTaskTracker {
@@ -214,50 +219,80 @@ impl TerminalTaskTracker {
     pub fn new(max_tasks_per_chat: usize) -> Self {
         Self {
             max_tasks_per_chat,
-            tasks_by_chat: RwLock::new(HashMap::new()),
-            tasks_by_id: RwLock::new(HashMap::new()),
+            inner: RwLock::new(TrackerInner::default()),
         }
     }
 
     pub async fn register_task(&self, task: Arc<ManagedTask>) {
-        let mut by_id = self.tasks_by_id.write().await;
-        let mut by_chat = self.tasks_by_chat.write().await;
+        {
+            let mut inner = self.inner.write().await;
+            inner.tasks_by_id.insert(task.id.clone(), task.clone());
+            inner
+                .tasks_by_chat
+                .entry(task.chat_id.clone())
+                .or_default()
+                .push_back(task.clone());
+        }
+        self.prune_chat_tasks(&task.chat_id).await;
+    }
 
-        by_id.insert(task.id.clone(), task.clone());
-        let chat_queue = by_chat.entry(task.chat_id.clone()).or_default();
-        chat_queue.push_back(task.clone());
+    pub async fn prune_chat_tasks(&self, chat_id: &str) {
+        let candidates = {
+            let inner = self.inner.read().await;
+            match inner.tasks_by_chat.get(chat_id) {
+                Some(queue) if queue.len() > self.max_tasks_per_chat => {
+                    queue.iter().cloned().collect::<Vec<_>>()
+                }
+                _ => return,
+            }
+        };
 
-        // Bounded retention: prune oldest non-running task if queue exceeds limit
-        while chat_queue.len() > self.max_tasks_per_chat {
-            let mut removed_index = None;
-            for (idx, candidate) in chat_queue.iter().enumerate() {
-                let state = *candidate.state.read().await;
-                if state != TaskState::Running {
-                    removed_index = Some(idx);
+        let mut completed_task_ids = Vec::new();
+        for candidate in &candidates {
+            let state = *candidate.state.read().await;
+            if state != TaskState::Running {
+                completed_task_ids.push(candidate.id.clone());
+            }
+        }
+
+        if completed_task_ids.is_empty() {
+            return;
+        }
+
+        let mut inner = self.inner.write().await;
+        let TrackerInner {
+            tasks_by_chat,
+            tasks_by_id,
+        } = &mut *inner;
+        if let Some(queue) = tasks_by_chat.get_mut(chat_id) {
+            let mut to_remove = queue.len().saturating_sub(self.max_tasks_per_chat);
+            for task_id in completed_task_ids {
+                if to_remove == 0 {
                     break;
                 }
-            }
-            if let Some(idx) = removed_index {
-                if let Some(removed) = chat_queue.remove(idx) {
-                    by_id.remove(&removed.id);
+                if let Some(pos) = queue.iter().position(|t| t.id == task_id) {
+                    queue.remove(pos);
+                    tasks_by_id.remove(&task_id);
+                    to_remove -= 1;
                 }
-            } else {
-                break;
             }
         }
     }
 
     pub async fn get_task(&self, task_id: &str) -> Option<Arc<ManagedTask>> {
-        self.tasks_by_id.read().await.get(task_id).cloned()
+        self.inner.read().await.tasks_by_id.get(task_id).cloned()
     }
 
     pub async fn list_chat_tasks(&self, chat_id: &str) -> Vec<TerminalTaskSummary> {
-        let by_chat = self.tasks_by_chat.read().await;
-        let Some(tasks) = by_chat.get(chat_id) else {
+        let tasks = {
+            let inner = self.inner.read().await;
+            inner.tasks_by_chat.get(chat_id).cloned()
+        };
+        let Some(tasks) = tasks else {
             return Vec::new();
         };
 
-        let mut summaries = Vec::new();
+        let mut summaries = Vec::with_capacity(tasks.len());
         for task in tasks.iter().rev() {
             summaries.push(task.summary().await);
         }
@@ -265,13 +300,16 @@ impl TerminalTaskTracker {
     }
 
     pub async fn active_task_count(&self, chat_id: &str) -> usize {
-        let by_chat = self.tasks_by_chat.read().await;
-        let Some(tasks) = by_chat.get(chat_id) else {
+        let tasks = {
+            let inner = self.inner.read().await;
+            inner.tasks_by_chat.get(chat_id).cloned()
+        };
+        let Some(tasks) = tasks else {
             return 0;
         };
 
         let mut count = 0;
-        for task in tasks.iter() {
+        for task in &tasks {
             if *task.state.read().await == TaskState::Running {
                 count += 1;
             }
@@ -280,21 +318,22 @@ impl TerminalTaskTracker {
     }
 
     pub async fn stop_chat_tasks(&self, chat_id: &str) {
-        let by_chat = self.tasks_by_chat.read().await;
-        let Some(tasks) = by_chat.get(chat_id) else {
-            return;
+        let tasks = {
+            let inner = self.inner.read().await;
+            inner.tasks_by_chat.get(chat_id).cloned()
         };
-        for task in tasks.iter() {
-            task.stop();
+        if let Some(tasks) = tasks {
+            for task in tasks {
+                task.stop();
+            }
         }
     }
 
     pub async fn forget_chat(&self, chat_id: &str) {
-        let mut by_chat = self.tasks_by_chat.write().await;
-        let mut by_id = self.tasks_by_id.write().await;
-        if let Some(tasks) = by_chat.remove(chat_id) {
+        let mut inner = self.inner.write().await;
+        if let Some(tasks) = inner.tasks_by_chat.remove(chat_id) {
             for task in tasks {
-                by_id.remove(&task.id);
+                inner.tasks_by_id.remove(&task.id);
             }
         }
     }
@@ -372,5 +411,77 @@ mod tests {
         assert!(tracker.get_task("t1").await.is_none());
         assert_eq!(tracker.list_chat_tasks("c2").await.len(), 1);
         assert!(tracker.get_task("t2").await.is_some());
+    }
+    #[tokio::test]
+    async fn test_prune_on_task_completion_without_discarding_running_tasks() {
+        let tracker = Arc::new(TerminalTaskTracker::new(2));
+        let t1 = Arc::new(ManagedTask::new(
+            "t1".into(),
+            "c1".into(),
+            "echo 1".into(),
+            PathBuf::from("/tmp"),
+            None,
+        ));
+        let t2 = Arc::new(ManagedTask::new(
+            "t2".into(),
+            "c1".into(),
+            "echo 2".into(),
+            PathBuf::from("/tmp"),
+            None,
+        ));
+        let t3 = Arc::new(ManagedTask::new(
+            "t3".into(),
+            "c1".into(),
+            "echo 3".into(),
+            PathBuf::from("/tmp"),
+            None,
+        ));
+
+        tracker.register_task(t1.clone()).await;
+        tracker.register_task(t2.clone()).await;
+        tracker.register_task(t3.clone()).await;
+
+        // All 3 are running, so none should be pruned even though max is 2
+        assert_eq!(tracker.list_chat_tasks("c1").await.len(), 3);
+
+        // t1 completes -> triggers pruning on task completion
+        t1.record_exit(Ok(std::process::ExitStatus::default()))
+            .await;
+        tracker.prune_chat_tasks("c1").await;
+
+        // Now t1 should be pruned, queue length drops to 2 (t2 and t3, which are still running)
+        let remaining = tracker.list_chat_tasks("c1").await;
+        assert_eq!(remaining.len(), 2);
+        assert!(tracker.get_task("t1").await.is_none());
+        assert!(tracker.get_task("t2").await.is_some());
+        assert!(tracker.get_task("t3").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_no_deadlock_between_register_and_forget() {
+        let tracker = Arc::new(TerminalTaskTracker::new(50));
+        let tracker1 = tracker.clone();
+        let tracker2 = tracker.clone();
+
+        let h1 = tokio::spawn(async move {
+            for i in 0..100 {
+                let task = Arc::new(ManagedTask::new(
+                    format!("reg-{}", i),
+                    "c1".into(),
+                    "cmd".into(),
+                    PathBuf::from("/tmp"),
+                    None,
+                ));
+                tracker1.register_task(task).await;
+            }
+        });
+
+        let h2 = tokio::spawn(async move {
+            for _ in 0..100 {
+                tracker2.forget_chat("c1").await;
+            }
+        });
+
+        tokio::try_join!(h1, h2).unwrap();
     }
 }

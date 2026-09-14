@@ -30,6 +30,7 @@ pub struct AcpSession {
     store: Option<Arc<crate::store::Store>>,
     pub id: String,
     pub key: SessionKey,
+    pub workspace_boundary: PathBuf,
     process_state: RwLock<ProcessState>,
     turn_state: RwLock<TurnState>,
     client: RwLock<Option<Arc<AcpClient>>>,
@@ -51,6 +52,7 @@ pub struct AcpSession {
 impl AcpSession {
     pub fn new(
         key: SessionKey,
+        workspace_boundary: PathBuf,
         runtime: Arc<AgentRuntime>,
         event_log: Arc<EventLog>,
         checkout_guard: Option<Arc<Mutex<()>>>,
@@ -60,6 +62,7 @@ impl AcpSession {
             store: None,
             id: uuid::Uuid::new_v4().to_string(),
             key,
+            workspace_boundary,
             process_state: RwLock::new(ProcessState::Stopped),
             turn_state: RwLock::new(TurnState::Idle),
             client: RwLock::new(None),
@@ -78,6 +81,10 @@ impl AcpSession {
 
     pub fn cwd(&self) -> &Path {
         &self.key.cwd
+    }
+
+    pub fn workspace_boundary(&self) -> &Path {
+        &self.workspace_boundary
     }
 
     pub async fn cached_env(&self) -> Option<HashMap<String, String>> {
@@ -201,7 +208,12 @@ impl AcpSession {
             let cached = self.cached_env.read().await.clone();
             match cached {
                 Some(env) => env,
-                None => match crate::workspace_env::resolve_workspace_env(&self.key.cwd).await {
+                None => match crate::workspace_env::resolve_workspace_env(
+                    &self.key.cwd,
+                    &self.workspace_boundary,
+                )
+                .await
+                {
                     Ok(env) => {
                         *self.cached_env.write().await = Some(env.clone());
                         env
@@ -940,7 +952,7 @@ fn persistent_session_paths(
     project: &Project,
     workspace: Option<&ChatWorkspace>,
     legacy_repository_root: Option<&Path>,
-) -> (PathBuf, Option<PathBuf>) {
+) -> (PathBuf, PathBuf, Option<PathBuf>) {
     match workspace {
         Some(workspace) if workspace.mode == WorkspaceMode::ManagedWorktree => {
             // Use the deterministic location even when the row is corrupt. A
@@ -949,7 +961,7 @@ fn persistent_session_paths(
             let worktree = store.worktrees_dir().join(&chat.id);
             let cwd = join_project_subdir(&worktree, &workspace.project_subdir)
                 .unwrap_or_else(|_| project.path.clone().into());
-            (cwd, None)
+            (cwd, worktree, None)
         }
         Some(workspace) if workspace.mode == WorkspaceMode::ProjectCheckout => {
             let checkout = PathBuf::from(&workspace.workspace_path);
@@ -957,6 +969,7 @@ fn persistent_session_paths(
                 .unwrap_or_else(|_| project.path.clone().into());
             (
                 cwd,
+                checkout.clone(),
                 Some(checkout_key(Path::new(&workspace.repository_root))),
             )
         }
@@ -964,7 +977,7 @@ fn persistent_session_paths(
             let cwd = PathBuf::from(&project.path);
             let checkout = legacy_repository_root.unwrap_or(&cwd);
             let checkout = checkout_key(checkout);
-            (cwd, Some(checkout))
+            (cwd.clone(), cwd, Some(checkout))
         }
     }
 }
@@ -1269,6 +1282,7 @@ impl SessionManager {
 
         let session = Arc::new(AcpSession::new(
             key.clone(),
+            key.cwd.clone(),
             runtime,
             self.event_log.clone(),
             None,
@@ -1313,7 +1327,7 @@ impl SessionManager {
         } else {
             None
         };
-        let (cwd, checkout_key) = persistent_session_paths(
+        let (cwd, boundary, checkout_key) = persistent_session_paths(
             store,
             &chat,
             &project,
@@ -1326,6 +1340,7 @@ impl SessionManager {
                 agent: chat.agent,
                 cwd,
             },
+            boundary,
             runtime,
             self.event_log.clone(),
             checkout_guard,

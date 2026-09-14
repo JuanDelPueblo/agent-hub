@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 pub enum WorkspaceEnvError {
     DirenvNotFound,
     EnvrcBlocked { path: PathBuf, message: String },
+    EnvrcEscapeBoundary { cwd: PathBuf, boundary: PathBuf },
     DirenvFailed { message: String },
     Io(std::io::Error),
 }
@@ -17,6 +18,14 @@ impl std::fmt::Display for WorkspaceEnvError {
             }
             Self::EnvrcBlocked { message, .. } => {
                 write!(f, "Workspace environment is blocked: {}", message)
+            }
+            Self::EnvrcEscapeBoundary { cwd, boundary } => {
+                write!(
+                    f,
+                    "No .envrc found within validated workspace boundary {} for cwd {}",
+                    boundary.display(),
+                    cwd.display()
+                )
             }
             Self::DirenvFailed { message } => {
                 write!(f, "Failed to resolve workspace environment: {}", message)
@@ -41,30 +50,49 @@ impl From<std::io::Error> for WorkspaceEnvError {
     }
 }
 
-pub fn has_envrc(cwd: &Path) -> bool {
-    let mut curr = Some(cwd);
+pub fn find_envrc_path(cwd: &Path, boundary: &Path) -> Option<PathBuf> {
+    let (cwd_canon, boundary_canon) = match (cwd.canonicalize(), boundary.canonicalize()) {
+        (Ok(c), Ok(b)) => (c, b),
+        _ => (cwd.to_path_buf(), boundary.to_path_buf()),
+    };
+
+    if !cwd_canon.starts_with(&boundary_canon) {
+        return None;
+    }
+
+    let mut curr: Option<&Path> = Some(&cwd_canon);
     while let Some(dir) = curr {
-        if dir.join(".envrc").is_file() {
-            return true;
+        let path = dir.join(".envrc");
+        if path.is_file() {
+            return Some(path);
+        }
+        if dir == boundary_canon {
+            break;
         }
         curr = dir.parent();
     }
-    false
+    None
+}
+
+pub fn has_envrc(cwd: &Path, boundary: &Path) -> bool {
+    find_envrc_path(cwd, boundary).is_some()
 }
 
 pub async fn resolve_workspace_env(
     cwd: &Path,
+    boundary: &Path,
 ) -> Result<HashMap<String, String>, WorkspaceEnvError> {
-    resolve_workspace_env_internal("direnv", cwd).await
+    resolve_workspace_env_internal("direnv", cwd, boundary).await
 }
 
 pub(crate) async fn resolve_workspace_env_internal(
     bin: &str,
     cwd: &Path,
+    boundary: &Path,
 ) -> Result<HashMap<String, String>, WorkspaceEnvError> {
-    if !has_envrc(cwd) {
+    let Some(envrc_path) = find_envrc_path(cwd, boundary) else {
         return Ok(std::env::vars().collect());
-    }
+    };
 
     let output = match tokio::process::Command::new(bin)
         .arg("export")
@@ -84,7 +112,6 @@ pub(crate) async fn resolve_workspace_env_internal(
 
     if !output.status.success() {
         if is_blocked_message(&stderr) {
-            let envrc_path = find_envrc_path(cwd).unwrap_or_else(|| cwd.join(".envrc"));
             return Err(WorkspaceEnvError::EnvrcBlocked {
                 path: envrc_path,
                 message: stderr.trim().to_string(),
@@ -96,7 +123,6 @@ pub(crate) async fn resolve_workspace_env_internal(
     }
 
     if is_blocked_message(&stderr) {
-        let envrc_path = find_envrc_path(cwd).unwrap_or_else(|| cwd.join(".envrc"));
         return Err(WorkspaceEnvError::EnvrcBlocked {
             path: envrc_path,
             message: stderr.trim().to_string(),
@@ -132,13 +158,25 @@ pub(crate) async fn resolve_workspace_env_internal(
     Ok(merged)
 }
 
-pub async fn direnv_allow(cwd: &Path) -> Result<(), WorkspaceEnvError> {
-    direnv_allow_internal("direnv", cwd).await
+pub async fn direnv_allow(cwd: &Path, boundary: &Path) -> Result<(), WorkspaceEnvError> {
+    direnv_allow_internal("direnv", cwd, boundary).await
 }
 
-pub(crate) async fn direnv_allow_internal(bin: &str, cwd: &Path) -> Result<(), WorkspaceEnvError> {
+pub(crate) async fn direnv_allow_internal(
+    bin: &str,
+    cwd: &Path,
+    boundary: &Path,
+) -> Result<(), WorkspaceEnvError> {
+    let Some(envrc_path) = find_envrc_path(cwd, boundary) else {
+        return Err(WorkspaceEnvError::EnvrcEscapeBoundary {
+            cwd: cwd.to_path_buf(),
+            boundary: boundary.to_path_buf(),
+        });
+    };
+
     let output = match tokio::process::Command::new(bin)
         .arg("allow")
+        .arg(&envrc_path)
         .current_dir(cwd)
         .output()
         .await
@@ -158,18 +196,6 @@ pub(crate) async fn direnv_allow_internal(bin: &str, cwd: &Path) -> Result<(), W
     }
 
     Ok(())
-}
-
-fn find_envrc_path(cwd: &Path) -> Option<PathBuf> {
-    let mut curr = Some(cwd);
-    while let Some(dir) = curr {
-        let path = dir.join(".envrc");
-        if path.is_file() {
-            return Some(path);
-        }
-        curr = dir.parent();
-    }
-    None
 }
 
 fn is_blocked_message(msg: &str) -> bool {
@@ -232,8 +258,10 @@ mod tests {
     #[tokio::test]
     async fn test_no_envrc_returns_base_env() {
         let temp_dir = tempfile::tempdir().unwrap();
-        assert!(!has_envrc(temp_dir.path()));
-        let env = resolve_workspace_env(temp_dir.path()).await.unwrap();
+        assert!(!has_envrc(temp_dir.path(), temp_dir.path()));
+        let env = resolve_workspace_env(temp_dir.path(), temp_dir.path())
+            .await
+            .unwrap();
         assert_eq!(env.get("PATH"), std::env::var("PATH").ok().as_ref());
     }
 
@@ -241,16 +269,24 @@ mod tests {
     async fn test_missing_direnv_executable() {
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::write(temp_dir.path().join(".envrc"), "export TEST_VAR=123\n").unwrap();
-        assert!(has_envrc(temp_dir.path()));
+        assert!(has_envrc(temp_dir.path(), temp_dir.path()));
 
-        let err = resolve_workspace_env_internal("nonexistent-direnv-cmd-9999", temp_dir.path())
-            .await
-            .unwrap_err();
+        let err = resolve_workspace_env_internal(
+            "nonexistent-direnv-cmd-9999",
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, WorkspaceEnvError::DirenvNotFound));
 
-        let err_allow = direnv_allow_internal("nonexistent-direnv-cmd-9999", temp_dir.path())
-            .await
-            .unwrap_err();
+        let err_allow = direnv_allow_internal(
+            "nonexistent-direnv-cmd-9999",
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err_allow, WorkspaceEnvError::DirenvNotFound));
     }
 
@@ -261,7 +297,9 @@ mod tests {
         std::fs::write(&envrc_path, "export DIREnv_TEST_VAR=pueblo_test_123\n").unwrap();
 
         // 1. Unapproved .envrc must return EnvrcBlocked
-        let err = resolve_workspace_env(temp_dir.path()).await.unwrap_err();
+        let err = resolve_workspace_env(temp_dir.path(), temp_dir.path())
+            .await
+            .unwrap_err();
         match err {
             WorkspaceEnvError::EnvrcBlocked { path, message } => {
                 let expected_canonical = envrc_path
@@ -276,12 +314,12 @@ mod tests {
         }
 
         // 2. Authorize via direnv_allow
-        direnv_allow(temp_dir.path())
+        direnv_allow(temp_dir.path(), temp_dir.path())
             .await
             .expect("direnv allow should succeed");
 
         // 3. Now resolve_workspace_env must succeed and include exported variable
-        let resolved = resolve_workspace_env(temp_dir.path())
+        let resolved = resolve_workspace_env(temp_dir.path(), temp_dir.path())
             .await
             .expect("resolve should succeed after allow");
         assert_eq!(
@@ -307,9 +345,13 @@ mod tests {
         )
         .unwrap();
 
-        direnv_allow(temp_dir.path()).await.unwrap();
+        direnv_allow(temp_dir.path(), temp_dir.path())
+            .await
+            .unwrap();
 
-        let resolved = resolve_workspace_env(temp_dir.path()).await.unwrap();
+        let resolved = resolve_workspace_env(temp_dir.path(), temp_dir.path())
+            .await
+            .unwrap();
         assert!(!resolved.contains_key(test_unset_key));
         assert_eq!(
             resolved.get("PUEBLO_RETAINED_TEST").map(|s| s.as_str()),
@@ -350,20 +392,44 @@ mod tests {
         let nested_worktree = root.join("worktrees").join("branch-xyz");
         std::fs::create_dir_all(&nested_worktree).unwrap();
 
-        assert!(has_envrc(&nested_worktree));
-        let found = find_envrc_path(&nested_worktree).unwrap();
+        assert!(has_envrc(&nested_worktree, root));
+        let found = find_envrc_path(&nested_worktree, root).unwrap();
         let expected_canonical = envrc_path
             .canonicalize()
             .unwrap_or_else(|_| envrc_path.clone());
         let found_canonical = found.canonicalize().unwrap_or_else(|_| found.clone());
         assert_eq!(found_canonical, expected_canonical);
 
-        direnv_allow(root).await.unwrap();
+        direnv_allow(root, root).await.unwrap();
 
-        let resolved = resolve_workspace_env(&nested_worktree).await.unwrap();
+        let resolved = resolve_workspace_env(&nested_worktree, root).await.unwrap();
         assert_eq!(
             resolved.get("WORKTREE_TEST_VAR").map(|s| s.as_str()),
             Some("nested_authorized")
         );
+    }
+
+    #[tokio::test]
+    async fn test_refuses_to_discover_or_authorize_envrc_above_boundary() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        let ancestor_envrc = root.join(".envrc");
+        std::fs::write(&ancestor_envrc, "export ANCESTOR_VAR=escaped\n").unwrap();
+
+        let boundary = root.join("workspace_boundary");
+        let nested_cwd = boundary.join("packages").join("app");
+        std::fs::create_dir_all(&nested_cwd).unwrap();
+
+        // 1. Inside boundary, there is no .envrc
+        assert!(!has_envrc(&nested_cwd, &boundary));
+        assert!(find_envrc_path(&nested_cwd, &boundary).is_none());
+
+        // 2. Resolving workspace env returns base env without discovering ancestor .envrc
+        let resolved = resolve_workspace_env(&nested_cwd, &boundary).await.unwrap();
+        assert!(!resolved.contains_key("ANCESTOR_VAR"));
+
+        // 3. Attempting to direnv_allow above boundary is explicitly rejected
+        let err = direnv_allow(&nested_cwd, &boundary).await.unwrap_err();
+        assert!(matches!(err, WorkspaceEnvError::EnvrcEscapeBoundary { .. }));
     }
 }
