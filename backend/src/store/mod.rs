@@ -84,6 +84,20 @@ impl Store {
     }
 
     pub fn open_with_paths(paths: &PuebloPaths) -> StoreResult<Self> {
+        if paths.database.as_os_str() != ":memory:" {
+            if let Some(parent) = paths
+                .database
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    StoreError::Internal(anyhow::anyhow!(
+                        "cannot create database directory {}: {error}",
+                        parent.display()
+                    ))
+                })?;
+            }
+        }
         let mut db = Connection::open(&paths.database)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         migrations::check_version(&db)?;
@@ -503,6 +517,24 @@ mod tests {
         });
         let db = Store::open_with_paths(&paths).unwrap();
         assert_eq!(db.worktrees_dir(), tmp.path().join("managed"));
+    }
+
+    #[test]
+    fn open_with_paths_creates_only_missing_database_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let database_parent = tmp.path().join("new").join("nested");
+        let paths = PuebloPaths::from_overrides(PathOverrides {
+            database: Some(database_parent.join("hub.db")),
+            ..Default::default()
+        });
+
+        assert!(!database_parent.exists());
+        let store = Store::open_with_paths(&paths).unwrap();
+        assert!(database_parent.is_dir());
+        assert!(paths.database.is_file());
+        assert!(!tmp.path().join("config").exists());
+        assert!(!tmp.path().join("logs").exists());
+        assert_eq!(store.worktrees_dir(), database_parent.join("worktrees"));
     }
 
     #[test]
