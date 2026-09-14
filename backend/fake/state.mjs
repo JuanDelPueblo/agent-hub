@@ -213,12 +213,49 @@ export class FakeState {
     const migrate = this.createChat(hub.id, 'codex', 'Port the store to migrations');
     migrate.archived = true;
 
-    this.createChat(hub.id, 'opencode', 'Frontend theme cleanup');
+    const theme = this.createChat(hub.id, 'opencode', 'Frontend theme cleanup');
 
     const flash = this.createChat(firmware.id, 'claude', 'Unscramble the calibration block');
     flash.permission_policy = 'read-only';
 
     this.seedTranscript(review);
+    this.seedConversation(migrate, {
+      user: 'How do we port the store to versioned migrations?',
+      thought: 'The store opens SQLite directly. I must list the tables before I draft the migration steps.',
+      answer: 'I drafted the migration plan. Each migration runs once and records its version, so a restart never replays it.',
+    });
+    this.seedConversation(theme, {
+      user: 'What is left in the frontend theme cleanup?',
+      thought: 'The theme tokens live in styles.scss. I must check which components still use the old values.',
+      answer: 'I removed the old theme overrides. The app now uses the Material 3 tokens, so dark mode follows the system setting.',
+    });
+    this.seedConversation(flash, {
+      user: 'How do we unscramble the calibration block?',
+      thought: 'The dump is XOR-scrambled. I must read the flash tool before I touch the bytes.',
+      answer: 'I unscrambled the block with the vendor XOR key. The checksum now matches, so the flash tool accepts the image.',
+    });
+  }
+
+  /**
+   * Writes one finished user/answer turn from a small script, so each seeded
+   * chat shows history without duplicating `emit()` blocks.
+   */
+  seedConversation(chat, script) {
+    this.emit(chat.id, chat.agent, {
+      type: 'user_message',
+      text: script.user,
+    });
+    if (script.thought) {
+      this.emit(chat.id, chat.agent, {
+        type: 'thought_chunk',
+        text: script.thought,
+      });
+    }
+    this.emit(chat.id, chat.agent, {
+      type: 'message_chunk',
+      text: script.answer,
+    });
+    this.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'end_turn' });
   }
 
   /** Writes a finished turn, so a freshly opened UI already shows content. */

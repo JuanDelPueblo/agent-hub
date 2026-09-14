@@ -77,7 +77,7 @@ The fake backend accepts two options:
 
 ### Seeded data
 
-The fake backend starts with three projects, four chats, and one finished conversation. The folder picker browses a synthetic directory tree under `/home/dev/projects`, so the picker never depends on the layout of your machine.
+The fake backend starts with three projects, four chats, and a finished conversation in each chat. The folder picker browses a synthetic directory tree under `/home/dev/projects`, so the picker never depends on the layout of your machine.
 
 ### Prompt scenarios
 
