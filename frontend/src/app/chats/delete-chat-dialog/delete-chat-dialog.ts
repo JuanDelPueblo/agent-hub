@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -18,6 +18,7 @@ export class DeleteChatDialogComponent {
   readonly error = signal('');
 
   readonly chat = inject<Chat>(MAT_DIALOG_DATA);
+  readonly workspace = computed(() => this.chat.workspace ?? null);
 
   async remove(): Promise<void> {
     this.deleting.set(true);
