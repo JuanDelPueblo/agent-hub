@@ -51,6 +51,7 @@ describe('NavigationComponent DOM check', () => {
       activeChatId: signal('chat-1'),
       isMobileDrawerOpen: signal(false),
       wsStatus: signal('connected'),
+      wsError: signal(''),
     };
 
     await TestBed.configureTestingModule({
@@ -119,6 +120,7 @@ describe('NavigationComponent project switching', () => {
       activeChatId: signal('chat-1'),
       isMobileDrawerOpen: signal(false),
       wsStatus: signal('connected'),
+      wsError: signal(''),
       loadChats: vi.fn(async () => {}),
     };
   }

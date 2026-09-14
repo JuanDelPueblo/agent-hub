@@ -31,6 +31,7 @@ export class ChatWorkspaceComponent {
   readonly options = computed(() => this.chatId() ? this.state.configOptionsByChat()[this.chatId()] ?? [] : []);
   readonly connecting = computed(() => this.chatId() ? this.state.connectingChats().has(this.chatId()) : false);
   readonly connectError = computed(() => this.chatId() ? this.state.connectErrors()[this.chatId()] ?? '' : '');
+  readonly rejectedConfig = computed(() => this.chatId() ? this.state.rejectedConfigByChat()[this.chatId()] ?? '' : '');
   readonly configLoaded = computed(() => this.chatId() ? this.state.configLoadedByChat()[this.chatId()] === true : false);
 
   constructor() {
@@ -39,4 +40,5 @@ export class ChatWorkspaceComponent {
   openConfig(drawer: MatDrawer): void { this.configOpen.set(true); void drawer.open(); }
   closeConfig(drawer: MatDrawer): void { this.configOpen.set(false); void drawer.close(); }
   retry(): void { if (this.chatId()) void this.state.retryConnection(this.chatId()); }
+  resetConfig(): void { if (this.chatId()) void this.state.resetRejectedConfig(this.chatId()); }
 }

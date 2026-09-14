@@ -1,7 +1,6 @@
 //! Chat and turn operations.
 use super::{ChatView, HubService, ServiceError, ServiceResult};
 use crate::acp::callbacks::CallbackPolicy;
-use crate::events::EventPayload;
 use crate::store::{validate_name, Chat};
 use serde_json::Value;
 
@@ -68,7 +67,7 @@ impl HubService {
         let chat = self
             .store
             .create_chat(project_id.to_string(), agent.to_string(), title)?;
-        self.notify_metadata_changed();
+        self.notify_metadata_changed()?;
         Ok(self.view(chat).await)
     }
 
@@ -80,7 +79,7 @@ impl HubService {
         let chat = live
             .edit_metadata(edit.title, edit.archived, edit.permission_policy)
             .await?;
-        self.notify_metadata_changed();
+        self.notify_metadata_changed()?;
         Ok(self.view(chat).await)
     }
 
@@ -89,7 +88,7 @@ impl HubService {
         live.delete_metadata().await?;
         self.events.forget_chat(chat_id);
         self.sessions.remove_session(chat_id).await;
-        self.notify_metadata_changed();
+        self.notify_metadata_changed()?;
         Ok(())
     }
 
@@ -105,26 +104,48 @@ impl HubService {
             )));
         }
         let live = self.live(chat_id).await?;
-        let log = self.events.clone();
         let timeout = self.prompt_timeout;
         tokio::spawn(async move {
-            if let Err(e) = live.ask(text, Some(timeout)).await {
-                log.append(
-                    &live.id,
-                    &live.key.agent,
-                    EventPayload::Error {
-                        message: e.to_string(),
-                    },
-                );
-            }
+            let _ = live.ask(text, timeout).await;
         });
         Ok(())
     }
 
     pub async fn resume_chat(&self, chat_id: &str) -> ServiceResult<ChatView> {
-        self.live(chat_id).await?.resume().await?;
+        if let Err(error) = self.live(chat_id).await?.resume().await {
+            let message = error.to_string();
+            if let Some(rest) = message.strip_prefix("saved_config_rejected:") {
+                if let Some((option_id, detail)) = rest.split_once(':') {
+                    return Err(ServiceError::SavedConfigRejected {
+                        option_id: option_id.to_string(),
+                        message: detail.to_string(),
+                    });
+                }
+            }
+            return Err(error.into());
+        }
         let chat = self.store.chat(chat_id)?;
         Ok(self.view(chat).await)
+    }
+
+    pub async fn clear_saved_config(&self, chat_id: &str, option_id: &str) -> ServiceResult<()> {
+        let live = self.live(chat_id).await?;
+        if live.turn_state().await != crate::state::TurnState::Idle {
+            return Err(ServiceError::Conflict(
+                "Wait for the active turn before resetting configuration".into(),
+            ));
+        }
+        let chat = self.store.update_chat(chat_id, |chat| {
+            if let Some(values) = chat.config_values.as_object_mut() {
+                values.remove(option_id);
+            }
+        })?;
+        if chat.config_values.get(option_id).is_some() {
+            return Err(ServiceError::Internal(anyhow::anyhow!(
+                "Failed to reset saved configuration"
+            )));
+        }
+        Ok(())
     }
 
     pub async fn cancel_chat(&self, chat_id: &str) -> ServiceResult<()> {

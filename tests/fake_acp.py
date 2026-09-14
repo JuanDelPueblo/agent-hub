@@ -6,6 +6,7 @@ import uuid
 
 root = pathlib.Path(sys.argv[1])
 can_load = len(sys.argv) < 3 or sys.argv[2] != "no-load"
+reject_config = len(sys.argv) >= 3 and sys.argv[2] == "reject-config"
 current = None
 pending_prompt = None
 model = "small"
@@ -46,8 +47,11 @@ for line in sys.stdin:
             update("agent_message_chunk", content={"type": "text", "text": "REPLAY"})
             reply(id, {"configOptions": options()})
     elif method == "session/set_config_option":
-        model = p["value"]
-        reply(id, {"configOptions": options()})
+        if reject_config:
+            send({"id": id, "error": {"code": -32002, "message": "Rejected saved option"}})
+        else:
+            model = p["value"]
+            reply(id, {"configOptions": options()})
     elif method == "session/list":
         reply(id, {"sessions": [{"sessionId": f.name, "cwd": str(root)} for f in root.iterdir() if f.is_file()]})
     elif method == "session/close":
@@ -62,6 +66,8 @@ for line in sys.stdin:
         (root / current).write_text(str(count))
         if text == "wait":
             pending_prompt = id
+        elif text == "rpc-error":
+            send({"id": id, "error": {"code": -32003, "message": "Prompt failed"}})
         elif text == "permission":
             pending_prompt = id
             send({"id": "permission-1", "method": "session/request_permission", "params": {

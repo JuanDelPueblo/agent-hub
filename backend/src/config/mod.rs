@@ -41,15 +41,9 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TimeoutConfig {
-    pub default: u64,
-}
-
-impl Default for TimeoutConfig {
-    fn default() -> Self {
-        Self { default: 600 }
-    }
+    pub prompt: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,7 +73,7 @@ mod tests {
         );
         assert_eq!(config.server.port, 8765);
         assert_eq!(config.server.host, "127.0.0.1");
-        assert_eq!(config.timeouts.default, 600);
+        assert_eq!(config.timeouts.prompt, None);
         assert!(config.web.auth_token.is_none());
     }
 

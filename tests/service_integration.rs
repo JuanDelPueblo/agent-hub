@@ -146,6 +146,58 @@ async fn full_chat_lifecycle_without_http() {
 }
 
 #[tokio::test]
+async fn failed_turn_emits_error_then_exactly_one_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (hub, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = hub
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let mut events = log.subscribe();
+
+    hub.prompt_chat(&chat.chat.id, "rpc-error".into())
+        .await
+        .unwrap();
+
+    let mut terminal_events = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while terminal_events.len() < 2 {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("failed turn did not finish in time")
+            .unwrap();
+        if event.session_id == chat.chat.id
+            && matches!(
+                &event.payload,
+                EventPayload::Error { .. } | EventPayload::TurnComplete { .. }
+            )
+        {
+            terminal_events.push(event.payload);
+        }
+    }
+
+    assert!(matches!(terminal_events[0], EventPayload::Error { .. }));
+    assert!(matches!(
+        terminal_events[1],
+        EventPayload::TurnComplete { ref stop_reason } if stop_reason == "error"
+    ));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let completions = log
+        .replay_page(1, log.high_watermark().unwrap(), 10_000)
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            event.session_id == chat.chat.id
+                && matches!(event.payload, EventPayload::TurnComplete { .. })
+        })
+        .count();
+    assert_eq!(completions, 1);
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn errors_carry_the_kind_the_caller_needs() {
     let tmp = tempfile::tempdir().unwrap();
     let (hub, sessions) = hub(tmp.path());
@@ -228,5 +280,56 @@ async fn errors_carry_the_kind_the_caller_needs() {
         Err(ServiceError::Internal(_))
     ));
 
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn rejected_saved_config_blocks_until_only_that_option_is_reset() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());
+    let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let history = root.path().join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::codex_default()
+        .with_command("python3".into())
+        .with_args(vec![
+            format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+            history.display().to_string(),
+            "reject-config".into(),
+        ]);
+    let agents = Arc::new(AgentRegistry::new([agent]));
+    let sessions = SessionManager::with_store(agents.clone(), log, Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.path().display().to_string()];
+    let hub = HubService::new(store.clone(), sessions.clone(), agents, &config);
+    let project = hub
+        .create_project("demo".into(), root.path().display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    hub.resume_chat(&chat.chat.id).await.unwrap();
+    hub.stop_chat(&chat.chat.id).await.unwrap();
+    store
+        .update_chat(&chat.chat.id, |chat| {
+            chat.config_values["model"] = serde_json::json!("large");
+        })
+        .unwrap();
+
+    assert!(matches!(
+        hub.resume_chat(&chat.chat.id).await,
+        Err(ServiceError::SavedConfigRejected { option_id, .. }) if option_id == "model"
+    ));
+    hub.clear_saved_config(&chat.chat.id, "model")
+        .await
+        .unwrap();
+    hub.resume_chat(&chat.chat.id).await.unwrap();
+    assert!(store
+        .chat(&chat.chat.id)
+        .unwrap()
+        .config_values
+        .get("model")
+        .is_none());
     sessions.shutdown_all().await;
 }

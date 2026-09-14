@@ -40,6 +40,7 @@ const routes = [
   ['POST', /^\/api\/chats\/([^/]+)\/permission$/, respondPermission],
   ['GET', /^\/api\/chats\/([^/]+)\/config$/, getConfig],
   ['PATCH', /^\/api\/chats\/([^/]+)\/config$/, setConfig],
+  ['DELETE', /^\/api\/chats\/([^/]+)\/config\/([^/]+)$/, clearConfig],
   ['GET', /^\/api\/chats\/([^/]+)\/remote-sessions$/, remoteSessions],
   ['GET', /^\/api\/agents$/, () => json(AGENTS)],
   ['GET', /^\/api\/status$/, getStatus],
@@ -113,7 +114,7 @@ function handleWebSocket(request, rawSocket, head) {
       for (const event of state.replayFrom(fromSeq)) {
         socket.send(JSON.stringify(event));
       }
-      socket.send(JSON.stringify({ type: 'subscribed' }));
+      socket.send(JSON.stringify({ type: 'subscribed', through_seq: state.nextSeq - 1 }));
 
       // Live events start only after the replay, so no event is sent twice.
       unsubscribe?.();
@@ -344,6 +345,15 @@ function setConfig({ params, body }) {
 
   state.emit(chat.id, chat.agent, { type: 'config_options', options: config });
   return json(config);
+}
+
+function clearConfig({ params }) {
+  const chat = requireChat(params[0]);
+  const optionId = params[1];
+  const next = { ...chat.config_values };
+  delete next[optionId];
+  chat.config_values = next;
+  return { status: 204, value: null };
 }
 
 function remoteSessions({ params }) {

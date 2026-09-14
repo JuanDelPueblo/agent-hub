@@ -10,7 +10,7 @@
     } @else if (connecting()) {
       <section class="status-state"><mat-spinner diameter="44" /><h1>Connecting to {{ chat()!.agent }}…</h1><p>Initializing the ACP session and loading agent options.</p></section>
     } @else if (connectError()) {
-      <section class="status-state error-state" role="alert"><mat-icon>error_outline</mat-icon><h1>Connection failed</h1><p>{{ connectError() }}</p><button mat-flat-button type="button" (click)="retry()">Retry connection</button></section>
+      <section class="status-state error-state" role="alert"><mat-icon>error_outline</mat-icon><h1>Connection failed</h1><p>{{ connectError() }}</p>@if (rejectedConfig()) { <button mat-flat-button type="button" (click)="resetConfig()">Reset {{ rejectedConfig() }} and retry</button> } @else { <button mat-flat-button type="button" (click)="retry()">Retry connection</button> }</section>
     } @else if (!configLoaded() && !items().length) {
       <section class="status-state error-state" role="alert"><mat-icon>tune</mat-icon><h1>Agent options not loaded</h1><p>Agent Hub cannot read the configuration of {{ chat()!.agent }} yet.</p><button mat-flat-button type="button" (click)="retry()">Retry connection</button></section>
     } @else if (!items().length) {

@@ -152,6 +152,7 @@ pub async fn run_command_with_timeout(
             ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to execute command: {e}"),
+                None,
             )
         }),
         Err(_) => {
@@ -165,6 +166,7 @@ pub async fn run_command_with_timeout(
             Err(ApiError(
                 StatusCode::GATEWAY_TIMEOUT,
                 "Git clone timed out after 5 minutes".into(),
+                None,
             ))
         }
     }
@@ -190,6 +192,7 @@ pub async fn clone_project(
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Clone destination path escapes selected parent directory".into(),
+            None,
         ));
     }
     let beneath_roots = s
@@ -203,6 +206,7 @@ pub async fn clone_project(
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Clone destination path is outside configured project roots".into(),
+            None,
         ));
     }
 
@@ -210,6 +214,7 @@ pub async fn clone_project(
         return Err(ApiError(
             StatusCode::CONFLICT,
             format!("Destination directory already exists: {}", dest.display()),
+            None,
         ));
     }
 
@@ -227,6 +232,7 @@ pub async fn clone_project(
         ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to execute git: {e}"),
+            None,
         )
     })?;
 
@@ -242,6 +248,7 @@ pub async fn clone_project(
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             format!("Git clone failed: {}", sanitized.trim()),
+            None,
         ));
     }
 

@@ -31,7 +31,7 @@ pub struct HubService {
     agents: Arc<AgentRegistry>,
     /// The boundary every project path is validated against.
     project_roots: Vec<String>,
-    prompt_timeout: Duration,
+    prompt_timeout: Option<Duration>,
 }
 
 impl HubService {
@@ -47,7 +47,7 @@ impl HubService {
             sessions,
             agents,
             project_roots: config.web.project_roots.clone(),
-            prompt_timeout: Duration::from_secs(config.timeouts.default),
+            prompt_timeout: config.timeouts.prompt.map(Duration::from_secs),
         })
     }
 
@@ -68,8 +68,11 @@ impl HubService {
 
     /// Tells every connected client that project or chat metadata moved. A
     /// chat created over any surface therefore appears on the others at once.
-    pub(crate) fn notify_metadata_changed(&self) {
-        self.events.append("", "", EventPayload::MetadataChanged {});
+    pub(crate) fn notify_metadata_changed(&self) -> ServiceResult<()> {
+        self.events
+            .append("", "", EventPayload::MetadataChanged {})
+            .map(|_| ())
+            .map_err(ServiceError::Internal)
     }
 
     /// The live session for a chat, with the same distinctions the HTTP layer

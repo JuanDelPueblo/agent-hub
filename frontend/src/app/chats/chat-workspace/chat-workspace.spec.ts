@@ -28,20 +28,24 @@ describe('ChatWorkspaceComponent', () => {
   let state: {
     connectingChats: ReturnType<typeof signal<Set<string>>>;
     connectErrors: ReturnType<typeof signal<Record<string, string>>>;
+    rejectedConfigByChat: ReturnType<typeof signal<Record<string, string>>>;
     configLoadedByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     reducersByChat: ReturnType<typeof signal<Record<string, never>>>;
     configOptionsByChat: ReturnType<typeof signal<Record<string, never>>>;
     retryConnection: ReturnType<typeof vi.fn>;
+    resetRejectedConfig: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     state = {
       connectingChats: signal(new Set<string>()),
       connectErrors: signal<Record<string, string>>({}),
+      rejectedConfigByChat: signal<Record<string, string>>({}),
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, never>>({}),
       configOptionsByChat: signal<Record<string, never>>({}),
       retryConnection: vi.fn(async () => undefined),
+      resetRejectedConfig: vi.fn(async () => undefined),
     };
 
     const stateValue = {
@@ -114,11 +118,13 @@ describe('ChatWorkspaceComponent live stream', () => {
     const stateValue = {
       connectingChats: signal(new Set<string>()),
       connectErrors: signal<Record<string, string>>({}),
+      rejectedConfigByChat: signal<Record<string, string>>({}),
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, EventReducer>>({ 'chat-1': reducer }),
       configOptionsByChat: signal<Record<string, never>>({}),
       findChat: (id: string) => (id === chat.id ? chat : null),
       retryConnection: vi.fn(async () => undefined),
+      resetRejectedConfig: vi.fn(async () => undefined),
       setMobileDrawerOpen: vi.fn(),
       stopChatProcess: vi.fn(async () => undefined),
       cancelActiveTurn: vi.fn(async () => undefined),

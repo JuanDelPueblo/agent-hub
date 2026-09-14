@@ -1,5 +1,5 @@
 //! Event rows. `EventLog` owns `seq`, so this module never generates one.
-use super::StoreResult;
+use super::{StoreError, StoreResult};
 use crate::events::SessionEvent;
 use rusqlite::{params, Connection};
 
@@ -31,6 +31,35 @@ pub(crate) fn recent(conn: &Connection) -> StoreResult<Vec<SessionEvent>> {
         events.push(serde_json::from_str(&data)?);
     }
     Ok(events)
+}
+
+pub(crate) fn page(
+    conn: &Connection,
+    from_seq: u64,
+    through_seq: u64,
+    limit: usize,
+) -> StoreResult<Vec<SessionEvent>> {
+    let mut stmt = conn
+        .prepare("SELECT data FROM events WHERE seq >= ?1 AND seq <= ?2 ORDER BY seq LIMIT ?3")?;
+    let rows = stmt.query_map(
+        params![
+            i64::try_from(from_seq).map_err(|e| anyhow::anyhow!(e))?,
+            i64::try_from(through_seq).map_err(|e| anyhow::anyhow!(e))?,
+            i64::try_from(limit).map_err(|e| anyhow::anyhow!(e))?,
+        ],
+        |r| r.get::<_, String>(0),
+    )?;
+    let mut events = Vec::new();
+    for row in rows {
+        events.push(serde_json::from_str(&row?)?);
+    }
+    Ok(events)
+}
+
+pub(crate) fn max_seq(conn: &Connection) -> StoreResult<u64> {
+    let value: i64 =
+        conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?;
+    u64::try_from(value).map_err(|e| StoreError::Internal(e.into()))
 }
 
 pub(crate) fn delete_for_session(conn: &Connection, session_id: &str) -> StoreResult<()> {

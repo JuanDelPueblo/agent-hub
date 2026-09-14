@@ -112,6 +112,12 @@ async fn unsupported_resume_never_creates_another_conversation() {
     let s = mgr.get_by_id(&chat.id).await.unwrap();
     s.ask("hi".into(), None).await.unwrap();
     let saved = db.chat(&chat.id).unwrap().acp_session_id;
+    mgr.reap_idle().await;
+    assert_eq!(
+        s.process_state().await,
+        agent_hub::state::ProcessState::Running,
+        "a non-resumable chat must not be made unusable by idle reaping"
+    );
     s.stop().await.unwrap();
     assert!(s
         .resume()

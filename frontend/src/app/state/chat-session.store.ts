@@ -1,5 +1,5 @@
 import { inject, Service, signal, WritableSignal } from '@angular/core';
-import { ApiService } from '../core/api/api.service';
+import { ApiError, ApiService } from '../core/api/api.service';
 import type {
   Chat,
   ConfigOption,
@@ -27,6 +27,7 @@ export class ChatSessionStore {
   readonly loadingChats = signal<ReadonlySet<string>>(new Set());
   readonly connectingChats = signal<ReadonlySet<string>>(new Set());
   readonly connectErrors = signal<ErrorMap>({});
+  readonly rejectedConfigByChat = signal<Record<string, string>>({});
 
   private readonly inFlightConnections = new Map<string, Promise<Chat>>();
   private readonly inFlightConfigs = new Map<string, Promise<ConfigOption[]>>();
@@ -116,6 +117,12 @@ export class ChatSessionStore {
           const currentChat = this.findChat(chatId);
           if (!currentChat || currentChat.process_state !== 'RUNNING') {
             this.setError(chatId, this.errorMessage(error, 'Failed to connect to agent'));
+            if (error instanceof ApiError && error.code === 'saved_config_rejected') {
+              const optionId = error.details?.['option_id'];
+              if (typeof optionId === 'string') {
+                this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
+              }
+            }
           }
           throw error;
         }
@@ -190,6 +197,18 @@ export class ChatSessionStore {
     this.setConfig(chatId, options);
   }
 
+  async resetRejectedConfig(chatId: string): Promise<void> {
+    const optionId = this.rejectedConfigByChat()[chatId];
+    if (!optionId) return;
+    await this.api.clearSavedConfig(chatId, optionId);
+    this.rejectedConfigByChat.update((current) => {
+      const next = { ...current };
+      delete next[chatId];
+      return next;
+    });
+    await this.connectChat(chatId);
+  }
+
   async createChat(projectId: string, agent: string, title?: string): Promise<Chat> {
     const created = await this.api.createChat(projectId, agent, title);
     this.chatsByProject.update((current) => ({
@@ -233,6 +252,10 @@ export class ChatSessionStore {
         ...(turn ? { turn_state: turn } : {}),
       });
     }
+  }
+
+  resetEventHistory(): void {
+    this.reducersByChat.set({});
   }
 
   private setConfig(chatId: string, options: ConfigOption[]): void {

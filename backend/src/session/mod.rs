@@ -2,6 +2,7 @@ use crate::acp::AcpClient;
 use crate::agents::{AgentRegistry, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
+use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
 use agent_client_protocol_schema::{PromptResponse, StopReason};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -72,7 +73,11 @@ impl AcpSession {
         *self.last_activity.read().await
     }
 
-    async fn emit_state_change(&self, process: ProcessState, turn: TurnState) {
+    async fn emit_state_change(
+        &self,
+        process: ProcessState,
+        turn: TurnState,
+    ) -> anyhow::Result<()> {
         self.event_log.append(
             &self.id,
             &self.key.agent,
@@ -80,34 +85,37 @@ impl AcpSession {
                 process: process.to_string(),
                 turn: turn.to_string(),
             },
-        );
+        )?;
+        Ok(())
     }
 
-    async fn set_states(&self, process: ProcessState, turn: TurnState) {
+    async fn set_states(&self, process: ProcessState, turn: TurnState) -> anyhow::Result<()> {
         *self.process_state.write().await = process;
         *self.turn_state.write().await = turn;
-        self.emit_state_change(process, turn).await;
+        self.emit_state_change(process, turn).await
     }
 
-    async fn mark_dead(&self) {
+    async fn mark_dead(&self) -> anyhow::Result<()> {
         let client = self.client.write().await.take();
         *self.child_root_pid.write().await = None;
-        self.set_states(ProcessState::Dead, TurnState::Idle).await;
+        let state_result = self.set_states(ProcessState::Dead, TurnState::Idle).await;
         if let Some(client) = client {
             client.terminate().await;
             tokio::spawn(async move {
                 client.shutdown().await;
             });
         }
+        state_result
     }
 
-    async fn finalize_turn_response(&self, resp: &PromptResponse) {
+    async fn finalize_turn_response(&self, resp: &PromptResponse) -> anyhow::Result<()> {
         let stop_reason = stop_reason_to_string(resp.stop_reason);
         self.event_log.append(
             &self.id,
             &self.key.agent,
             EventPayload::TurnComplete { stop_reason },
-        );
+        )?;
+        Ok(())
     }
 
     async fn ensure_running(&self) -> anyhow::Result<()> {
@@ -132,7 +140,7 @@ impl AcpSession {
         }
 
         self.set_states(ProcessState::Starting, TurnState::Idle)
-            .await;
+            .await?;
 
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy
@@ -154,7 +162,7 @@ impl AcpSession {
         {
             Ok(c) => c,
             Err(e) => {
-                self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
                 return Err(e);
             }
         };
@@ -171,7 +179,7 @@ impl AcpSession {
         {
             client.shutdown().await;
             *self.child_root_pid.write().await = None;
-            self.set_states(ProcessState::Dead, TurnState::Idle).await;
+            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
             return Err(e);
         }
 
@@ -192,7 +200,7 @@ impl AcpSession {
             Err(e) => {
                 client.shutdown().await;
                 *self.child_root_pid.write().await = None;
-                self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
                 return Err(e);
             }
         };
@@ -204,7 +212,7 @@ impl AcpSession {
                 store.update_chat(&self.id, |c| c.acp_session_id = Some(new_session.clone()))
             {
                 client.shutdown().await;
-                self.set_states(ProcessState::Dead, TurnState::Idle).await;
+                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
                 return Err(e.into());
             }
             let values = store.chat(&self.id)?.config_values;
@@ -216,7 +224,10 @@ impl AcpSession {
                     )
                     .await;
                     if !matches!(result, Ok(Ok(_))) {
-                        self.event_log.append(&self.id, &self.key.agent, EventPayload::Error { message: format!("Saved ACP option {id} could not be reapplied; review the current configuration") });
+                        client.shutdown().await;
+                        *self.child_root_pid.write().await = None;
+                        self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                        anyhow::bail!("saved_config_rejected:{id}:Saved ACP option {id} could not be reapplied; reset that option before reconnecting");
                     }
                 }
             }
@@ -227,10 +238,10 @@ impl AcpSession {
             EventPayload::ConfigOptions {
                 options: client.config_options.read().await.clone(),
             },
-        );
+        )?;
         *self.client.write().await = Some(Arc::new(client));
         self.set_states(ProcessState::Running, TurnState::Idle)
-            .await;
+            .await?;
 
         Ok(())
     }
@@ -238,8 +249,29 @@ impl AcpSession {
     pub async fn ask(&self, message: String, timeout: Option<Duration>) -> anyhow::Result<String> {
         let _turn_guard = match self.turn_guard.try_lock() {
             Ok(guard) => guard,
-            Err(_) => anyhow::bail!("Agent busy (turn state: {})", self.turn_state().await),
+            Err(_) => {
+                let error = anyhow::anyhow!("Agent busy (turn state: {})", self.turn_state().await);
+                self.finalize_failed_turn(&error, "error")?;
+                return Err(error);
+            }
         };
+        let result = self.ask_locked(message, timeout).await;
+        if let Err(error) = &result {
+            let stop_reason = if error.is::<PromptTimeout>() {
+                "timeout"
+            } else {
+                "error"
+            };
+            self.finalize_failed_turn(error, stop_reason)?;
+        }
+        result
+    }
+
+    async fn ask_locked(
+        &self,
+        message: String,
+        timeout: Option<Duration>,
+    ) -> anyhow::Result<String> {
         let current_turn = self.turn_state().await;
         if !current_turn.can_prompt() {
             anyhow::bail!("Agent busy (turn state: {})", current_turn);
@@ -254,12 +286,11 @@ impl AcpSession {
             EventPayload::UserMessage {
                 text: message.clone(),
             },
-        );
+        )?;
 
         self.set_states(ProcessState::Running, TurnState::Prompting)
-            .await;
+            .await?;
 
-        let timeout = timeout.unwrap_or(Duration::from_secs(600));
         let start_seq = self.event_log.next_seq();
 
         let client = self
@@ -281,7 +312,7 @@ impl AcpSession {
 
         let mut event_rx = self.event_log.subscribe();
         let session_id = self.id.clone();
-        let mut sleep_future = Box::pin(tokio::time::sleep(timeout));
+        let mut sleep_future = timeout.map(|value| Box::pin(tokio::time::sleep(value)));
 
         let attempt = loop {
             tokio::select! {
@@ -292,12 +323,14 @@ impl AcpSession {
                     match event {
                         Ok(evt) if evt.session_id == session_id => {
                             self.touch().await;
-                            sleep_future = Box::pin(tokio::time::sleep(timeout));
+                            if let Some(timeout) = timeout {
+                                sleep_future = Some(Box::pin(tokio::time::sleep(timeout)));
+                            }
                         }
                         _ => {}
                     }
                 }
-                _ = &mut sleep_future => {
+                _ = async { if let Some(sleep) = &mut sleep_future { sleep.await } }, if sleep_future.is_some() => {
                     let has_pending_perm = !client
                         .callback_handler()
                         .pending_permissions
@@ -305,7 +338,7 @@ impl AcpSession {
                         .await
                         .is_empty();
                     if has_pending_perm {
-                        sleep_future = Box::pin(tokio::time::sleep(timeout));
+                        sleep_future = timeout.map(|value| Box::pin(tokio::time::sleep(value)));
                     } else {
                         break PromptAttempt::TimedOut;
                     }
@@ -316,32 +349,60 @@ impl AcpSession {
         match attempt {
             PromptAttempt::Completed(Ok(resp)) => {
                 self.set_states(ProcessState::Running, TurnState::Idle)
-                    .await;
+                    .await?;
                 self.touch().await;
-                self.finalize_turn_response(&resp).await;
-                self.try_sync_acp_title(&client).await;
+                if let Err(error) = self.finalize_turn_response(&resp).await {
+                    let _ = self.mark_dead().await;
+                    return Err(error);
+                }
+                self.try_sync_acp_title(&client).await?;
                 Ok(self.collect_message_text(start_seq).await)
             }
             PromptAttempt::Completed(Err(err)) => {
                 if self.client_disconnected().await {
-                    self.mark_dead().await;
+                    self.mark_dead().await?;
                 } else {
                     self.set_states(ProcessState::Running, TurnState::Idle)
-                        .await;
+                        .await?;
                     self.touch().await;
                 }
                 Err(err)
             }
             PromptAttempt::TimedOut => {
-                self.mark_dead().await;
-                Err(anyhow::anyhow!("Request timed out"))
+                self.mark_dead().await?;
+                Err(PromptTimeout.into())
             }
         }
+    }
+
+    fn finalize_failed_turn(&self, error: &anyhow::Error, stop_reason: &str) -> anyhow::Result<()> {
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::Error {
+                message: error.to_string(),
+            },
+        )?;
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::TurnComplete {
+                stop_reason: stop_reason.into(),
+            },
+        )?;
+        Ok(())
     }
 
     async fn client_disconnected(&self) -> bool {
         let client = self.client.read().await;
         client.as_ref().map(|c| !c.is_connected()).unwrap_or(true)
+    }
+
+    async fn supports_resume(&self) -> bool {
+        match self.client.read().await.as_ref() {
+            Some(client) => client.supports_resume().await,
+            None => false,
+        }
     }
 
     async fn collect_message_text(&self, start_seq: u64) -> String {
@@ -376,8 +437,12 @@ impl AcpSession {
             c.shutdown().await;
         }
         *self.child_root_pid.write().await = None;
-        self.set_states(ProcessState::Stopped, TurnState::Idle)
-            .await;
+        if let Err(error) = self
+            .set_states(ProcessState::Stopped, TurnState::Idle)
+            .await
+        {
+            tracing::error!(%error, "Failed to persist stopped session state");
+        }
         tracing::info!(
             agent = %self.key.agent,
             session = %self.id,
@@ -520,8 +585,14 @@ impl AcpSession {
         )
         .await??;
         if let Some(store) = &self.store {
+            let authoritative = options
+                .as_array()
+                .and_then(|entries| entries.iter().find(|option| option["id"] == id))
+                .and_then(|option| option.get("currentValue"))
+                .cloned()
+                .unwrap_or(value);
             store.update_chat(&self.id, |c| {
-                c.config_values[id] = value;
+                c.config_values[id] = authoritative;
             })?;
         }
         self.touch().await;
@@ -531,7 +602,7 @@ impl AcpSession {
             EventPayload::ConfigOptions {
                 options: options.clone(),
             },
-        );
+        )?;
         Ok(options)
     }
 
@@ -553,7 +624,7 @@ impl AcpSession {
         .await?
     }
 
-    async fn try_sync_acp_title(&self, client: &Arc<AcpClient>) {
+    async fn try_sync_acp_title(&self, client: &Arc<AcpClient>) -> anyhow::Result<()> {
         if let Some(store) = &self.store {
             if let Ok(chat) = store.chat(&self.id) {
                 if !chat.title_overridden && chat.title == "New chat" {
@@ -586,7 +657,7 @@ impl AcpSession {
                                                     &self.id,
                                                     &self.key.agent,
                                                     EventPayload::MetadataChanged {},
-                                                );
+                                                )?;
                                             }
                                         }
                                         break;
@@ -598,6 +669,7 @@ impl AcpSession {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -605,6 +677,17 @@ enum PromptAttempt {
     Completed(anyhow::Result<PromptResponse>),
     TimedOut,
 }
+
+#[derive(Debug)]
+struct PromptTimeout;
+
+impl std::fmt::Display for PromptTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Request timed out")
+    }
+}
+
+impl std::error::Error for PromptTimeout {}
 
 fn stop_reason_to_string(stop_reason: StopReason) -> String {
     serde_json::to_value(stop_reason)
@@ -788,6 +871,9 @@ impl SessionManager {
             }
             let ts = session.turn_state().await;
             if ts != TurnState::Idle {
+                continue;
+            }
+            if !session.supports_resume().await {
                 continue;
             }
             let elapsed = session.last_activity().await.elapsed();

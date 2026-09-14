@@ -23,6 +23,10 @@ target/debug/agent-hub --database /path/to/state/hub.sqlite3 \
 
 The database parent directory must exist and be private. The server binds only to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing it. `--public-origin` authorizes an exact browser Origin and Host.
 
+Prompts have no silence timeout by default, so a quiet long-running tool call is
+not killed. Set `--prompt-timeout <seconds>` (or
+`AGENT_HUB_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
+
 ## Development environment
 
 The repository ships a Nix flake with a dev shell. The shell supplies Rust, Node, the linker, and the test tools at pinned versions.
@@ -103,7 +107,14 @@ Create a project pointing to an existing directory under a configured project ro
 
 Opening a chat automatically connects the agent process and loads ACP configuration options immediately. Sending a prompt also connects automatically if stopped. `session/load` or advertised `session/resume` restores agent-owned conversation state.
 
-Stop process, idle reaping (900 seconds by default), and backend restart preserve the chat and ACP session ID. Cancel turn sends `session/cancel` and resolves pending browser permissions. Archive stops an idle process and keeps metadata; Restore makes the chat usable again. Delete removes local metadata/activity only, never project files or the agent's own session history.
+Stop process and idle reaping preserve the chat and ACP session ID. Agent Hub
+only reaps an idle process when its ACP agent advertises `session/load` or
+`session/resume`; otherwise it keeps the process alive so the chat remains
+usable. The default eligible idle timeout is 900 seconds. Cancel turn sends
+`session/cancel` and resolves pending browser permissions. Archive stops an idle
+process and keeps metadata; Restore makes the chat usable again. Delete removes
+local metadata/activity only, never project files or the agent's own session
+history.
 
 ## Configuration
 
@@ -140,6 +151,7 @@ Permission policy is separate from agent configuration. New chats default to `as
 | `/api/chats/:id/resume`, `/stop`, `/cancel` | POST |
 | `/api/chats/:id/permission` | POST `{id,granted}` |
 | `/api/chats/:id/config` | GET, PATCH `{id,value}` |
+| `/api/chats/:id/config/:option_id` | DELETE a rejected saved value before retrying |
 | `/api/chats/:id/remote-sessions?cursor=…` | GET; capability-gated ACP session/list |
 | `/api/agents` | GET configured names |
 | `/ws` | WebSocket; send `{ "type":"subscribe", "from_seq":0 }` |

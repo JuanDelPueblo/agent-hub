@@ -20,6 +20,14 @@ export class ConnectionStatusComponent {
     const status = this.state.wsStatus();
     if (status === 'connected') return 'The event stream is live.';
     if (status === 'connecting') return 'The event stream is reconnecting.';
+    if (status === 'error') {
+      return this.state.wsError() || 'Durable event history could not be replayed.';
+    }
     return 'The event stream is offline. Agent updates stop until it returns.';
+  }
+
+  ariaLabel(): string {
+    const detail = this.state.wsStatus() === 'error' ? `: ${this.tooltip()}` : '';
+    return `Event stream ${this.state.wsStatus()}${detail}`;
   }
 }

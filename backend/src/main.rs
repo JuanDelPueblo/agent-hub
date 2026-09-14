@@ -16,6 +16,9 @@ struct Args {
     port: u16,
     #[arg(long, env = "AGENT_HUB_PUBLIC_ORIGIN")]
     public_origin: Option<String>,
+    /// Optional inactivity watchdog for prompts. Unset means no silence timeout.
+    #[arg(long, env = "AGENT_HUB_PROMPT_TIMEOUT")]
+    prompt_timeout: Option<u64>,
     #[arg(
         long,
         required = true,
@@ -37,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     config.server.port = args.port;
     config.web.public_origin = args.public_origin;
     config.web.project_roots = args.project_root;
+    config.timeouts.prompt = args.prompt_timeout;
     if let Some(path) = args.agents_file {
         config.agents = Arc::new(parse_agents(&std::fs::read_to_string(path)?)?);
     }

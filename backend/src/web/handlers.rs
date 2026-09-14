@@ -113,9 +113,10 @@ pub async fn api_prompt_session(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let timeout = payload.timeout.map(std::time::Duration::from_secs).or(Some(
-        std::time::Duration::from_secs(state.config.timeouts.default),
-    ));
+    let timeout = payload
+        .timeout
+        .or(state.config.timeouts.prompt)
+        .map(std::time::Duration::from_secs);
 
     match session.ask(payload.text, timeout).await {
         Ok(response) => Ok(Json(PromptApiResponse {

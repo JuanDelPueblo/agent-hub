@@ -1,4 +1,4 @@
-use agent_client_protocol_schema::RequestId;
+use agent_client_protocol_schema::v1::RequestId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]

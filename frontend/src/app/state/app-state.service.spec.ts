@@ -15,6 +15,7 @@ describe('AppStateService', () => {
   let resumeCalls: number;
   let permissionCalls: Array<{ chatId: string; requestId: string; granted: boolean }>;
   let events: Subject<SessionEvent>;
+  let replayGaps: Subject<void>;
 
   beforeEach(() => {
     projects = [{ id: 'project-1', name: 'Agent Hub', path: '/work', created_at: '2026-01-01', updated_at: '2026-01-01', chat_count: 1 }];
@@ -22,6 +23,7 @@ describe('AppStateService', () => {
     resumeCalls = 0;
     permissionCalls = [];
     events = new Subject<SessionEvent>();
+    replayGaps = new Subject<void>();
     const api = {
       fetchProjects: async () => [...projects], fetchAgents: async () => ['codex'], fetchChats: async () => [...chats],
       createProject: async (name: string, path: string) => ({ id: 'project-2', name, path, created_at: 'now', updated_at: 'now', chat_count: 0 }),
@@ -37,7 +39,7 @@ describe('AppStateService', () => {
       stopChat: async () => undefined, cancelChat: async () => undefined, promptChat: async () => undefined,
       respondPermission: async (chatId: string, requestId: string, granted: boolean) => { permissionCalls.push({ chatId, requestId, granted }); }, setChatConfig: async () => [], cloneProject: async () => projects[0],
     } as unknown as ApiService;
-    const socket = { status: signal<'disconnected'>('disconnected'), events, connect: vi.fn() };
+    const socket = { status: signal<'disconnected'>('disconnected'), events, replayGaps, connect: vi.fn() };
     TestBed.configureTestingModule({ providers: [{ provide: ApiService, useValue: api }, { provide: EventSocketService, useValue: socket }, provideRouter([])] });
     state = TestBed.inject(AppStateService);
   });
@@ -98,5 +100,15 @@ describe('AppStateService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(state.activeProject()?.name).toBe('Renamed by ACP');
+  });
+
+  it('clears reduced event state when the server reports a replay gap', async () => {
+    await state.loadChats('project-1');
+    events.next({ seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-09-13T12:00:00Z', payload: { type: 'user_message', text: 'partial' } });
+    expect(state.reducersByChat()['chat-1']).toBeDefined();
+
+    replayGaps.next();
+
+    expect(state.reducersByChat()).toEqual({});
   });
 });

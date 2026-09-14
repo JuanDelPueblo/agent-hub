@@ -139,6 +139,28 @@ impl Store {
     pub fn events(&self) -> StoreResult<Vec<crate::events::SessionEvent>> {
         events::recent(&self.0.lock().unwrap())
     }
+
+    pub fn event_page(
+        &self,
+        from_seq: u64,
+        through_seq: u64,
+        limit: usize,
+    ) -> StoreResult<Vec<crate::events::SessionEvent>> {
+        events::page(&self.0.lock().unwrap(), from_seq, through_seq, limit)
+    }
+
+    pub fn max_event_seq(&self) -> StoreResult<u64> {
+        events::max_seq(&self.0.lock().unwrap())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_query_only(&self) {
+        self.0
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA query_only=ON")
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -240,12 +262,14 @@ mod tests {
             &doomed.id,
             "codex",
             EventPayload::MessageChunk { text: "a".into() },
-        );
+        )
+        .unwrap();
         log.append(
             &kept.id,
             "codex",
             EventPayload::MessageChunk { text: "b".into() },
-        );
+        )
+        .unwrap();
 
         db.delete_chat(&doomed.id).unwrap();
 

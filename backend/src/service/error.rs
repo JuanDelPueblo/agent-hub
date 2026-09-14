@@ -11,6 +11,7 @@ pub enum ServiceError {
     Conflict(String),
     Unavailable(String),
     Timeout(String),
+    SavedConfigRejected { option_id: String, message: String },
     Internal(anyhow::Error),
 }
 
@@ -24,6 +25,7 @@ impl std::fmt::Display for ServiceError {
             | Self::Conflict(m)
             | Self::Unavailable(m)
             | Self::Timeout(m) => f.write_str(m),
+            Self::SavedConfigRejected { message, .. } => f.write_str(message),
             Self::Internal(e) => write!(f, "{e}"),
         }
     }

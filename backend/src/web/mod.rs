@@ -120,6 +120,10 @@ pub fn router(state: AppState) -> Router {
             "/api/chats/:id/config",
             get(hub::config).patch(hub::set_config),
         )
+        .route(
+            "/api/chats/:id/config/:option_id",
+            axum::routing::delete(hub::clear_config),
+        )
         .route("/api/chats/:id/remote-sessions", get(hub::remote_sessions))
         .route("/api/agents", get(hub::agents))
         .route("/api/status", get(api_get_status))

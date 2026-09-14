@@ -1,5 +1,4 @@
 use super::AppState;
-use crate::events::ReplayResult;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -57,6 +56,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let replay_ready_send = replay_ready.clone();
     let replay_started_send = replay_started.clone();
     let replay_seq_send = replay_seq.clone();
+    let event_log_send = event_log.clone();
     let mut send_task = tokio::spawn(async move {
         loop {
             let notified = replay_ready_send.notified();
@@ -83,7 +83,42 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!("WebSocket lagged by {} events", n);
-                    break; // Reconnect and replay rather than silently losing activity.
+                    let through = match event_log_send.high_watermark() {
+                        Ok(seq) => seq,
+                        Err(error) => {
+                            let control = serde_json::json!({"type":"stream_error","code":"event_store_unavailable","error":error.to_string()});
+                            let mut sender = sender_clone.lock().await;
+                            let _ = sender.send(Message::Text(control.to_string())).await;
+                            break;
+                        }
+                    };
+                    let mut cursor = replay_seq_send.load(Ordering::SeqCst).saturating_add(1);
+                    while cursor <= through {
+                        let page = match event_log_send.replay_page(cursor, through, 512) {
+                            Ok(page) => page,
+                            Err(error) => {
+                                let control = serde_json::json!({"type":"stream_error","code":"replay_failed","error":error.to_string()});
+                                let mut sender = sender_clone.lock().await;
+                                let _ = sender.send(Message::Text(control.to_string())).await;
+                                return;
+                            }
+                        };
+                        if page.is_empty() {
+                            break;
+                        }
+                        for event in page {
+                            cursor = event.seq.saturating_add(1);
+                            replay_seq_send.store(event.seq, Ordering::SeqCst);
+                            let mut sender = sender_clone.lock().await;
+                            if sender
+                                .send(Message::Text(serde_json::to_string(&event).unwrap()))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -118,38 +153,46 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         while let Some(cmd) = action_rx.recv().await {
             match cmd {
                 ClientMessage::Subscribe { from_seq } => {
-                    let replay = event_log.replay_from(from_seq);
-                    let (events, gap) = match replay {
-                        ReplayResult::Complete(evts) => (evts, None),
-                        ReplayResult::Partial {
-                            events,
-                            oldest_available_seq,
-                        } => (events, Some(oldest_available_seq)),
-                    };
-
                     let mut sender = sender_clone2.lock().await;
-                    if let Some(oldest) = gap {
-                        let gap_msg = serde_json::json!({
-                            "type": "replay_gap",
-                            "oldest_available_seq": oldest,
-                            "requested_seq": from_seq,
-                        });
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&gap_msg).unwrap()))
-                            .await;
-                    }
-                    let max_replayed_seq = events.last().map(|event| event.seq).unwrap_or(0);
-                    for event in events {
-                        if let Ok(json) = serde_json::to_string(&event) {
-                            if sender.send(Message::Text(json)).await.is_err() {
+                    let through = match event_log.high_watermark() {
+                        Ok(seq) => seq,
+                        Err(error) => {
+                            let control = serde_json::json!({"type":"stream_error","code":"event_store_unavailable","error":error.to_string()});
+                            let _ = sender.send(Message::Text(control.to_string())).await;
+                            return;
+                        }
+                    };
+                    let mut cursor = from_seq;
+                    while cursor <= through {
+                        let page = match event_log.replay_page(cursor, through, 512) {
+                            Ok(page) => page,
+                            Err(error) => {
+                                let control = serde_json::json!({"type":"stream_error","code":"replay_failed","error":error.to_string()});
+                                let _ = sender.send(Message::Text(control.to_string())).await;
+                                return;
+                            }
+                        };
+                        if page.is_empty() {
+                            break;
+                        }
+                        for event in page {
+                            cursor = event.seq.saturating_add(1);
+                            if sender
+                                .send(Message::Text(serde_json::to_string(&event).unwrap()))
+                                .await
+                                .is_err()
+                            {
                                 return;
                             }
                         }
                     }
 
-                    replay_seq_action.store(max_replayed_seq, Ordering::SeqCst);
+                    replay_seq_action.store(through, Ordering::SeqCst);
                     let _ = sender
-                        .send(Message::Text("{\"type\":\"subscribed\"}".into()))
+                        .send(Message::Text(
+                            serde_json::json!({"type":"subscribed","through_seq":through})
+                                .to_string(),
+                        ))
                         .await;
                     replay_started_action.store(true, Ordering::SeqCst);
                     replay_ready_action.notify_waiters();

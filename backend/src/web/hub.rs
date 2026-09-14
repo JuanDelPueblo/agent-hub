@@ -13,15 +13,15 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub struct ApiError(pub StatusCode, pub String);
+pub struct ApiError(pub StatusCode, pub String, pub Option<Value>);
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        Self(StatusCode::BAD_REQUEST, e.to_string())
+        Self(StatusCode::BAD_REQUEST, e.to_string(), None)
     }
 }
 impl From<std::io::Error> for ApiError {
     fn from(e: std::io::Error) -> Self {
-        Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string(), None)
     }
 }
 impl From<crate::store::StoreError> for ApiError {
@@ -38,14 +38,28 @@ impl From<ServiceError> for ApiError {
             ServiceError::Conflict(_) => StatusCode::CONFLICT,
             ServiceError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServiceError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            ServiceError::SavedConfigRejected { .. } => StatusCode::CONFLICT,
             ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        Self(status, e.to_string())
+        let details = match &e {
+            ServiceError::SavedConfigRejected { option_id, .. } => Some(json!({
+                "code": "saved_config_rejected",
+                "details": { "option_id": option_id }
+            })),
+            _ => None,
+        };
+        Self(status, e.to_string(), details)
     }
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({"error":self.1}))).into_response()
+        let mut body = json!({"error":self.1});
+        if let Some(extra) = self.2 {
+            if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+                body.extend(extra.clone());
+            }
+        }
+        (self.0, Json(body)).into_response()
     }
 }
 pub type Result<T> = std::result::Result<T, ApiError>;
@@ -55,6 +69,7 @@ pub(crate) fn hub(s: &AppState) -> Result<&Arc<HubService>> {
     s.hub.as_ref().ok_or(ApiError(
         StatusCode::SERVICE_UNAVAILABLE,
         "Run the agent-hub binary for persistent projects".into(),
+        None,
     ))
 }
 
@@ -110,6 +125,7 @@ pub async fn filesystem_directories(
         return Err(ApiError(
             StatusCode::SERVICE_UNAVAILABLE,
             "No project roots configured".into(),
+            None,
         ));
     }
     let canonical_roots: Vec<std::path::PathBuf> = roots
@@ -120,6 +136,7 @@ pub async fn filesystem_directories(
         return Err(ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Configured project roots do not exist on disk".into(),
+            None,
         ));
     }
 
@@ -130,11 +147,16 @@ pub async fn filesystem_directories(
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,
                     "Directory path must be absolute".into(),
+                    None,
                 ));
             }
-            path_obj
-                .canonicalize()
-                .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Directory does not exist".into()))?
+            path_obj.canonicalize().map_err(|_| {
+                ApiError(
+                    StatusCode::NOT_FOUND,
+                    "Directory does not exist".into(),
+                    None,
+                )
+            })?
         }
         None => canonical_roots[0].clone(),
     };
@@ -143,6 +165,7 @@ pub async fn filesystem_directories(
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Path is not a directory".into(),
+            None,
         ));
     }
 
@@ -153,6 +176,7 @@ pub async fn filesystem_directories(
             ApiError(
                 StatusCode::FORBIDDEN,
                 "Directory is outside configured project roots".into(),
+                None,
             )
         })?;
 
@@ -324,6 +348,13 @@ pub async fn set_config(
     Json(c): Json<ConfigEdit>,
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.set_chat_config(&id, &c.id, c.value).await?))
+}
+pub async fn clear_config(
+    State(s): State<AppState>,
+    Path((id, option_id)): Path<(String, String)>,
+) -> Result<StatusCode> {
+    hub(&s)?.clear_saved_config(&id, &option_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 #[derive(Deserialize)]
 pub struct Cursor {

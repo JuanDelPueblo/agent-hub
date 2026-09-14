@@ -25,6 +25,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -48,7 +50,11 @@ export class ApiService {
         if (error.error && typeof error.error.error === 'string') {
           message = error.error.error;
         }
-        throw new ApiError(error.status, message);
+        const code = typeof error.error?.code === 'string' ? error.error.code : undefined;
+        const details = error.error?.details && typeof error.error.details === 'object'
+          ? error.error.details as Record<string, unknown>
+          : undefined;
+        throw new ApiError(error.status, message, code, details);
       }
       throw error;
     }
@@ -152,6 +158,12 @@ export class ApiService {
     return this.request<ConfigOption[]>(`/api/chats/${encodeURIComponent(chatId)}/config`, {
       method: 'PATCH',
       body: { id: optionId, value },
+    });
+  }
+
+  async clearSavedConfig(chatId: string, optionId: string): Promise<void> {
+    await this.request(`/api/chats/${encodeURIComponent(chatId)}/config/${encodeURIComponent(optionId)}`, {
+      method: 'DELETE',
     });
   }
 

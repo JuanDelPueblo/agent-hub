@@ -4,12 +4,14 @@ pub mod protocol;
 #[cfg(windows)]
 mod windows_job;
 
+use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
+use ::agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::{
     CancelNotification, ContentBlock, CreateTerminalRequest, InitializeRequest, InitializeResponse,
     KillTerminalRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-    ProtocolVersion, ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionRequest,
-    SessionId, SessionNotification, SessionUpdate, TerminalOutputRequest, TextContent,
-    ToolCallContent, WaitForTerminalExitRequest, WriteTextFileRequest, CLIENT_METHOD_NAMES,
+    ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionRequest, SessionId,
+    SessionNotification, SessionUpdate, TerminalOutputRequest, TextContent, ToolCallContent,
+    WaitForTerminalExitRequest, WriteTextFileRequest, CLIENT_METHOD_NAMES,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -283,6 +285,14 @@ impl AcpClient {
         }
     }
 
+    pub async fn supports_resume(&self) -> bool {
+        let capabilities = self.capabilities.read().await;
+        capabilities["loadSession"] == true
+            || capabilities
+                .pointer("/sessionCapabilities/resume")
+                .is_some_and(|value| value.is_object())
+    }
+
     pub async fn list_sessions(
         &self,
         cwd: &Path,
@@ -542,13 +552,16 @@ async fn reader_task(
                                     .filter(|v| v.is_array())
                                 {
                                     *config_options.write().await = options.clone();
-                                    event_log.append(
+                                    if let Err(error) = event_log.append(
                                         &session_id,
                                         &agent_name,
                                         EventPayload::ConfigOptions {
                                             options: options.clone(),
                                         },
-                                    );
+                                    ) {
+                                        tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                        break;
+                                    }
                                 }
                             }
                             if replaying.load(Ordering::SeqCst) {
@@ -556,14 +569,18 @@ async fn reader_task(
                             }
                             if let Ok(notif) = serde_json::from_value::<SessionNotification>(params)
                             {
-                                handle_session_update(
+                                if let Err(error) = handle_session_update(
                                     &event_log,
                                     &store,
                                     &session_id,
                                     &agent_name,
                                     &notif.update,
                                 )
-                                .await;
+                                .await
+                                {
+                                    tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -607,7 +624,7 @@ async fn reader_task(
     }
 
     connected.store(false, Ordering::SeqCst);
-    event_log.append(
+    let _ = event_log.append(
         &session_id,
         &agent_name,
         EventPayload::StateChange {
@@ -725,10 +742,10 @@ async fn handle_session_update(
     session_id: &str,
     agent_name: &str,
     update: &SessionUpdate,
-) {
+) -> anyhow::Result<()> {
     let payload = match update {
         SessionUpdate::SessionInfoUpdate(info) => {
-            if let agent_client_protocol_schema::MaybeUndefined::Value(title) = &info.title {
+            if let ::agent_client_protocol_schema::MaybeUndefined::Value(title) = &info.title {
                 let trimmed = title.trim();
                 if !trimmed.is_empty() && trimmed.len() <= 200 {
                     if let Some(st) = store {
@@ -743,21 +760,21 @@ async fn handle_session_update(
                                     session_id,
                                     agent_name,
                                     EventPayload::MetadataChanged {},
-                                );
+                                )?;
                             }
                         }
                     }
                 }
             }
-            return;
+            return Ok(());
         }
         SessionUpdate::AgentMessageChunk(chunk) => {
             let text = match &chunk.content {
                 ContentBlock::Text(t) => t.text.as_str(),
-                _ => return,
+                _ => return Ok(()),
             };
             if text.is_empty() {
-                return;
+                return Ok(());
             }
             EventPayload::MessageChunk {
                 text: text.to_string(),
@@ -766,10 +783,10 @@ async fn handle_session_update(
         SessionUpdate::AgentThoughtChunk(chunk) => {
             let text = match &chunk.content {
                 ContentBlock::Text(t) => t.text.as_str(),
-                _ => return,
+                _ => return Ok(()),
             };
             if text.is_empty() {
-                return;
+                return Ok(());
             }
             EventPayload::ThoughtChunk {
                 text: text.to_string(),
@@ -827,10 +844,11 @@ async fn handle_session_update(
                 .collect();
             EventPayload::Plan { entries }
         }
-        _ => return,
+        _ => return Ok(()),
     };
 
-    event_log.append(session_id, agent_name, payload);
+    event_log.append(session_id, agent_name, payload)?;
+    Ok(())
 }
 
 fn serialize_optional_enum<T: serde::Serialize>(value: &Option<T>) -> String {
@@ -976,8 +994,8 @@ async fn kill_child(child: &SharedChild, root_pid: Option<u32>) {
 
 #[cfg(test)]
 mod tests {
+    use super::agent_client_protocol_schema::{TextContent, ToolCallContent, ToolCallUpdateFields};
     use super::*;
-    use agent_client_protocol_schema::{TextContent, ToolCallContent, ToolCallUpdateFields};
 
     #[tokio::test]
     async fn test_handle_agent_request_accepts_schema_method_names() {

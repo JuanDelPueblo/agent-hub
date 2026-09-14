@@ -112,4 +112,37 @@ describe('EventSocketService', () => {
     service.destroy();
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
+
+  it('surfaces a durable replay failure and does not reconnect past it', () => {
+    vi.useFakeTimers();
+    const service = new EventSocketService();
+    service.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message(JSON.stringify({
+      type: 'stream_error',
+      code: 'event_store_unavailable',
+      error: 'SQLite is read-only',
+    }));
+
+    expect(service.status()).toBe('error');
+    expect(service.errorMessage()).toBe('SQLite is read-only');
+    vi.advanceTimersByTime(5000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    service.destroy();
+  });
+
+  it('signals consumers to clear incomplete state after a replay gap', () => {
+    const service = new EventSocketService();
+    const replayGap = vi.fn();
+    service.replayGaps.subscribe(replayGap);
+    service.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message(JSON.stringify({ type: 'replay_gap', error: 'History is incomplete' }));
+
+    expect(replayGap).toHaveBeenCalledOnce();
+    expect(service.status()).toBe('error');
+    service.destroy();
+  });
 });

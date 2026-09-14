@@ -30,6 +30,7 @@ export class AppStateService {
   readonly loadingChats = this.chatStore.loadingChats;
   readonly connectingChats = this.chatStore.connectingChats;
   readonly connectErrors = this.chatStore.connectErrors;
+  readonly rejectedConfigByChat = this.chatStore.rejectedConfigByChat;
   readonly activeProjectId = this.uiStore.activeProjectId;
   readonly activeChatId = this.uiStore.activeChatId;
   readonly isMobileDrawerOpen = this.uiStore.isMobileDrawerOpen;
@@ -40,6 +41,7 @@ export class AppStateService {
   private readonly emptyReducer = new EventReducer();
 
   readonly wsStatus = this.socket.status;
+  readonly wsError = this.socket.errorMessage;
   readonly activeProject = computed(() => {
     const id = this.activeProjectId();
     return id ? this.projects().find((project) => project.id === id) ?? null : null;
@@ -57,6 +59,7 @@ export class AppStateService {
 
   constructor() {
     this.socket.events.subscribe((event) => this.handleIncomingEvent(event));
+    this.socket.replayGaps.subscribe(() => this.chatStore.resetEventHistory());
     this.router.events
       .pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
       .subscribe((event) => this.syncRoute(event.urlAfterRedirects));
@@ -74,6 +77,7 @@ export class AppStateService {
   autoConnectChat(chatId: string): Promise<void> { return this.chatStore.autoConnectChat(chatId); }
   loadChatConfig(chatId: string) { return this.chatStore.loadChatConfig(chatId); }
   retryConnection(chatId: string): Promise<void> { return this.chatStore.retryConnection(chatId); }
+  resetRejectedConfig(chatId: string): Promise<void> { return this.chatStore.resetRejectedConfig(chatId); }
   connectChat(chatId: string) { return this.chatStore.connectChat(chatId); }
   fetchConfig(chatId: string) { return this.chatStore.fetchConfig(chatId); }
   sendPrompt(chatId: string, text: string): Promise<void> { return this.chatStore.sendPrompt(chatId, text); }

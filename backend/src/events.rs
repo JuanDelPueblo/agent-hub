@@ -96,6 +96,7 @@ pub struct EventLog {
     next_seq: AtomicU64,
     max_entries: usize,
     broadcast_tx: broadcast::Sender<SessionEvent>,
+    persistence_error: std::sync::Mutex<Option<String>>,
 }
 
 impl EventLog {
@@ -108,6 +109,7 @@ impl EventLog {
             next_seq: AtomicU64::new(1),
             max_entries,
             broadcast_tx,
+            persistence_error: std::sync::Mutex::new(None),
         }
     }
 
@@ -116,7 +118,14 @@ impl EventLog {
     }
 
     pub fn persistent(store: std::sync::Arc<crate::store::Store>) -> anyhow::Result<Self> {
-        let mut log = Self::new(10_000);
+        Self::persistent_with_limit(store, 10_000)
+    }
+
+    fn persistent_with_limit(
+        store: std::sync::Arc<crate::store::Store>,
+        max_entries: usize,
+    ) -> anyhow::Result<Self> {
+        let mut log = Self::new(max_entries);
         let events = store.events()?;
         log.next_seq
             .store(events.last().map_or(1, |e| e.seq + 1), Ordering::SeqCst);
@@ -150,7 +159,7 @@ impl EventLog {
                 &chat,
                 &agent,
                 EventPayload::PermissionResponse { id, granted: false },
-            );
+            )?;
         }
         for (chat, agent) in active {
             log.append(
@@ -159,15 +168,23 @@ impl EventLog {
                 EventPayload::TurnComplete {
                     stop_reason: "backend_restarted".into(),
                 },
-            );
+            )?;
         }
         Ok(log)
     }
 
-    pub fn append(&self, session_id: &str, agent: &str, payload: EventPayload) -> u64 {
+    pub fn append(
+        &self,
+        session_id: &str,
+        agent: &str,
+        payload: EventPayload,
+    ) -> anyhow::Result<u64> {
         // Sequence allocation, persistence and publication share ordering.
         let mut events = self.events.write().unwrap();
-        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.persistence_error.lock().unwrap().as_ref() {
+            anyhow::bail!("Event persistence is unavailable: {error}");
+        }
+        let seq = self.next_seq.load(Ordering::SeqCst);
         let event = SessionEvent {
             seq,
             timestamp: chrono::Utc::now(),
@@ -179,8 +196,11 @@ impl EventLog {
         if let Some(store) = &self.store {
             if let Err(error) = store.save_event(&event) {
                 tracing::error!(%error, "Failed to persist activity event");
+                *self.persistence_error.lock().unwrap() = Some(error.to_string());
+                return Err(anyhow::anyhow!("Failed to persist activity event: {error}"));
             }
         }
+        self.next_seq.store(seq + 1, Ordering::SeqCst);
         events.push_back(event.clone());
 
         while events.len() > self.max_entries {
@@ -191,10 +211,61 @@ impl EventLog {
         }
         let _ = self.broadcast_tx.send(event);
 
-        seq
+        Ok(seq)
+    }
+
+    pub fn high_watermark(&self) -> anyhow::Result<u64> {
+        if let Some(error) = self.persistence_error.lock().unwrap().as_ref() {
+            anyhow::bail!("Event persistence is unavailable: {error}");
+        }
+        if let Some(store) = &self.store {
+            return Ok(store.max_event_seq()?);
+        }
+        Ok(self.next_seq().saturating_sub(1))
+    }
+
+    pub fn replay_page(
+        &self,
+        from_seq: u64,
+        through_seq: u64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<SessionEvent>> {
+        if let Some(error) = self.persistence_error.lock().unwrap().as_ref() {
+            anyhow::bail!("Event persistence is unavailable: {error}");
+        }
+        if let Some(store) = &self.store {
+            return Ok(store.event_page(from_seq, through_seq, limit)?);
+        }
+        Ok(self
+            .events
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|event| event.seq >= from_seq && event.seq <= through_seq)
+            .take(limit)
+            .cloned()
+            .collect())
     }
 
     pub fn replay_from(&self, from_seq: u64) -> ReplayResult {
+        if self.store.is_some() {
+            let through = match self.high_watermark() {
+                Ok(value) => value,
+                Err(_) => return ReplayResult::Complete(Vec::new()),
+            };
+            let mut cursor = from_seq;
+            let mut result = Vec::new();
+            while cursor <= through {
+                let page = match self.replay_page(cursor, through, 512) {
+                    Ok(page) => page,
+                    Err(_) => return ReplayResult::Complete(Vec::new()),
+                };
+                let Some(last) = page.last() else { break };
+                cursor = last.seq.saturating_add(1);
+                result.extend(page);
+            }
+            return ReplayResult::Complete(result);
+        }
         let min = self.min_seq.load(Ordering::SeqCst);
         let events = self.events.read().unwrap();
 
@@ -246,8 +317,8 @@ mod tests {
             },
         );
 
-        assert_eq!(seq1, 1);
-        assert_eq!(seq2, 2);
+        assert_eq!(seq1.unwrap(), 1);
+        assert_eq!(seq2.unwrap(), 2);
 
         match log.replay_from(1) {
             ReplayResult::Complete(events) => assert_eq!(events.len(), 2),
@@ -268,7 +339,8 @@ mod tests {
             "s1",
             "codex",
             EventPayload::MessageChunk { text: "a".into() },
-        );
+        )
+        .unwrap();
         assert_eq!(log.next_seq(), 2);
     }
 
@@ -280,7 +352,8 @@ mod tests {
             "s1",
             "codex",
             EventPayload::MessageChunk { text: "hi".into() },
-        );
+        )
+        .unwrap();
         let event = rx.recv().await.unwrap();
         assert_eq!(event.session_id, "s1");
         assert_eq!(event.agent, "codex");
@@ -293,7 +366,8 @@ mod tests {
             "s1",
             "codex",
             EventPayload::MessageChunk { text: "a".into() },
-        );
+        )
+        .unwrap();
         match log.replay_from(999) {
             ReplayResult::Complete(events) => assert!(events.is_empty()),
             _ => panic!("Expected empty Complete"),
@@ -310,7 +384,8 @@ mod tests {
                 EventPayload::MessageChunk {
                     text: format!("msg{}", i),
                 },
-            );
+            )
+            .unwrap();
         }
 
         match log.replay_from(1) {
@@ -351,6 +426,60 @@ mod tests {
             ReplayResult::Partial { .. } => panic!("Expected Complete"),
         }
 
-        append_task.await.unwrap();
+        append_task.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn persistent_append_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::store::Store::open(&temp.path().join("events.db")).unwrap());
+        let log = EventLog::persistent(store.clone()).unwrap();
+        assert_eq!(log.next_seq(), 1);
+        store.set_query_only();
+
+        let mut receiver = log.subscribe();
+        assert!(log
+            .append(
+                "s1",
+                "codex",
+                EventPayload::MessageChunk {
+                    text: "lost".into()
+                }
+            )
+            .is_err());
+        assert_eq!(log.next_seq(), 1);
+        assert!(receiver.try_recv().is_err());
+        assert!(log
+            .append(
+                "s1",
+                "codex",
+                EventPayload::MessageChunk {
+                    text: "later".into()
+                }
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn persistent_replay_is_not_limited_by_memory_window() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::store::Store::open(&temp.path().join("events.db")).unwrap());
+        let log = EventLog::persistent_with_limit(store, 100).unwrap();
+        for index in 0..105 {
+            log.append(
+                "s1",
+                "codex",
+                EventPayload::MessageChunk {
+                    text: index.to_string(),
+                },
+            )
+            .unwrap();
+        }
+        let ReplayResult::Complete(events) = log.replay_from(1) else {
+            panic!("persistent replay was partial");
+        };
+        assert_eq!(events.len(), 105);
+        assert_eq!(events.first().unwrap().seq, 1);
+        assert_eq!(events.last().unwrap().seq, 105);
     }
 }

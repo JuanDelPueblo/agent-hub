@@ -4,4 +4,5 @@
 .status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .status-chip.connected { color: var(--hub-status-running); background: var(--hub-status-running-container); }
 .status-chip.connecting { color: var(--hub-status-starting); }
-.status-chip.disconnected { color: var(--hub-status-dead); background: var(--hub-status-dead-container); }
+.status-chip.disconnected,
+.status-chip.error { color: var(--hub-status-dead); background: var(--hub-status-dead-container); }

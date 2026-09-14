@@ -1,3 +1,4 @@
+use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
 use agent_client_protocol_schema::{
     CreateTerminalRequest, CreateTerminalResponse, KillTerminalRequest, KillTerminalResponse,
     PermissionOptionId, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
@@ -12,9 +13,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 use tokio::sync::{oneshot, Notify, RwLock};
 
+use super::process::AcpProcess;
 use crate::events::{EventLog, EventPayload};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ValueEnum)]
@@ -163,17 +164,24 @@ impl CallbackHandler {
             .await
             .insert(perm_id.clone(), PendingPermission { tx });
 
-        self.event_log.append(
-            &self.session_id,
-            &self.agent_name,
-            EventPayload::PermissionRequest {
-                id: perm_id.clone(),
-                method: method.to_string(),
-                description,
-                title,
-                kind,
-            },
-        );
+        if self
+            .event_log
+            .append(
+                &self.session_id,
+                &self.agent_name,
+                EventPayload::PermissionRequest {
+                    id: perm_id.clone(),
+                    method: method.to_string(),
+                    description,
+                    title,
+                    kind,
+                },
+            )
+            .is_err()
+        {
+            self.pending_permissions.write().await.remove(&perm_id);
+            return false;
+        }
 
         let granted = tokio::time::timeout(std::time::Duration::from_secs(600), rx)
             .await
@@ -186,14 +194,17 @@ impl CallbackHandler {
             pending.remove(&perm_id);
         }
 
-        self.event_log.append(
+        if let Err(error) = self.event_log.append(
             &self.session_id,
             &self.agent_name,
             EventPayload::PermissionResponse {
                 id: perm_id,
                 granted,
             },
-        );
+        ) {
+            tracing::error!(%error, "Failed to persist permission response");
+            return false;
+        }
 
         granted
     }
@@ -379,19 +390,11 @@ impl CallbackHandler {
         };
         self.validate_path(&cwd, false)?;
 
-        let mut cmd = Command::new(&req.command);
-        cmd.args(&req.args)
-            .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-
+        let mut env = HashMap::new();
         for env_var in &req.env {
-            cmd.env(&env_var.name, &env_var.value);
+            env.insert(env_var.name.clone(), env_var.value.clone());
         }
-
-        let mut child = cmd.spawn().map_err(|e| {
+        let process = AcpProcess::spawn(&req.command, &req.args, &env, &cwd).map_err(|e| {
             agent_client_protocol_schema::Error::new(
                 -32002,
                 format!("Terminal spawn failed: {}", e),
@@ -400,8 +403,9 @@ impl CallbackHandler {
 
         let terminal = Arc::new(ManagedTerminal::new(req.output_byte_limit));
         let terminal_id = uuid::Uuid::new_v4().to_string();
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
+        let stdout = process.stdout;
+        let stderr = process.stderr;
+        drop(process.stdin);
         let (kill_tx, kill_rx) = oneshot::channel();
         *terminal.kill_tx.lock().unwrap() = Some(kill_tx);
 
@@ -410,20 +414,16 @@ impl CallbackHandler {
             .await
             .insert(terminal_id.clone(), terminal.clone());
 
-        let mut drain_handles = Vec::new();
-        if let Some(stdout) = stdout {
-            drain_handles.push(tokio::spawn(drain_terminal_stream(
-                stdout,
-                terminal.clone(),
-            )));
-        }
-        if let Some(stderr) = stderr {
-            drain_handles.push(tokio::spawn(drain_terminal_stream(
-                stderr,
-                terminal.clone(),
-            )));
-        }
-        tokio::spawn(supervise_terminal(child, terminal, kill_rx, drain_handles));
+        let drain_handles = vec![
+            tokio::spawn(drain_terminal_stream(stdout, terminal.clone())),
+            tokio::spawn(drain_terminal_stream(stderr, terminal.clone())),
+        ];
+        tokio::spawn(supervise_terminal(
+            process.child,
+            terminal,
+            kill_rx,
+            drain_handles,
+        ));
 
         Ok(CreateTerminalResponse::new(terminal_id))
     }
@@ -588,18 +588,27 @@ async fn append_terminal_output(terminal: &ManagedTerminal, chunk: &str) {
 }
 
 async fn supervise_terminal(
-    mut child: tokio::process::Child,
+    mut child: Box<dyn process_wrap::tokio::TokioChildWrapper>,
     terminal: Arc<ManagedTerminal>,
     mut kill_rx: oneshot::Receiver<()>,
     drain_handles: Vec<tokio::task::JoinHandle<()>>,
 ) {
-    let status = tokio::select! {
-        result = child.wait() => result,
-        _ = &mut kill_rx => {
-            let _ = child.kill().await;
-            child.wait().await
+    let status = loop {
+        tokio::select! {
+            _ = &mut kill_rx => {
+                let _ = child.start_kill();
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {}
+            Err(error) => break Err(error),
         }
     };
+    // The direct child may exit while descendants remain. Both ProcessGroup
+    // and JobObject wrappers use this final kill/drop to reap the whole tree.
+    let _ = child.start_kill();
 
     for handle in drain_handles {
         let _ = handle.await;
@@ -728,11 +737,12 @@ fn format_permission_tool_call(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use agent_client_protocol_schema::{
+    use super::agent_client_protocol_schema::{
         CreateTerminalRequest, PermissionOption, PermissionOptionKind, ReleaseTerminalRequest,
-        SessionId, TerminalOutputRequest, WaitForTerminalExitRequest, WriteTextFileRequest,
+        SessionId as SchemaSessionId, TerminalOutputRequest, WaitForTerminalExitRequest,
+        WriteTextFileRequest,
     };
+    use super::*;
     use std::sync::Arc;
 
     fn make_handler(policy: CallbackPolicy) -> CallbackHandler {
@@ -821,7 +831,7 @@ mod tests {
         let handler = make_handler(CallbackPolicy::AutoApprove);
 
         let request = RequestPermissionRequest::new(
-            SessionId::new("s1"),
+            SchemaSessionId::new("s1"),
             agent_client_protocol_schema::ToolCallUpdate::new(
                 "tool-1",
                 agent_client_protocol_schema::ToolCallUpdateFields::new(),
@@ -857,7 +867,7 @@ mod tests {
         );
 
         let request = RequestPermissionRequest::new(
-            SessionId::new("s1"),
+            SchemaSessionId::new("s1"),
             agent_client_protocol_schema::ToolCallUpdate::new(
                 "tool-1",
                 agent_client_protocol_schema::ToolCallUpdateFields::new(),
@@ -997,7 +1007,9 @@ mod tests {
 
     #[test]
     fn test_format_permission_tool_call_plan_mode() {
-        use agent_client_protocol_schema::{ToolCallId, ToolCallUpdate, ToolCallUpdateFields};
+        use super::agent_client_protocol_schema::{
+            ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
+        };
         let update = ToolCallUpdate::new(
             ToolCallId::new("call-1"),
             ToolCallUpdateFields::new()
@@ -1014,7 +1026,9 @@ mod tests {
 
     #[test]
     fn test_format_permission_tool_call_command() {
-        use agent_client_protocol_schema::{ToolCallId, ToolCallUpdate, ToolCallUpdateFields};
+        use super::agent_client_protocol_schema::{
+            ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
+        };
         let update = ToolCallUpdate::new(
             ToolCallId::new("call-2"),
             ToolCallUpdateFields::new()
@@ -1027,5 +1041,49 @@ mod tests {
         assert_eq!(title, Some("Run tests".to_string()));
         assert_eq!(description, "Execute command: cargo test --all");
         assert!(kind.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn releasing_terminal_reaps_descendants() {
+        let temp = tempfile::tempdir().unwrap();
+        let handler = CallbackHandler::new(
+            CallbackPolicy::AutoApprove,
+            "session-1".into(),
+            "codex".into(),
+            Arc::new(crate::events::EventLog::new(100)),
+            temp.path().to_path_buf(),
+        );
+        let response = handler
+            .handle_create_terminal(
+                CreateTerminalRequest::new(SchemaSessionId::new("s1"), "sh").args(vec![
+                    "-c".into(),
+                    "sleep 30 & echo $! > child.pid; wait".into(),
+                ]),
+            )
+            .await
+            .unwrap();
+        let pid_file = temp.path().join("child.pid");
+        for _ in 0..100 {
+            if pid_file.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        handler
+            .handle_release_terminal(ReleaseTerminalRequest::new(
+                SchemaSessionId::new("s1"),
+                response.terminal_id,
+            ))
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("terminal descendant {pid} survived release");
     }
 }

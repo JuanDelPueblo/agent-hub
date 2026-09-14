@@ -3,7 +3,7 @@
   [class]="state.wsStatus()"
   role="status"
   [matTooltip]="tooltip()"
-  [attr.aria-label]="'Event stream ' + state.wsStatus()"
+  [attr.aria-label]="ariaLabel()"
 >
   <span class="status-dot"></span>
   <span class="status-label">{{ state.wsStatus() }}</span>

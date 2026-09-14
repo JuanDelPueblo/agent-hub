@@ -2,17 +2,20 @@ import { OnDestroy, Service, signal } from '@angular/core';
 import { Subject } from 'rxjs';
 import type { SessionEvent } from './api/types';
 
-export type SocketStatus = 'connecting' | 'connected' | 'disconnected';
+export type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 /** Owns only the browser transport; application meaning is handled by state. */
 @Service()
 export class EventSocketService implements OnDestroy {
   readonly status = signal<SocketStatus>('connecting');
   readonly events = new Subject<SessionEvent>();
+  readonly replayGaps = new Subject<void>();
+  readonly errorMessage = signal('');
 
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  private fatal = false;
   private lastSequence = 0;
 
   connect(): void {
@@ -38,7 +41,15 @@ export class EventSocketService implements OnDestroy {
 
     this.socket.addEventListener('message', (message) => {
       try {
-        const data = JSON.parse(String(message.data)) as Partial<SessionEvent>;
+        const data = JSON.parse(String(message.data)) as Partial<SessionEvent> & { type?: string; error?: string };
+        if (data.type === 'stream_error' || data.type === 'replay_gap') {
+          if (data.type === 'replay_gap') this.replayGaps.next();
+          this.fatal = true;
+          this.errorMessage.set(data.error ?? 'Durable event history could not be replayed');
+          this.status.set('error');
+          this.socket?.close();
+          return;
+        }
         if (typeof data.seq !== 'number' || data.seq <= this.lastSequence) return;
         this.lastSequence = data.seq;
         this.events.next(data as SessionEvent);
@@ -49,8 +60,10 @@ export class EventSocketService implements OnDestroy {
 
     this.socket.addEventListener('close', () => {
       this.socket = null;
-      this.status.set('disconnected');
-      this.scheduleReconnect();
+      if (!this.fatal) {
+        this.status.set('disconnected');
+        this.scheduleReconnect();
+      }
     });
 
     this.socket.addEventListener('error', () => {
@@ -71,6 +84,7 @@ export class EventSocketService implements OnDestroy {
     this.socket?.close();
     this.socket = null;
     this.events.complete();
+    this.replayGaps.complete();
   }
 
   ngOnDestroy(): void {
