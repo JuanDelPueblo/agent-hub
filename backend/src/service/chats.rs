@@ -65,12 +65,18 @@ impl HubService {
                 None
             }
         };
+        let active_tasks = self
+            .sessions
+            .task_tracker()
+            .active_task_count(&chat.id)
+            .await;
         ChatView {
             chat,
             turn_started_at,
             process_state,
             turn_state,
             workspace,
+            active_tasks,
         }
     }
 
@@ -444,10 +450,96 @@ impl HubService {
                     message: rejected.message.clone(),
                 });
             }
+            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message }) =
+                error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
+            {
+                return Err(ServiceError::EnvrcBlocked {
+                    path: path.clone(),
+                    message: message.clone(),
+                });
+            }
             return Err(error.into());
         }
         let chat = self.store.chat(chat_id)?;
         Ok(self.view(chat).await)
+    }
+
+    pub async fn authorize_chat_environment(&self, chat_id: &str) -> ServiceResult<ChatView> {
+        let chat = self.store.chat(chat_id)?;
+        if chat.archived {
+            return Err(ServiceError::Invalid(
+                "Chat is archived; restore it before authorizing its environment".into(),
+            ));
+        }
+        let project = self.store.project(&chat.project_id)?;
+        let workspace = self.store.workspace(&chat.id)?;
+        let state_worktrees = self.store.worktrees_dir();
+        let session = self.live(chat_id).await?;
+
+        let cwd = session.cwd().to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            crate::session::validate_persistent_workspace(
+                &chat,
+                &project,
+                workspace.as_ref(),
+                &state_worktrees,
+                &cwd,
+            )
+        })
+        .await
+        .map_err(|e| ServiceError::Internal(e.into()))??;
+
+        crate::workspace_env::direnv_allow(session.cwd()).await?;
+        self.resume_chat(chat_id).await
+    }
+
+    pub async fn list_chat_tasks(
+        &self,
+        chat_id: &str,
+    ) -> ServiceResult<Vec<crate::tasks::TerminalTaskSummary>> {
+        self.store.chat(chat_id)?;
+        Ok(self.sessions.task_tracker().list_chat_tasks(chat_id).await)
+    }
+
+    pub async fn get_chat_task(
+        &self,
+        chat_id: &str,
+        task_id: &str,
+    ) -> ServiceResult<crate::tasks::TerminalTaskDetails> {
+        self.store.chat(chat_id)?;
+        let task = self
+            .sessions
+            .task_tracker()
+            .get_task(task_id)
+            .await
+            .ok_or_else(|| ServiceError::NotFound(format!("Task {task_id} not found")))?;
+        if task.chat_id != chat_id {
+            return Err(ServiceError::NotFound(format!(
+                "Task {task_id} does not belong to chat {chat_id}"
+            )));
+        }
+        Ok(task.details().await)
+    }
+
+    pub async fn stop_chat_task(
+        &self,
+        chat_id: &str,
+        task_id: &str,
+    ) -> ServiceResult<crate::tasks::TerminalTaskSummary> {
+        self.store.chat(chat_id)?;
+        let task = self
+            .sessions
+            .task_tracker()
+            .get_task(task_id)
+            .await
+            .ok_or_else(|| ServiceError::NotFound(format!("Task {task_id} not found")))?;
+        if task.chat_id != chat_id {
+            return Err(ServiceError::NotFound(format!(
+                "Task {task_id} does not belong to chat {chat_id}"
+            )));
+        }
+        task.stop();
+        Ok(task.summary().await)
     }
 
     pub async fn clear_saved_config(&self, chat_id: &str, option_id: &str) -> ServiceResult<()> {
@@ -487,6 +579,14 @@ impl HubService {
                 return Err(ServiceError::SavedConfigRejected {
                     option_id: rejected.option_id.clone(),
                     message: rejected.message.clone(),
+                });
+            }
+            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message }) =
+                error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
+            {
+                return Err(ServiceError::EnvrcBlocked {
+                    path: path.clone(),
+                    message: message.clone(),
                 });
             }
             return Err(error.into());

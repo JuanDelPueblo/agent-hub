@@ -13,6 +13,8 @@ No more shuffling around various tmux sessions or relying on each agent's propri
 - **Dynamic Titles**: ACP agents automatically supply chat titles after conversations start, with persistent storage and optional manual rename overrides.
 - **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Pueblo Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
 - **Single-Service Architecture**: Single Rust binary embeds production-hashed frontend assets with optimized HTTP caching and WebSocket streaming.
+- **Workspace Environments & Direnv Authorization**: Automatically loads authorized workspace environments via direnv (`direnv export json`) for both main project checkouts and isolated worktrees. When an `.envrc` is blocked or untrusted, Pueblo Hub surfaces an inline authorization banner in the chat UI, securely invoking `direnv allow` against verified workspace paths.
+- **Terminal Task Supervision**: Long-running ACP terminal commands are tracked as first-class background tasks. Users can monitor active tasks, view bounded UTF-8 output logs, and stop tasks directly from the web interface.
 - **One interface for your agents** - Connect ACP-compatible agents and manage them from the same place instead of jumping between terminals and separate remote interfaces. Pueblo Hub currently works with agents such as Codex, Claude Code, and OpenCode.
 
 - **Persistent projects and chats** - Organize chats under projects and come back to them later without having to recreate your setup. Pueblo Hub keeps the agent process and session management behind the scenes so you can focus on the conversation.
@@ -32,6 +34,22 @@ not killed. Set `--prompt-timeout <seconds>` (or
 - **Git work stays safe** - Pueblo Hub treats your existing work as something it does not own. It will not silently reset, clean, stash, rebase, switch, or delete Git work to make its own job easier.
 
 - **Self-hosted** - Run Pueblo Hub on your own machine or server and put it behind the authentication and HTTPS setup you prefer. The backend only binds to localhost by default rather than exposing itself directly to the network.
+
+## Workspace Environments & Terminal Tasks
+
+### Direnv Integration & Authorization
+
+Pueblo Hub integrates with `direnv` to ensure ACP agent processes and terminal executions run with the expected local toolchains, environment variables, and shell configurations:
+- **Automatic Resolution**: Whenever an agent process starts or creates a terminal, Pueblo Hub resolves the authorized environment using `direnv export json`.
+- **Security-First Authorization**: Unapproved `.envrc` files are never auto-executed or sourced directly. If direnv reports that a workspace `.envrc` is blocked, Pueblo Hub catches the blocked state and surfaces a "Workspace environment blocked" banner in the web UI.
+- **Strict Path Validation**: Environment authorizations only operate on paths derived from authenticated, Pueblo-managed chat workspace metadata, preventing path injection or traversal.
+
+### Terminal Task Tracking
+
+Agents that invoke long-running build, test, or watch commands via ACP terminal callbacks are supervised by Pueblo Hub:
+- **Active Task Monitoring**: Chat headers and cards indicate ongoing terminal tasks and keep the chat in a working status.
+- **Inspection & Control**: The "Terminal tasks" dialog provides a split-view of recent and running commands, command-line arguments, working directory, exit status, and real-time output.
+- **Manual Termination**: Users can terminate running background commands at any time.
 
 ## Quick start
 

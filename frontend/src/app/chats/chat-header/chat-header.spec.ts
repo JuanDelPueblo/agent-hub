@@ -136,6 +136,18 @@ describe('ChatHeaderComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.workspace-badge')).toBeNull();
   });
+
+  it('renders terminal task badge when active tasks exist and hides when zero', () => {
+    fixture.componentRef.setInput('chat', { ...mockChat, active_tasks: 2 });
+    fixture.detectChanges();
+    const badge = fixture.nativeElement.querySelector('.tasks-badge');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain('2 active tasks');
+
+    fixture.componentRef.setInput('chat', { ...mockChat, active_tasks: 0 });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.tasks-badge')).toBeNull();
+  });
 });
 
 describe('ChatHeaderComponent working duration', () => {

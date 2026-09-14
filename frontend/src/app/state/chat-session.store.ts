@@ -44,6 +44,7 @@ export class ChatSessionStore {
   readonly historyLoadingByChat = signal<ReadonlySet<string>>(new Set());
   readonly historyHasOlderByChat = signal<BooleanMap>({});
   readonly historyErrors = signal<ErrorMap>({});
+  readonly blockedEnvrcByChat = signal<Record<string, { path: string; message: string }>>({});
 
   private readonly inFlightConnections = new Map<string, Promise<Chat>>();
   private readonly inFlightConfigs = new Map<string, Promise<ConfigOption[]>>();
@@ -128,6 +129,11 @@ export class ChatSessionStore {
             this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
           }
         }
+        if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
+          const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+          const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
+          this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
+        }
         throw error;
       } finally {
         this.setSetValue(this.connectingChats, chatId, false);
@@ -140,6 +146,12 @@ export class ChatSessionStore {
 
   retryConnection(chatId: string): Promise<void> {
     return this.loadChatConfig(chatId).then(() => undefined).catch(() => undefined);
+  }
+
+  async authorizeChatEnvironment(chatId: string): Promise<void> {
+    await this.api.authorizeChatEnvironment(chatId);
+    this.clearError(chatId);
+    await this.connectChat(chatId).catch(() => undefined);
   }
 
   connectChat(chatId: string): Promise<Chat> {
@@ -162,6 +174,11 @@ export class ChatSessionStore {
               if (typeof optionId === 'string') {
                 this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
               }
+            }
+            if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
+              const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+              const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
+              this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
             }
           }
           throw error;
@@ -202,6 +219,11 @@ export class ChatSessionStore {
         if (typeof optionId === 'string') {
           this.rejectedConfigByChat.update((current) => ({ ...current, [chatId]: optionId }));
         }
+      }
+      if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
+        const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+        const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
+        this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
       }
       this.setError(chatId, this.errorMessage(error, 'Failed to send prompt'));
       throw error;
@@ -328,6 +350,7 @@ export class ChatSessionStore {
       connectError: this.connectErrors()[chatId],
       rejectedConfig: this.rejectedConfigByChat()[chatId],
       items,
+      activeTasks: chat?.active_tasks,
     });
   }
 
@@ -383,6 +406,7 @@ export class ChatSessionStore {
       this.configLoadedByChat,
       this.connectErrors,
       this.rejectedConfigByChat,
+      this.blockedEnvrcByChat,
       this.historyHasOlderByChat,
       this.historyErrors,
       this.historyCursors,
@@ -450,6 +474,12 @@ export class ChatSessionStore {
 
   private clearError(chatId: string): void {
     this.connectErrors.update((current) => {
+      if (!(chatId in current)) return current;
+      const next = { ...current };
+      delete next[chatId];
+      return next;
+    });
+    this.blockedEnvrcByChat.update((current) => {
       if (!(chatId in current)) return current;
       const next = { ...current };
       delete next[chatId];

@@ -11,13 +11,17 @@
       @if (connectError()) {
         <div class="status-banner error-banner" role="alert">
           <div class="banner-content">
-            <mat-icon>error_outline</mat-icon>
+            <mat-icon>{{ blockedEnvrc() ? 'lock' : 'error_outline' }}</mat-icon>
             <div class="banner-text">
-              <strong>Connection failed</strong>
+              <strong>{{ blockedEnvrc() ? 'Workspace environment blocked' : 'Connection failed' }}</strong>
               <span>{{ connectError() }}</span>
             </div>
           </div>
-          @if (rejectedConfig()) {
+          @if (blockedEnvrc()) {
+            <button mat-flat-button color="primary" type="button" [disabled]="authorizingEnv()" (click)="authorizeEnvironment()">
+              <span>{{ authorizingEnv() ? 'Authorizing…' : 'Authorize environment' }}</span>
+            </button>
+          } @else if (rejectedConfig()) {
             <button mat-flat-button type="button" (click)="resetConfig()">Reset {{ rejectedConfig() }} and retry</button>
           } @else {
             <button mat-flat-button type="button" (click)="retry()">Retry connection</button>

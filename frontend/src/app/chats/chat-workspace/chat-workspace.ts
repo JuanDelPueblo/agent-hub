@@ -36,6 +36,8 @@ export class ChatWorkspaceComponent {
   readonly historyLoading = computed(() => this.chatId() ? this.state.historyLoadingByChat().has(this.chatId()) : false);
   readonly historyError = computed(() => this.chatId() ? this.state.historyErrors()[this.chatId()] ?? '' : '');
   readonly hasOlderHistory = computed(() => this.chatId() ? this.state.historyHasOlderByChat()[this.chatId()] === true : false);
+  readonly blockedEnvrc = computed(() => this.chatId() ? this.state.blockedEnvrcByChat()[this.chatId()] ?? null : null);
+  readonly authorizingEnv = signal(false);
 
   constructor() {
     this.breakpointObserver.observe('(max-width: 839px)').pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ matches }) => this.compact.set(matches));
@@ -46,4 +48,16 @@ export class ChatWorkspaceComponent {
   resetConfig(): void { if (this.chatId()) void this.state.resetRejectedConfig(this.chatId()); }
   loadOlderHistory(): void { if (this.chatId()) void this.state.loadOlderHistory(this.chatId()); }
   retryHistory(): void { if (this.chatId()) void this.state.retryHistory(this.chatId()); }
+  async authorizeEnvironment(): Promise<void> {
+    const id = this.chatId();
+    if (!id) return;
+    this.authorizingEnv.set(true);
+    try {
+      await this.state.authorizeChatEnvironment(id);
+    } catch (err) {
+      console.error("Failed to authorize environment", err);
+    } finally {
+      this.authorizingEnv.set(false);
+    }
+  }
 }

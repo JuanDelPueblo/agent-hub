@@ -44,6 +44,10 @@ const routes = [
   ['PATCH', /^\/api\/chats\/([^/]+)\/config$/, setConfig],
   ['DELETE', /^\/api\/chats\/([^/]+)\/config\/([^/]+)$/, clearConfig],
   ['GET', /^\/api\/chats\/([^/]+)\/remote-sessions$/, remoteSessions],
+  ['POST', /^\/api\/chats\/([^/]+)\/environment\/authorize$/, authorizeEnvironment],
+  ['GET', /^\/api\/chats\/([^/]+)\/tasks$/, listTasks],
+  ['GET', /^\/api\/chats\/([^/]+)\/tasks\/([^/]+)$/, getTask],
+  ['POST', /^\/api\/chats\/([^/]+)\/tasks\/([^/]+)\/stop$/, stopTask],
   ['GET', /^\/api\/agents$/, () => json(AGENTS)],
   ['GET', /^\/api\/status$/, getStatus],
 ];
@@ -72,7 +76,10 @@ const server = createServer(async (request, response) => {
     } catch (error) {
       const status = error.status ?? 500;
       log(`${method} ${url.pathname} -> ${status} ${error.message}`);
-      send(response, { status, value: { error: error.message } });
+      const errBody = { error: error.message };
+      if (error.code) errBody.code = error.code;
+      if (error.details) errBody.details = error.details;
+      send(response, { status, value: errBody });
     }
     return;
   }
@@ -323,6 +330,15 @@ function deleteChat({ params }) {
 
 function promptChat({ params, body }) {
   const chat = requireChat(params[0]);
+  if (state.isEnvironmentBlocked(chat.id)) {
+    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
+      code: 'envrc_blocked',
+      details: {
+        path: `${PROJECT_ROOT}/.envrc`,
+        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
+      },
+    });
+  }
   const text = typeof body.text === 'string' ? body.text : '';
   if (!text.trim() || text.length > 100_000) {
     throw httpError(400, 'Prompt must contain 1–100000 bytes');
@@ -346,6 +362,15 @@ function cancelChat({ params }) {
 async function resumeChat({ params }) {
   const chat = requireChat(params[0]);
   if (chat.archived) throw httpError(409, 'Restore the chat before you connect it');
+  if (state.isEnvironmentBlocked(chat.id)) {
+    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
+      code: 'envrc_blocked',
+      details: {
+        path: `${PROJECT_ROOT}/.envrc`,
+        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
+      },
+    });
+  }
 
   state.setRuntime(chat.id, 'STARTING', 'IDLE');
   if (!chat.acp_session_id) chat.acp_session_id = `acp-${randomUUID()}`;
@@ -541,9 +566,10 @@ function json(value, status = 200) {
   return { status, value };
 }
 
-function httpError(status, message) {
+function httpError(status, message, extra = {}) {
   const error = new Error(message);
   error.status = status;
+  Object.assign(error, extra);
   return error;
 }
 
@@ -615,4 +641,29 @@ function parseArgs(argv) {
 
 function log(message) {
   console.log(`[fake-backend] ${message}`);
+}
+
+function authorizeEnvironment({ params }) {
+  const chat = requireChat(params[0]);
+  state.authorizeEnvironment(chat.id);
+  return json({ success: true });
+}
+
+function listTasks({ params }) {
+  const chat = requireChat(params[0]);
+  return json(state.listTasks(chat.id));
+}
+
+function getTask({ params }) {
+  const chat = requireChat(params[0]);
+  const task = state.getTask(chat.id, params[1]);
+  if (!task) throw httpError(404, 'Task not found');
+  return json(task);
+}
+
+function stopTask({ params }) {
+  const chat = requireChat(params[0]);
+  const stopped = state.stopTask(chat.id, params[1]);
+  if (!stopped) throw httpError(404, 'Task not found');
+  return json({ success: true });
 }

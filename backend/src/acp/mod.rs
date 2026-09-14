@@ -88,6 +88,7 @@ impl AcpClient {
         agent_name: String,
         event_log: Arc<EventLog>,
         store: Option<Arc<crate::store::Store>>,
+        task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
     ) -> anyhow::Result<Self> {
         let proc = AcpProcess::spawn(command, args, env_vars, cwd)?;
 
@@ -102,6 +103,8 @@ impl AcpClient {
             agent_name.clone(),
             event_log.clone(),
             cwd.to_path_buf(),
+            Arc::new(env_vars.clone()),
+            task_tracker,
         ));
 
         let child_root_pid = proc.root_pid;
@@ -1055,12 +1058,15 @@ mod tests {
         let file_path = temp.path().join("note.txt");
         std::fs::write(&file_path, "hello").unwrap();
 
+        let tracker = Arc::new(crate::tasks::TerminalTaskTracker::default());
         let handler = CallbackHandler::new(
             CallbackPolicy::ReadOnly,
             "session-1".into(),
             "codex".into(),
             Arc::new(EventLog::new(100)),
             temp.path().to_path_buf(),
+            Arc::new(std::collections::HashMap::new()),
+            tracker,
         );
 
         let params =

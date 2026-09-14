@@ -101,6 +101,7 @@
               python3
               git
               sqlite
+              direnv
             ];
 
             # The bundled SQLite of rusqlite compiles C sources.
@@ -151,6 +152,7 @@
               python3
               git
               sqlite
+              direnv
             ];
             text = builtins.readFile ./nix/verify.sh;
           };

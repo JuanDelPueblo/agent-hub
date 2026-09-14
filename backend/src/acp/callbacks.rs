@@ -3,20 +3,21 @@ use agent_client_protocol_schema::{
     CreateTerminalRequest, CreateTerminalResponse, KillTerminalRequest, KillTerminalResponse,
     PermissionOptionId, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
     ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, TerminalExitStatus, TerminalId,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+    RequestPermissionResponse, SelectedPermissionOutcome, TerminalOutputRequest,
+    TerminalOutputResponse, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio::sync::{oneshot, Notify, RwLock};
+use tokio::sync::{oneshot, RwLock};
 
 use super::process::AcpProcess;
 use crate::events::{EventLog, EventPayload};
+use crate::tasks::{ManagedTask, TerminalTaskTracker};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -32,42 +33,16 @@ pub struct PendingPermission {
     pub tx: oneshot::Sender<bool>,
 }
 
-struct TerminalBuffer {
-    output: String,
-    truncated: bool,
-}
-
-struct ManagedTerminal {
-    buffer: RwLock<TerminalBuffer>,
-    exit_status: RwLock<Option<TerminalExitStatus>>,
-    exit_notify: Notify,
-    kill_tx: std::sync::Mutex<Option<oneshot::Sender<()>>>,
-    output_limit: Option<usize>,
-}
-
-impl ManagedTerminal {
-    fn new(output_limit: Option<u64>) -> Self {
-        Self {
-            buffer: RwLock::new(TerminalBuffer {
-                output: String::new(),
-                truncated: false,
-            }),
-            exit_status: RwLock::new(None),
-            exit_notify: Notify::new(),
-            kill_tx: std::sync::Mutex::new(None),
-            output_limit: output_limit.and_then(|limit| usize::try_from(limit).ok()),
-        }
-    }
-}
-
 pub struct CallbackHandler {
     policy: std::sync::RwLock<CallbackPolicy>,
     session_id: String,
     agent_name: String,
     event_log: Arc<EventLog>,
     cwd: PathBuf,
+    base_env: Arc<HashMap<String, String>>,
     pub pending_permissions: Arc<RwLock<HashMap<String, PendingPermission>>>,
-    terminals: Arc<RwLock<HashMap<String, Arc<ManagedTerminal>>>>,
+    task_tracker: Arc<TerminalTaskTracker>,
+    active_terminals: Arc<RwLock<HashSet<String>>>,
 }
 
 impl CallbackHandler {
@@ -83,6 +58,8 @@ impl CallbackHandler {
         agent_name: String,
         event_log: Arc<EventLog>,
         cwd: PathBuf,
+        base_env: Arc<HashMap<String, String>>,
+        task_tracker: Arc<TerminalTaskTracker>,
     ) -> Self {
         Self {
             policy: std::sync::RwLock::new(policy),
@@ -90,8 +67,10 @@ impl CallbackHandler {
             agent_name,
             event_log,
             cwd,
+            base_env,
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
-            terminals: Arc::new(RwLock::new(HashMap::new())),
+            task_tracker,
+            active_terminals: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -113,31 +92,24 @@ impl CallbackHandler {
             let canonical_parent = parent.canonicalize().map_err(|e| {
                 agent_client_protocol_schema::Error::new(
                     -32002,
-                    format!("Path resolve failed: {}", e),
+                    format!("Path canonicalization failed: {}", e),
                 )
             })?;
-            let file_name = absolute.file_name().ok_or_else(|| {
-                agent_client_protocol_schema::Error::new(-32002, "Path has no file name")
+            let leaf = absolute.file_name().ok_or_else(|| {
+                agent_client_protocol_schema::Error::new(-32002, "Path has no leaf")
             })?;
-            canonical_parent.join(file_name)
+            canonical_parent.join(leaf)
         } else {
             absolute.canonicalize().map_err(|e| {
                 agent_client_protocol_schema::Error::new(
                     -32002,
-                    format!("Path resolve failed: {}", e),
+                    format!("Path canonicalization failed: {}", e),
                 )
             })?
         };
 
-        let cwd_canonical = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
-        if !canonical.starts_with(&cwd_canonical) {
-            return Err(agent_client_protocol_schema::Error::new(
-                -32001,
-                "Path outside project directory",
-            ));
-        }
-
-        Ok(absolute)
+        self.validate_path(&canonical, allow_missing_leaf)?;
+        Ok(canonical)
     }
 
     fn validate_path(
@@ -145,114 +117,146 @@ impl CallbackHandler {
         path: &std::path::Path,
         allow_missing_leaf: bool,
     ) -> Result<(), agent_client_protocol_schema::Error> {
-        let _ = self.resolve_path(path, allow_missing_leaf)?;
+        let canonical_cwd = self.cwd.canonicalize().map_err(|e| {
+            agent_client_protocol_schema::Error::new(
+                -32002,
+                format!("Failed to canonicalize cwd: {}", e),
+            )
+        })?;
+
+        let canonical_target = if allow_missing_leaf && !path.exists() {
+            let parent = path.parent().ok_or_else(|| {
+                agent_client_protocol_schema::Error::new(-32002, "Path has no parent")
+            })?;
+            let canonical_parent = parent.canonicalize().map_err(|e| {
+                agent_client_protocol_schema::Error::new(
+                    -32002,
+                    format!("Path canonicalization failed: {}", e),
+                )
+            })?;
+            let leaf = path.file_name().ok_or_else(|| {
+                agent_client_protocol_schema::Error::new(-32002, "Path has no leaf")
+            })?;
+            canonical_parent.join(leaf)
+        } else {
+            path.canonicalize().map_err(|e| {
+                agent_client_protocol_schema::Error::new(
+                    -32002,
+                    format!("Path canonicalization failed: {}", e),
+                )
+            })?
+        };
+
+        if !canonical_target.starts_with(&canonical_cwd) {
+            return Err(agent_client_protocol_schema::Error::new(
+                -32003,
+                format!(
+                    "Path {} is outside allowed workspace {}",
+                    path.display(),
+                    self.cwd.display()
+                ),
+            ));
+        }
+
         Ok(())
+    }
+
+    async fn get_terminal(
+        &self,
+        terminal_id: &agent_client_protocol_schema::TerminalId,
+    ) -> agent_client_protocol_schema::Result<Arc<ManagedTask>> {
+        if !self
+            .active_terminals
+            .read()
+            .await
+            .contains(terminal_id.0.as_ref())
+        {
+            return Err(agent_client_protocol_schema::Error::new(
+                -32004,
+                "Terminal not found",
+            ));
+        }
+        self.task_tracker
+            .get_task(terminal_id.0.as_ref())
+            .await
+            .ok_or_else(|| agent_client_protocol_schema::Error::new(-32004, "Terminal not found"))
     }
 
     async fn request_user_permission(
         &self,
-        method: &str,
+        tool_name: &str,
         description: String,
         title: Option<String>,
         kind: Option<String>,
     ) -> bool {
+        let (tx, rx) = oneshot::channel();
         let perm_id = uuid::Uuid::new_v4().to_string();
 
-        let (tx, rx) = oneshot::channel();
         self.pending_permissions
             .write()
             .await
             .insert(perm_id.clone(), PendingPermission { tx });
 
-        if self
-            .event_log
-            .append(
-                &self.session_id,
-                &self.agent_name,
-                EventPayload::PermissionRequest {
-                    id: perm_id.clone(),
-                    method: method.to_string(),
-                    description,
-                    title,
-                    kind,
-                },
-            )
-            .is_err()
-        {
+        if let Err(e) = self.event_log.append(
+            &self.session_id,
+            &self.agent_name,
+            EventPayload::PermissionRequest {
+                id: perm_id.clone(),
+                method: tool_name.to_string(),
+                description,
+                title,
+                kind,
+            },
+        ) {
+            tracing::error!("Failed to emit PermissionRequest event: {}", e);
             self.pending_permissions.write().await.remove(&perm_id);
             return false;
         }
 
-        let granted = tokio::time::timeout(std::time::Duration::from_secs(600), rx)
-            .await
-            .ok()
-            .and_then(|result| result.ok())
-            .unwrap_or(false);
-
-        {
-            let mut pending = self.pending_permissions.write().await;
-            pending.remove(&perm_id);
-        }
-
-        if let Err(error) = self.event_log.append(
-            &self.session_id,
-            &self.agent_name,
-            EventPayload::PermissionResponse {
-                id: perm_id,
-                granted,
-            },
-        ) {
-            tracing::error!(%error, "Failed to persist permission response");
-            return false;
-        }
-
-        granted
+        rx.await.unwrap_or(false)
     }
 
     async fn with_write_permission(
         &self,
-        method: &str,
+        tool_name: &str,
         description: String,
     ) -> agent_client_protocol_schema::Result<()> {
         match self.policy() {
-            CallbackPolicy::DenyAll | CallbackPolicy::ReadOnly => Err(
-                agent_client_protocol_schema::Error::new(-32001, "Operation denied by policy"),
-            ),
-            CallbackPolicy::AutoApprove => Ok(()),
+            CallbackPolicy::DenyAll => Err(agent_client_protocol_schema::Error::new(
+                -32001,
+                "Permission denied by policy",
+            )),
+            CallbackPolicy::ReadOnly => Err(agent_client_protocol_schema::Error::new(
+                -32001,
+                "Write operations not allowed in ReadOnly mode",
+            )),
             CallbackPolicy::Ask => {
-                if self
-                    .request_user_permission(method, description, None, None)
-                    .await
-                {
+                let granted = self
+                    .request_user_permission(tool_name, description, None, None)
+                    .await;
+                if granted {
                     Ok(())
                 } else {
                     Err(agent_client_protocol_schema::Error::new(
                         -32001,
-                        "Operation denied by user",
+                        "Permission denied by user",
                     ))
                 }
             }
+            CallbackPolicy::AutoApprove => Ok(()),
         }
-    }
-
-    async fn get_terminal(
-        &self,
-        terminal_id: &TerminalId,
-    ) -> agent_client_protocol_schema::Result<Arc<ManagedTerminal>> {
-        self.terminals
-            .read()
-            .await
-            .get(terminal_id.0.as_ref())
-            .cloned()
-            .ok_or_else(|| agent_client_protocol_schema::Error::new(-32004, "Terminal not found"))
     }
 
     pub async fn handle_request_permission(
         &self,
         req: RequestPermissionRequest,
     ) -> RequestPermissionResponse {
-        // Prefer the *-Once variant so an automated decision never grants the
-        // agent a standing always-allow/always-deny it was never asked for.
+        let make_response = |option_id: PermissionOptionId| {
+            RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+                SelectedPermissionOutcome::new(option_id),
+            ))
+        };
+
         let deny_option = req
             .options
             .iter()
@@ -290,12 +294,6 @@ impl CallbackHandler {
                 })
             })
             .map(|o| o.option_id.clone());
-
-        let make_response = |option_id: PermissionOptionId| -> RequestPermissionResponse {
-            RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
-                SelectedPermissionOutcome::new(option_id),
-            ))
-        };
 
         match self.policy() {
             CallbackPolicy::DenyAll => {
@@ -390,10 +388,7 @@ impl CallbackHandler {
         };
         self.validate_path(&cwd, false)?;
 
-        let mut env = HashMap::new();
-        for env_var in &req.env {
-            env.insert(env_var.name.clone(), env_var.value.clone());
-        }
+        let env = crate::workspace_env::merge_terminal_env(&self.base_env, &req.env);
         let process = AcpProcess::spawn(&req.command, &req.args, &env, &cwd).map_err(|e| {
             agent_client_protocol_schema::Error::new(
                 -32002,
@@ -401,29 +396,46 @@ impl CallbackHandler {
             )
         })?;
 
-        let terminal = Arc::new(ManagedTerminal::new(req.output_byte_limit));
         let terminal_id = uuid::Uuid::new_v4().to_string();
+        let cmd_summary = if req.args.is_empty() {
+            req.command.clone()
+        } else {
+            format!("{} {}", req.command, req.args.join(" "))
+        };
+        let task = Arc::new(ManagedTask::new(
+            terminal_id.clone(),
+            self.session_id.clone(),
+            cmd_summary,
+            cwd.clone(),
+            req.output_byte_limit,
+        ));
+
         let stdout = process.stdout;
         let stderr = process.stderr;
         drop(process.stdin);
         let (kill_tx, kill_rx) = oneshot::channel();
-        *terminal.kill_tx.lock().unwrap() = Some(kill_tx);
+        *task.kill_tx.lock().unwrap() = Some(kill_tx);
 
-        self.terminals
+        self.task_tracker.register_task(task.clone()).await;
+        self.active_terminals
             .write()
             .await
-            .insert(terminal_id.clone(), terminal.clone());
+            .insert(terminal_id.clone());
 
         let drain_handles = vec![
-            tokio::spawn(drain_terminal_stream(stdout, terminal.clone())),
-            tokio::spawn(drain_terminal_stream(stderr, terminal.clone())),
+            tokio::spawn(drain_terminal_stream(stdout, task.clone())),
+            tokio::spawn(drain_terminal_stream(stderr, task.clone())),
         ];
         tokio::spawn(supervise_terminal(
             process.child,
-            terminal,
+            task,
             kill_rx,
             drain_handles,
+            self.event_log.clone(),
         ));
+        let _ = self
+            .event_log
+            .append("", "", EventPayload::MetadataChanged {});
 
         Ok(CreateTerminalResponse::new(terminal_id))
     }
@@ -432,9 +444,9 @@ impl CallbackHandler {
         &self,
         req: TerminalOutputRequest,
     ) -> agent_client_protocol_schema::Result<TerminalOutputResponse> {
-        let terminal = self.get_terminal(&req.terminal_id).await?;
-        let buffer = terminal.buffer.read().await;
-        let exit_status = terminal.exit_status.read().await.clone();
+        let task = self.get_terminal(&req.terminal_id).await?;
+        let buffer = task.buffer.read().await;
+        let exit_status = task.exit_status.read().await.clone();
         Ok(
             TerminalOutputResponse::new(buffer.output.clone(), buffer.truncated)
                 .exit_status(exit_status),
@@ -445,17 +457,12 @@ impl CallbackHandler {
         &self,
         req: ReleaseTerminalRequest,
     ) -> agent_client_protocol_schema::Result<ReleaseTerminalResponse> {
-        let terminal = self
-            .terminals
+        let task = self.get_terminal(&req.terminal_id).await?;
+        self.active_terminals
             .write()
             .await
-            .remove(req.terminal_id.0.as_ref())
-            .ok_or_else(|| {
-                agent_client_protocol_schema::Error::new(-32004, "Terminal not found")
-            })?;
-        if let Some(kill_tx) = terminal.kill_tx.lock().unwrap().take() {
-            let _ = kill_tx.send(());
-        }
+            .remove(req.terminal_id.0.as_ref());
+        task.stop();
         Ok(ReleaseTerminalResponse::new())
     }
 
@@ -463,10 +470,8 @@ impl CallbackHandler {
         &self,
         req: KillTerminalRequest,
     ) -> agent_client_protocol_schema::Result<KillTerminalResponse> {
-        let terminal = self.get_terminal(&req.terminal_id).await?;
-        if let Some(kill_tx) = terminal.kill_tx.lock().unwrap().take() {
-            let _ = kill_tx.send(());
-        }
+        let task = self.get_terminal(&req.terminal_id).await?;
+        task.stop();
         Ok(KillTerminalResponse::new())
     }
 
@@ -474,13 +479,13 @@ impl CallbackHandler {
         &self,
         req: WaitForTerminalExitRequest,
     ) -> agent_client_protocol_schema::Result<WaitForTerminalExitResponse> {
-        let terminal = self.get_terminal(&req.terminal_id).await?;
+        let task = self.get_terminal(&req.terminal_id).await?;
         loop {
-            let notified = terminal.exit_notify.notified();
+            let notified = task.exit_notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
 
-            if let Some(exit_status) = terminal.exit_status.read().await.clone() {
+            if let Some(exit_status) = task.exit_status.read().await.clone() {
                 return Ok(WaitForTerminalExitResponse::new(exit_status));
             }
             notified.await;
@@ -505,23 +510,16 @@ impl CallbackHandler {
     pub async fn shutdown(&self) {
         self.cancel_all_pending().await;
 
-        let terminals = {
-            let mut terminals = self.terminals.write().await;
-            terminals
-                .drain()
-                .map(|(_, terminal)| terminal)
-                .collect::<Vec<_>>()
-        };
-
-        for terminal in terminals {
-            if let Some(kill_tx) = terminal.kill_tx.lock().unwrap().take() {
-                let _ = kill_tx.send(());
+        let active_ids: Vec<String> = self.active_terminals.write().await.drain().collect();
+        for id in active_ids {
+            if let Some(task) = self.task_tracker.get_task(&id).await {
+                task.stop();
             }
         }
     }
 }
 
-async fn drain_terminal_stream<R>(mut reader: R, terminal: Arc<ManagedTerminal>)
+async fn drain_terminal_stream<R>(mut reader: R, task: Arc<ManagedTask>)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
@@ -545,7 +543,7 @@ where
 
                 if valid_len > 0 {
                     let text = unsafe { std::str::from_utf8_unchecked(&data[..valid_len]) };
-                    append_terminal_output(&terminal, text).await;
+                    task.append_output(text).await;
                 }
 
                 let remaining = &data[valid_len..];
@@ -553,7 +551,7 @@ where
                     leftover.clear();
                 } else if remaining.len() >= 4 {
                     let chunk = String::from_utf8_lossy(remaining);
-                    append_terminal_output(&terminal, chunk.as_ref()).await;
+                    task.append_output(chunk.as_ref()).await;
                     leftover.clear();
                 } else {
                     let saved = remaining.to_vec();
@@ -567,31 +565,16 @@ where
 
     if !leftover.is_empty() {
         let chunk = String::from_utf8_lossy(&leftover);
-        append_terminal_output(&terminal, chunk.as_ref()).await;
-    }
-}
-
-async fn append_terminal_output(terminal: &ManagedTerminal, chunk: &str) {
-    let mut buffer = terminal.buffer.write().await;
-    buffer.output.push_str(chunk);
-
-    if let Some(limit) = terminal.output_limit {
-        if buffer.output.len() > limit {
-            let mut trim_at = buffer.output.len() - limit;
-            while trim_at < buffer.output.len() && !buffer.output.is_char_boundary(trim_at) {
-                trim_at += 1;
-            }
-            buffer.output.drain(..trim_at);
-            buffer.truncated = true;
-        }
+        task.append_output(chunk.as_ref()).await;
     }
 }
 
 async fn supervise_terminal(
     mut child: Box<dyn process_wrap::tokio::TokioChildWrapper>,
-    terminal: Arc<ManagedTerminal>,
+    task: Arc<ManagedTask>,
     mut kill_rx: oneshot::Receiver<()>,
     drain_handles: Vec<tokio::task::JoinHandle<()>>,
+    event_log: Arc<crate::events::EventLog>,
 ) {
     let status = loop {
         tokio::select! {
@@ -614,15 +597,8 @@ async fn supervise_terminal(
         let _ = handle.await;
     }
 
-    let exit_status = match status {
-        Ok(status) => TerminalExitStatus::new()
-            .exit_code(status.code().and_then(|code| u32::try_from(code).ok()))
-            .signal(None::<String>),
-        Err(err) => TerminalExitStatus::new().signal(Some(format!("wait_error: {}", err))),
-    };
-
-    *terminal.exit_status.write().await = Some(exit_status);
-    terminal.exit_notify.notify_waiters();
+    task.record_exit(status).await;
+    let _ = event_log.append("", "", EventPayload::MetadataChanged {});
 }
 
 fn format_permission_tool_call(
@@ -738,7 +714,7 @@ fn format_permission_tool_call(
 #[cfg(test)]
 mod tests {
     use super::agent_client_protocol_schema::{
-        CreateTerminalRequest, PermissionOption, PermissionOptionKind, ReleaseTerminalRequest,
+        CreateTerminalRequest, PermissionOption, ReleaseTerminalRequest,
         SessionId as SchemaSessionId, TerminalOutputRequest, WaitForTerminalExitRequest,
         WriteTextFileRequest,
     };
@@ -747,12 +723,15 @@ mod tests {
 
     fn make_handler(policy: CallbackPolicy) -> CallbackHandler {
         let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
         CallbackHandler::new(
             policy,
             "test-session".into(),
             "test-agent".into(),
             event_log,
             std::env::temp_dir(),
+            Arc::new(std::env::vars().collect()),
+            tracker,
         )
     }
 
@@ -811,12 +790,15 @@ mod tests {
     async fn test_auto_approve_allows_creating_new_file() {
         let temp = tempfile::tempdir().unwrap();
         let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
         let handler = CallbackHandler::new(
             CallbackPolicy::AutoApprove,
             "test-session".into(),
             "test-agent".into(),
             event_log,
             temp.path().to_path_buf(),
+            Arc::new(std::env::vars().collect()),
+            tracker,
         );
         let target = temp.path().join("new-file.txt");
 
@@ -840,9 +822,13 @@ mod tests {
                 PermissionOption::new(
                     "allow-always",
                     "Always allow",
-                    PermissionOptionKind::AllowAlways,
+                    agent_client_protocol_schema::PermissionOptionKind::AllowAlways,
                 ),
-                PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce),
+                PermissionOption::new(
+                    "allow-once",
+                    "Allow once",
+                    agent_client_protocol_schema::PermissionOptionKind::AllowOnce,
+                ),
             ],
         );
 
@@ -858,12 +844,15 @@ mod tests {
     #[tokio::test]
     async fn test_read_only_denies_permission_requests() {
         let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
         let handler = CallbackHandler::new(
             CallbackPolicy::ReadOnly,
             "test-session".into(),
             "test-agent".into(),
             event_log,
             std::env::temp_dir(),
+            Arc::new(std::env::vars().collect()),
+            tracker,
         );
 
         let request = RequestPermissionRequest::new(
@@ -873,8 +862,16 @@ mod tests {
                 agent_client_protocol_schema::ToolCallUpdateFields::new(),
             ),
             vec![
-                PermissionOption::new("allow-1", "Allow once", PermissionOptionKind::AllowOnce),
-                PermissionOption::new("deny-1", "Reject once", PermissionOptionKind::RejectOnce),
+                PermissionOption::new(
+                    "allow-1",
+                    "Allow once",
+                    agent_client_protocol_schema::PermissionOptionKind::AllowOnce,
+                ),
+                PermissionOption::new(
+                    "deny-1",
+                    "Reject once",
+                    agent_client_protocol_schema::PermissionOptionKind::RejectOnce,
+                ),
             ],
         );
 
@@ -1047,12 +1044,15 @@ mod tests {
     #[tokio::test]
     async fn releasing_terminal_reaps_descendants() {
         let temp = tempfile::tempdir().unwrap();
+        let tracker = Arc::new(TerminalTaskTracker::default());
         let handler = CallbackHandler::new(
             CallbackPolicy::AutoApprove,
             "session-1".into(),
             "codex".into(),
             Arc::new(crate::events::EventLog::new(100)),
             temp.path().to_path_buf(),
+            Arc::new(std::env::vars().collect()),
+            tracker,
         );
         let response = handler
             .handle_create_terminal(

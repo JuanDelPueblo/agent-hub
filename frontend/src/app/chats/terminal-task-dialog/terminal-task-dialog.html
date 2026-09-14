@@ -1,0 +1,110 @@
+<div class="dialog-header">
+  <h2 mat-dialog-title>
+    <mat-icon>terminal</mat-icon>
+    <span>Terminal tasks</span>
+  </h2>
+  <div class="header-actions">
+    <button mat-icon-button type="button" aria-label="Refresh tasks" matTooltip="Refresh tasks" (click)="loadTasks()" [disabled]="loading()">
+      <mat-icon>refresh</mat-icon>
+    </button>
+    <button mat-icon-button type="button" aria-label="Close" mat-dialog-close>
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+</div>
+
+<mat-dialog-content class="dialog-body">
+  @if (error()) {
+    <div class="task-error-banner" role="alert">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ error() }}</span>
+    </div>
+  }
+
+  @if (loading() && !tasks().length) {
+    <div class="tasks-loading">
+      <mat-spinner diameter="36"></mat-spinner>
+      <span>Loading tasks…</span>
+    </div>
+  } @else if (!tasks().length) {
+    <div class="tasks-empty">
+      <mat-icon>check_circle_outline</mat-icon>
+      <p>No terminal tasks recorded for this chat.</p>
+    </div>
+  } @else {
+    <div class="tasks-container">
+      <div class="task-list">
+        @for (task of tasks(); track task.id) {
+          <button
+            type="button"
+            class="task-item"
+            [class.selected]="selectedTaskId() === task.id"
+            (click)="selectTask(task.id)"
+          >
+            <div class="task-item-header">
+              <span class="task-state-badge" [class]="task.state">{{ task.state }}</span>
+              <span class="task-duration">{{ taskDuration(task) }}</span>
+            </div>
+            <div class="task-command" [title]="task.command">{{ task.command }}</div>
+          </button>
+        }
+      </div>
+
+      <div class="task-details">
+        @if (selectedTaskDetails(); as details) {
+          <div class="details-header">
+            <div class="details-command-block">
+              <div class="command-label">Command</div>
+              <code class="command-text">{{ details.command }}</code>
+              <div class="details-meta">
+                <span><strong>Working directory:</strong> {{ details.cwd }}</span>
+                <span><strong>Started:</strong> {{ details.started_at }}</span>
+                @if (details.exit_code != null) {
+                  <span><strong>Exit code:</strong> {{ details.exit_code }}</span>
+                }
+              </div>
+            </div>
+            @if (details.state === 'running') {
+              <button
+                mat-flat-button
+                color="warn"
+                type="button"
+                [disabled]="stopping()"
+                (click)="stopTask(details.id)"
+              >
+                <mat-icon>stop</mat-icon>
+                <span>{{ stopping() ? 'Stopping…' : 'Stop task' }}</span>
+              </button>
+            }
+          </div>
+
+          <div class="output-section">
+            <div class="output-header">
+              <span>Output</span>
+              @if (details.truncated) {
+                <span class="truncation-badge" matTooltip="Output was truncated to the maximum buffer size">
+                  <mat-icon>warning</mat-icon> Truncated
+                </span>
+              }
+            </div>
+            @if (loadingDetails()) {
+              <div class="details-loading">
+                <mat-spinner diameter="24"></mat-spinner>
+              </div>
+            } @else {
+              <pre class="terminal-output">{{ details.output || '(No output recorded)' }}</pre>
+            }
+          </div>
+        } @else {
+          <div class="details-placeholder">
+            <span>Select a task to view output</span>
+          </div>
+        }
+      </div>
+    </div>
+  }
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-button type="button" mat-dialog-close>Close</button>
+</mat-dialog-actions>

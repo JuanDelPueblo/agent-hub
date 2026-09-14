@@ -193,4 +193,46 @@ describe('fake backend seed history', () => {
       assert.equal('repository_root' in chat.workspace, false);
     }
   });
+  it('tracks terminal tasks and reflects active count in chat view', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const chat = state.createChat(projectId, 'antigravity');
+
+    assert.equal(state.chatView(chat).active_tasks, 0);
+    assert.deepEqual(state.listTasks(chat.id), []);
+
+    const task1 = state.createTask(chat.id, 'cargo test', '/home/dev/projects/agent-hub', 'running tests...');
+    assert.equal(task1.state, 'running');
+    assert.equal(state.chatView(chat).active_tasks, 1);
+
+    const task2 = state.createTask(chat.id, 'npm run build', '/home/dev/projects/agent-hub/frontend');
+    assert.equal(state.chatView(chat).active_tasks, 2);
+
+    const tasks = state.listTasks(chat.id);
+    assert.equal(tasks.length, 2);
+    assert.equal('output' in tasks[0], false); // listTasks omits output
+
+    const detail1 = state.getTask(chat.id, task1.id);
+    assert.equal(detail1.output, 'running tests...');
+
+    state.completeTask(chat.id, task1.id, 0, 'passed');
+    assert.equal(state.getTask(chat.id, task1.id).state, 'completed');
+    assert.equal(state.chatView(chat).active_tasks, 1);
+
+    state.stopTask(chat.id, task2.id);
+    assert.equal(state.getTask(chat.id, task2.id).state, 'stopped');
+    assert.equal(state.chatView(chat).active_tasks, 0);
+  });
+
+  it('manages blocked direnv workspace state and authorization', () => {
+    const state = new FakeState();
+    const projectId = [...state.projects.values()][0].id;
+    const chat = state.createChat(projectId, 'codex');
+
+    assert.equal(state.isEnvironmentBlocked(chat.id), false);
+    state.blockEnvironment(chat.id);
+    assert.equal(state.isEnvironmentBlocked(chat.id), true);
+    state.authorizeEnvironment(chat.id);
+    assert.equal(state.isEnvironmentBlocked(chat.id), false);
+  });
 });

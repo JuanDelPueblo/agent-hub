@@ -119,6 +119,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/chats/:id/prompt", post(hub::prompt))
         .route("/api/chats/:id/cancel", post(hub::cancel))
         .route("/api/chats/:id/resume", post(hub::resume))
+        .route(
+            "/api/chats/:id/environment/authorize",
+            post(hub::authorize_environment),
+        )
+        .route("/api/chats/:id/tasks", get(hub::list_tasks))
+        .route("/api/chats/:id/tasks/:task_id", get(hub::get_task))
+        .route("/api/chats/:id/tasks/:task_id/stop", post(hub::stop_task))
         .route("/api/chats/:id/stop", post(hub::stop))
         .route("/api/chats/:id/permission", post(api_permission_response))
         .route(

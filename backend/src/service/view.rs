@@ -32,6 +32,8 @@ pub struct ChatView {
     pub process_state: String,
     pub turn_state: String,
     pub workspace: Option<ChatWorkspaceSummary>,
+    #[serde(default)]
+    pub active_tasks: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

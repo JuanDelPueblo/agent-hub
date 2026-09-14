@@ -44,6 +44,7 @@ export interface ChatActivityInput {
   connectError?: string | null;
   rejectedConfig?: string | null;
   items?: readonly DisplayItem[] | null;
+  activeTasks?: number | null;
 }
 
 /**
@@ -56,7 +57,7 @@ export function deriveChatActivity(input: ChatActivityInput): ChatActivity {
   if (hasUnresolvedPermission(items)) return 'waiting';
   if (input.connectError || input.rejectedConfig) return 'error';
   if (hasTranscriptError(items, input.turnState)) return 'error';
-  if (input.turnState === 'PROMPTING' || input.turnState === 'CANCELLING') return 'working';
+  if (input.turnState === 'PROMPTING' || input.turnState === 'CANCELLING' || (input.activeTasks ?? 0) > 0) return 'working';
   return 'idle';
 }
 

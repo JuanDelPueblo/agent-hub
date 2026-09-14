@@ -35,6 +35,8 @@ describe('ChatWorkspaceComponent', () => {
     historyLoadingByChat: ReturnType<typeof signal<Set<string>>>;
     historyHasOlderByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     historyErrors: ReturnType<typeof signal<Record<string, string>>>;
+    blockedEnvrcByChat: ReturnType<typeof signal<Record<string, { path: string; message: string }>>>;
+    authorizeChatEnvironment: ReturnType<typeof vi.fn>;
     retryConnection: ReturnType<typeof vi.fn>;
     resetRejectedConfig: ReturnType<typeof vi.fn>;
     loadOlderHistory: ReturnType<typeof vi.fn>;
@@ -52,6 +54,8 @@ describe('ChatWorkspaceComponent', () => {
       historyLoadingByChat: signal(new Set<string>()),
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),
+      blockedEnvrcByChat: signal<Record<string, { path: string; message: string }>>({}),
+      authorizeChatEnvironment: vi.fn(async () => undefined),
       retryConnection: vi.fn(async () => undefined),
       resetRejectedConfig: vi.fn(async () => undefined),
       loadOlderHistory: vi.fn(async () => undefined),
@@ -111,6 +115,25 @@ describe('ChatWorkspaceComponent', () => {
     expect(state.retryConnection).toHaveBeenCalledWith('chat-1');
   });
 
+  it('shows blocked direnv workspace environment banner and authorizes environment', async () => {
+    state.connectErrors.set({ 'chat-1': 'direnv: error .envrc is blocked' });
+    state.blockedEnvrcByChat.set({
+      'chat-1': { path: '/repo/.envrc', message: 'direnv: error .envrc is blocked' },
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Workspace environment blocked');
+    expect(fixture.nativeElement.textContent).toContain('direnv: error .envrc is blocked');
+
+    const authButton = Array.from(fixture.nativeElement.querySelectorAll('button'))
+      .find((button: unknown) => (button as Element).textContent?.includes('Authorize environment')) as HTMLButtonElement;
+    expect(authButton).toBeTruthy();
+    authButton.click();
+    expect(state.authorizeChatEnvironment).toHaveBeenCalledWith('chat-1');
+  });
+
   it('keeps persisted history visible when connection fails', async () => {
     const reducer = new EventReducer();
     reducer.ingest({
@@ -158,6 +181,8 @@ describe('ChatWorkspaceComponent live stream', () => {
       historyLoadingByChat: signal(new Set<string>()),
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),
+      blockedEnvrcByChat: signal<Record<string, { path: string; message: string }>>({}),
+      authorizeChatEnvironment: vi.fn(async () => undefined),
       findChat: (id: string) => (id === chat.id ? chat : null),
       chatActivity: () => 'idle',
       chatTurnStartedAt: () => null,

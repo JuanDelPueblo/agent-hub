@@ -65,6 +65,30 @@ export interface Chat {
   process_state?: ProcessState;
   turn_state?: TurnState;
   workspace?: ChatWorkspaceSummary | null;
+  active_tasks?: number;
+}
+
+export type TerminalTaskState = "running" | "completed" | "failed" | "stopped";
+
+export interface TerminalTaskSummary {
+  id: string;
+  chat_id: string;
+  command: string;
+  cwd: string;
+  state: TerminalTaskState;
+  exit_code?: number | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface TerminalTaskDetails extends TerminalTaskSummary {
+  output: string;
+  truncated: boolean;
+}
+
+export interface BlockedEnvironmentError {
+  path: string;
+  message: string;
 }
 
 export interface ConfigOptionSelectGroup {

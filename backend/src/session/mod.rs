@@ -44,6 +44,7 @@ pub struct AcpSession {
     turn_guard: Arc<Mutex<()>>,
     checkout_guard: Option<Arc<Mutex<()>>>,
     startup_lock: Mutex<()>,
+    task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
 }
 
 impl AcpSession {
@@ -52,6 +53,7 @@ impl AcpSession {
         runtime: Arc<AgentRuntime>,
         event_log: Arc<EventLog>,
         checkout_guard: Option<Arc<Mutex<()>>>,
+        task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
     ) -> Self {
         Self {
             store: None,
@@ -68,7 +70,12 @@ impl AcpSession {
             turn_guard: Arc::new(Mutex::new(())),
             checkout_guard,
             startup_lock: Mutex::new(()),
+            task_tracker,
         }
+    }
+
+    pub fn cwd(&self) -> &Path {
+        &self.key.cwd
     }
 
     pub async fn process_state(&self) -> ProcessState {
@@ -176,6 +183,16 @@ impl AcpSession {
         self.set_states(ProcessState::Starting, TurnState::Idle)
             .await?;
 
+        let workspace_env = match crate::workspace_env::resolve_workspace_env(&self.key.cwd).await {
+            Ok(env) => env,
+            Err(e) => {
+                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                return Err(e.into());
+            }
+        };
+        let agent_env =
+            crate::workspace_env::merge_launch_env(&workspace_env, &self.runtime.launch.env);
+
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy
         } else {
@@ -184,13 +201,14 @@ impl AcpSession {
         let client = match AcpClient::spawn(
             &self.runtime.launch.command,
             &self.runtime.launch.args,
-            &self.runtime.launch.env,
+            &agent_env,
             &self.key.cwd,
             policy,
             self.id.clone(),
             self.key.agent.clone(),
             self.event_log.clone(),
             self.store.clone(),
+            self.task_tracker.clone(),
         )
         .await
         {
@@ -974,7 +992,7 @@ fn validate_project_subdir(
     )
 }
 
-fn validate_persistent_workspace(
+pub(crate) fn validate_persistent_workspace(
     chat: &Chat,
     project: &Project,
     workspace: Option<&ChatWorkspace>,
@@ -1164,6 +1182,7 @@ pub struct SessionManager {
     event_log: Arc<EventLog>,
     checkout_guards: StdMutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     pub store: Option<Arc<crate::store::Store>>,
+    task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
 }
 
 impl SessionManager {
@@ -1183,6 +1202,7 @@ impl SessionManager {
             agents,
             event_log,
             checkout_guards: StdMutex::new(HashMap::new()),
+            task_tracker: Arc::new(crate::tasks::TerminalTaskTracker::default()),
         });
 
         let weak = Arc::downgrade(&mgr);
@@ -1229,6 +1249,7 @@ impl SessionManager {
             runtime,
             self.event_log.clone(),
             None,
+            self.task_tracker.clone(),
         ));
         let mut by_id = self.sessions_by_id.write().await;
         sessions.insert(session.id.clone(), session.clone());
@@ -1285,6 +1306,7 @@ impl SessionManager {
             runtime,
             self.event_log.clone(),
             checkout_guard,
+            self.task_tracker.clone(),
         );
         session.id = chat.id;
         session.store = Some(store.clone());
@@ -1313,6 +1335,10 @@ impl SessionManager {
     ///
     /// Direct and legacy turns use this same map and key, so callers that
     /// mutate the checkout can fail without waiting for an agent turn.
+    pub fn task_tracker(&self) -> Arc<crate::tasks::TerminalTaskTracker> {
+        self.task_tracker.clone()
+    }
+
     pub fn try_acquire_checkout_guard(
         &self,
         repository_root: &Path,

@@ -42,12 +42,20 @@ impl From<ServiceError> for ApiError {
             ServiceError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServiceError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             ServiceError::SavedConfigRejected { .. } => StatusCode::CONFLICT,
+            ServiceError::EnvrcBlocked { .. } => StatusCode::CONFLICT,
             ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let details = match &e {
             ServiceError::SavedConfigRejected { option_id, .. } => Some(json!({
                 "code": "saved_config_rejected",
                 "details": { "option_id": option_id }
+            })),
+            ServiceError::EnvrcBlocked { path, message } => Some(json!({
+                "code": "envrc_blocked",
+                "details": {
+                    "path": path.to_string_lossy(),
+                    "message": message,
+                }
             })),
             _ => None,
         };
@@ -409,4 +417,32 @@ pub async fn remote_sessions(
 }
 pub async fn agents(State(s): State<AppState>) -> Result<Json<Value>> {
     Ok(Json(json!(hub(&s)?.list_agents())))
+}
+
+pub async fn authorize_environment(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ChatView>> {
+    Ok(Json(hub(&s)?.authorize_chat_environment(&id).await?))
+}
+
+pub async fn list_tasks(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::tasks::TerminalTaskSummary>>> {
+    Ok(Json(hub(&s)?.list_chat_tasks(&id).await?))
+}
+
+pub async fn get_task(
+    State(s): State<AppState>,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<crate::tasks::TerminalTaskDetails>> {
+    Ok(Json(hub(&s)?.get_chat_task(&id, &task_id).await?))
+}
+
+pub async fn stop_task(
+    State(s): State<AppState>,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<crate::tasks::TerminalTaskSummary>> {
+    Ok(Json(hub(&s)?.stop_chat_task(&id, &task_id).await?))
 }

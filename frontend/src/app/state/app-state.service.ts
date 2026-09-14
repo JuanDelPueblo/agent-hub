@@ -32,6 +32,7 @@ export class AppStateService {
   readonly connectingChats = this.chatStore.connectingChats;
   readonly connectErrors = this.chatStore.connectErrors;
   readonly rejectedConfigByChat = this.chatStore.rejectedConfigByChat;
+  readonly blockedEnvrcByChat = this.chatStore.blockedEnvrcByChat;
   readonly historyLoadingByChat = this.chatStore.historyLoadingByChat;
   readonly historyHasOlderByChat = this.chatStore.historyHasOlderByChat;
   readonly historyErrors = this.chatStore.historyErrors;
@@ -86,6 +87,7 @@ export class AppStateService {
   retryHistory(chatId: string): Promise<void> { return this.chatStore.retryHistory(chatId); }
   loadChatConfig(chatId: string) { return this.chatStore.loadChatConfig(chatId); }
   retryConnection(chatId: string): Promise<void> { return this.chatStore.retryConnection(chatId); }
+  authorizeChatEnvironment(chatId: string): Promise<void> { return this.chatStore.authorizeChatEnvironment(chatId); }
   resetRejectedConfig(chatId: string): Promise<void> { return this.chatStore.resetRejectedConfig(chatId); }
   connectChat(chatId: string) { return this.chatStore.connectChat(chatId); }
   fetchConfig(chatId: string) { return this.chatStore.fetchConfig(chatId); }

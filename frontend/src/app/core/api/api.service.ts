@@ -12,6 +12,8 @@ import type {
   WorkspaceOptions,
   ChatHistoryPage,
   AgentSummary,
+  TerminalTaskSummary,
+  TerminalTaskDetails,
 } from './types';
 
 export interface AgentStatus {
@@ -151,6 +153,29 @@ export class ApiService {
     return this.request<Chat>(`/api/chats/${encodeURIComponent(chatId)}/resume`, {
       method: 'POST',
     });
+  }
+
+  async authorizeChatEnvironment(chatId: string): Promise<void> {
+    await this.request(`/api/chats/${encodeURIComponent(chatId)}/environment/authorize`, {
+      method: 'POST',
+    });
+  }
+
+  fetchChatTasks(chatId: string): Promise<TerminalTaskSummary[]> {
+    return this.request<TerminalTaskSummary[]>(`/api/chats/${encodeURIComponent(chatId)}/tasks`);
+  }
+
+  fetchChatTask(chatId: string, taskId: string): Promise<TerminalTaskDetails> {
+    return this.request<TerminalTaskDetails>(
+      `/api/chats/${encodeURIComponent(chatId)}/tasks/${encodeURIComponent(taskId)}`,
+    );
+  }
+
+  async stopChatTask(chatId: string, taskId: string): Promise<void> {
+    await this.request(
+      `/api/chats/${encodeURIComponent(chatId)}/tasks/${encodeURIComponent(taskId)}/stop`,
+      { method: 'POST' },
+    );
   }
 
   async stopChat(chatId: string): Promise<void> {

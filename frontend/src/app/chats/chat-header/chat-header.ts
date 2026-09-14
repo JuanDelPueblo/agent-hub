@@ -10,6 +10,7 @@ import type { ChatActivity } from '../../state/chat-activity';
 import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
 import { DeleteChatDialogComponent } from '../delete-chat-dialog/delete-chat-dialog';
 import { RenameChatDialogComponent } from '../rename-chat-dialog/rename-chat-dialog';
+import { TerminalTaskDialogComponent } from '../terminal-task-dialog/terminal-task-dialog';
 import { formatLocalDateTime } from '../../state/chat-activity';
 
 @Component({
@@ -45,4 +46,5 @@ export class ChatHeaderComponent {
   rename(): void { const chat = this.chat(); if (chat) this.dialog.open(RenameChatDialogComponent, { width: 'min(480px, calc(100vw - 32px))', data: chat }); }
   async archive(): Promise<void> { const chat = this.chat(); if (chat) await this.state.archiveChat(chat.id, !chat.archived).catch((error) => console.error('Failed to archive chat', error)); }
   remove(): void { const chat = this.chat(); if (chat) this.dialog.open(DeleteChatDialogComponent, { width: 'min(520px, calc(100vw - 32px))', data: chat }); }
+  openTasks(): void { const chat = this.chat(); if (chat) this.dialog.open(TerminalTaskDialogComponent, { width: 'min(840px, calc(100vw - 32px))', data: chat }); }
 }

@@ -93,6 +93,8 @@ export class FakeState {
     this.workspaceOptionsByProject = new Map();
     // Live process state, which the real backend holds in the session manager.
     this.runtime = new Map();
+    this.tasksByChat = new Map();
+    this.blockedChats = new Set();
 
     this.events = [];
     this.nextSeq = 1;
@@ -150,6 +152,8 @@ export class FakeState {
 
   forgetChat(chatId) {
     this.events = this.events.filter((event) => event.session_id !== chatId);
+    this.tasksByChat.delete(chatId);
+    this.blockedChats.delete(chatId);
   }
 
   // -------------------------------------------------------------- projects
@@ -229,12 +233,82 @@ export class FakeState {
   /** Adds the live process fields, like `hub::chat_view`. */
   chatView(chat) {
     const runtime = this.runtime.get(chat.id) ?? { process: 'STOPPED', turn: 'IDLE' };
+    const tasks = this.tasksByChat.get(chat.id) ?? [];
+    const activeTasks = tasks.filter((task) => task.state === 'running').length;
     return {
       ...chat,
       turn_started_at: this.activeTurnStartedAt(chat.id),
       process_state: runtime.process,
       turn_state: runtime.turn,
+      active_tasks: activeTasks,
     };
+  }
+
+  isEnvironmentBlocked(chatId) {
+    return this.blockedChats.has(chatId);
+  }
+
+  blockEnvironment(chatId) {
+    this.blockedChats.add(chatId);
+  }
+
+  authorizeEnvironment(chatId) {
+    this.blockedChats.delete(chatId);
+  }
+
+  listTasks(chatId) {
+    const tasks = this.tasksByChat.get(chatId) ?? [];
+    return tasks.map(({ output, truncated, ...summary }) => ({ ...summary }));
+  }
+
+  getTask(chatId, taskId) {
+    const tasks = this.tasksByChat.get(chatId) ?? [];
+    const task = tasks.find((t) => t.id === taskId);
+    return task ? { ...task } : null;
+  }
+
+  stopTask(chatId, taskId) {
+    const tasks = this.tasksByChat.get(chatId) ?? [];
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+    if (task.state === 'running') {
+      task.state = 'stopped';
+      task.completed_at = now();
+      this.metadataChanged();
+    }
+    return true;
+  }
+
+  createTask(chatId, command, cwd, initialOutput = '') {
+    if (!this.tasksByChat.has(chatId)) {
+      this.tasksByChat.set(chatId, []);
+    }
+    const tasks = this.tasksByChat.get(chatId);
+    const task = {
+      id: randomUUID(),
+      chat_id: chatId,
+      command,
+      cwd: cwd ?? `${PROJECT_ROOT}/agent-hub`,
+      state: 'running',
+      exit_code: null,
+      started_at: now(),
+      completed_at: null,
+      output: initialOutput,
+      truncated: false,
+    };
+    tasks.push(task);
+    this.metadataChanged();
+    return task;
+  }
+
+  completeTask(chatId, taskId, exitCode, outputAppend = '') {
+    const task = (this.tasksByChat.get(chatId) ?? []).find((t) => t.id === taskId);
+    if (!task) return;
+    if (outputAppend) task.output += outputAppend;
+    task.exit_code = exitCode;
+    task.state = exitCode === 0 ? 'completed' : 'failed';
+    task.completed_at = now();
+    this.metadataChanged();
   }
 
   activeTurnStartedAt(chatId) {
