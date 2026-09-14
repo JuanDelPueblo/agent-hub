@@ -162,27 +162,33 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             return;
                         }
                     };
-                    let mut cursor = from_seq;
-                    while cursor <= through {
-                        let page = match event_log.replay_page(cursor, through, 512) {
-                            Ok(page) => page,
-                            Err(error) => {
-                                let control = serde_json::json!({"type":"stream_error","code":"replay_failed","error":error.to_string()});
-                                let _ = sender.send(Message::Text(control.to_string())).await;
-                                return;
+                    // `from_seq == 0` is the fresh-browser handshake: capture
+                    // the durable baseline and begin live delivery without
+                    // replaying the global event table. A nonzero cursor is a
+                    // reconnect and must catch up durably through this mark.
+                    if from_seq > 0 {
+                        let mut cursor = from_seq;
+                        while cursor <= through {
+                            let page = match event_log.replay_page(cursor, through, 512) {
+                                Ok(page) => page,
+                                Err(error) => {
+                                    let control = serde_json::json!({"type":"stream_error","code":"replay_failed","error":error.to_string()});
+                                    let _ = sender.send(Message::Text(control.to_string())).await;
+                                    return;
+                                }
+                            };
+                            if page.is_empty() {
+                                break;
                             }
-                        };
-                        if page.is_empty() {
-                            break;
-                        }
-                        for event in page {
-                            cursor = event.seq.saturating_add(1);
-                            if sender
-                                .send(Message::Text(serde_json::to_string(&event).unwrap()))
-                                .await
-                                .is_err()
-                            {
-                                return;
+                            for event in page {
+                                cursor = event.seq.saturating_add(1);
+                                if sender
+                                    .send(Message::Text(serde_json::to_string(&event).unwrap()))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
                             }
                         }
                     }

@@ -13,9 +13,9 @@ mod projects;
 mod view;
 mod workspaces;
 
-pub use chats::{ChatEdit, WorkspaceSelection};
+pub use chats::{ChatEdit, WorkspaceSelection, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE};
 pub use error::{ServiceError, ServiceResult};
-pub use view::{ChatView, ChatWorkspaceSummary};
+pub use view::{ChatHistoryPage, ChatView, ChatWorkspaceSummary};
 pub use workspaces::{WorkspaceBranch, WorkspaceOptions};
 
 use crate::agents::AgentRegistry;

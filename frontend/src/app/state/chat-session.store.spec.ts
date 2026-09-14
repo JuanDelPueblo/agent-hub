@@ -24,6 +24,7 @@ describe('ChatSessionStore', () => {
     fetchChats: ReturnType<typeof vi.fn>;
     resumeChat: ReturnType<typeof vi.fn>;
     fetchChatConfig: ReturnType<typeof vi.fn>;
+    fetchChatHistory: ReturnType<typeof vi.fn>;
     clearSavedConfig: ReturnType<typeof vi.fn>;
     deleteChat: ReturnType<typeof vi.fn>;
     promptChat: ReturnType<typeof vi.fn>;
@@ -42,6 +43,7 @@ describe('ChatSessionStore', () => {
           options: [{ value: 'gpt-5', name: 'GPT-5' }],
         },
       ]),
+      fetchChatHistory: vi.fn(async () => ({ events: [], next_cursor: null, has_older: false })),
       clearSavedConfig: vi.fn(async () => undefined),
       deleteChat: vi.fn(async () => undefined),
       promptChat: vi.fn(async () => undefined),
@@ -66,6 +68,62 @@ describe('ChatSessionStore', () => {
     expect(api.fetchChats).toHaveBeenCalledOnce();
     expect(api.fetchChatConfig).toHaveBeenCalledOnce();
     expect(store.configLoadedByChat()['chat-1']).toBe(true);
+  });
+
+  it('retains live events across a delayed initial history page and deduplicates the overlap', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    let resolvePage: ((page: { events: SessionEvent[]; next_cursor: number | null; has_older: boolean }) => void) | undefined;
+    api.fetchChatHistory.mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
+
+    const loading = store.loadChatHistory('chat-1');
+    store.handleIncomingEvent({
+      seq: 3,
+      session_id: 'chat-1',
+      agent: 'codex',
+      timestamp: '2026-01-01T00:00:03Z',
+      payload: { type: 'turn_complete', stop_reason: 'end_turn' },
+    });
+    resolvePage?.({
+      events: [
+        { seq: 1, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:01Z', payload: { type: 'user_message', text: 'Hello' } },
+        { seq: 2, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:02Z', payload: { type: 'message_chunk', text: 'Answer' } },
+        { seq: 3, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:03Z', payload: { type: 'turn_complete', stop_reason: 'end_turn' } },
+      ],
+      next_cursor: null,
+      has_older: false,
+    });
+    await loading;
+
+    const items = store.reducersByChat()['chat-1'].items();
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ type: 'user_message', text: 'Hello' });
+    expect(items[1]).toMatchObject({ type: 'turn', status: 'complete' });
+  });
+
+  it('keeps rendered history when an older page fails and retries from the same cursor', async () => {
+    store.chatsByProject.set({ 'project-1': [chat] });
+    api.fetchChatHistory
+      .mockResolvedValueOnce({
+        events: [{ seq: 10, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:10Z', payload: { type: 'user_message', text: 'Newest' } }],
+        next_cursor: 10,
+        has_older: true,
+      })
+      .mockRejectedValueOnce(new Error('timed out'))
+      .mockResolvedValueOnce({
+        events: [{ seq: 9, session_id: 'chat-1', agent: 'codex', timestamp: '2026-01-01T00:00:09Z', payload: { type: 'user_message', text: 'Older' } }],
+        next_cursor: null,
+        has_older: false,
+      });
+
+    await store.loadChatHistory('chat-1');
+    await store.loadOlderHistory('chat-1');
+    expect(store.reducersByChat()['chat-1'].items()[0]).toMatchObject({ text: 'Newest' });
+    expect(store.historyErrors()['chat-1']).toBe('timed out');
+
+    await store.retryHistory('chat-1');
+    expect(api.fetchChatHistory).toHaveBeenLastCalledWith('chat-1', 10);
+    expect(store.historyErrors()['chat-1']).toBeUndefined();
+    expect(store.reducersByChat()['chat-1'].items().map((item) => item.type)).toEqual(['user_message', 'user_message']);
   });
 
   it('treats process state as diagnostic only and allows sending prompts while stopped', async () => {

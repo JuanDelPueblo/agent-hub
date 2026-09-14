@@ -32,8 +32,13 @@ describe('ChatWorkspaceComponent', () => {
     configLoadedByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     reducersByChat: ReturnType<typeof signal<Record<string, never>>>;
     configOptionsByChat: ReturnType<typeof signal<Record<string, never>>>;
+    historyLoadingByChat: ReturnType<typeof signal<Set<string>>>;
+    historyHasOlderByChat: ReturnType<typeof signal<Record<string, boolean>>>;
+    historyErrors: ReturnType<typeof signal<Record<string, string>>>;
     retryConnection: ReturnType<typeof vi.fn>;
     resetRejectedConfig: ReturnType<typeof vi.fn>;
+    loadOlderHistory: ReturnType<typeof vi.fn>;
+    retryHistory: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -44,8 +49,13 @@ describe('ChatWorkspaceComponent', () => {
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, never>>({}),
       configOptionsByChat: signal<Record<string, never>>({}),
+      historyLoadingByChat: signal(new Set<string>()),
+      historyHasOlderByChat: signal<Record<string, boolean>>({}),
+      historyErrors: signal<Record<string, string>>({}),
       retryConnection: vi.fn(async () => undefined),
       resetRejectedConfig: vi.fn(async () => undefined),
+      loadOlderHistory: vi.fn(async () => undefined),
+      retryHistory: vi.fn(async () => undefined),
     };
 
     const stateValue = {
@@ -144,10 +154,15 @@ describe('ChatWorkspaceComponent live stream', () => {
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, EventReducer>>({ 'chat-1': reducer }),
       configOptionsByChat: signal<Record<string, never>>({}),
+      historyLoadingByChat: signal(new Set<string>()),
+      historyHasOlderByChat: signal<Record<string, boolean>>({}),
+      historyErrors: signal<Record<string, string>>({}),
       findChat: (id: string) => (id === chat.id ? chat : null),
       chatActivity: () => 'idle',
       retryConnection: vi.fn(async () => undefined),
       resetRejectedConfig: vi.fn(async () => undefined),
+      loadOlderHistory: vi.fn(async () => undefined),
+      retryHistory: vi.fn(async () => undefined),
       setMobileDrawerOpen: vi.fn(),
       stopChatProcess: vi.fn(async () => undefined),
       cancelActiveTurn: vi.fn(async () => undefined),

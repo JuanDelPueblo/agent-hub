@@ -190,6 +190,12 @@ export interface SessionEvent {
   payload: SessionPayload;
 }
 
+export interface ChatHistoryPage {
+  events: SessionEvent[];
+  next_cursor: number | null;
+  has_older: boolean;
+}
+
 export interface SessionPayload {
   type:
     | 'user_message'

@@ -33,6 +33,9 @@ export class ChatWorkspaceComponent {
   readonly connectError = computed(() => this.chatId() ? this.state.connectErrors()[this.chatId()] ?? '' : '');
   readonly rejectedConfig = computed(() => this.chatId() ? this.state.rejectedConfigByChat()[this.chatId()] ?? '' : '');
   readonly configLoaded = computed(() => this.chatId() ? this.state.configLoadedByChat()[this.chatId()] === true : false);
+  readonly historyLoading = computed(() => this.chatId() ? this.state.historyLoadingByChat().has(this.chatId()) : false);
+  readonly historyError = computed(() => this.chatId() ? this.state.historyErrors()[this.chatId()] ?? '' : '');
+  readonly hasOlderHistory = computed(() => this.chatId() ? this.state.historyHasOlderByChat()[this.chatId()] === true : false);
 
   constructor() {
     this.breakpointObserver.observe('(max-width: 839px)').pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ matches }) => this.compact.set(matches));
@@ -41,4 +44,6 @@ export class ChatWorkspaceComponent {
   closeConfig(drawer: MatDrawer): void { this.configOpen.set(false); void drawer.close(); }
   retry(): void { if (this.chatId()) void this.state.retryConnection(this.chatId()); }
   resetConfig(): void { if (this.chatId()) void this.state.resetRejectedConfig(this.chatId()); }
+  loadOlderHistory(): void { if (this.chatId()) void this.state.loadOlderHistory(this.chatId()); }
+  retryHistory(): void { if (this.chatId()) void this.state.retryHistory(this.chatId()); }
 }

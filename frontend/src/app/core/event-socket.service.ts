@@ -17,6 +17,7 @@ export class EventSocketService implements OnDestroy {
   private destroyed = false;
   private fatal = false;
   private lastSequence = 0;
+  private baselineEstablished = false;
 
   connect(): void {
     if (this.destroyed || typeof window === 'undefined' || this.socket) return;
@@ -35,19 +36,30 @@ export class EventSocketService implements OnDestroy {
       this.status.set('connected');
       this.send({
         type: 'subscribe',
-        from_seq: this.lastSequence > 0 ? this.lastSequence + 1 : 0,
+        from_seq: this.baselineEstablished ? this.lastSequence + 1 : 0,
       });
     });
 
     this.socket.addEventListener('message', (message) => {
       try {
-        const data = JSON.parse(String(message.data)) as Partial<SessionEvent> & { type?: string; error?: string };
+        const data = JSON.parse(String(message.data)) as Partial<SessionEvent> & {
+          type?: string;
+          error?: string;
+          through_seq?: number;
+        };
         if (data.type === 'stream_error' || data.type === 'replay_gap') {
           if (data.type === 'replay_gap') this.replayGaps.next();
           this.fatal = true;
           this.errorMessage.set(data.error ?? 'Durable event history could not be replayed');
           this.status.set('error');
           this.socket?.close();
+          return;
+        }
+        if (data.type === 'subscribed') {
+          if (typeof data.through_seq === 'number') {
+            this.lastSequence = Math.max(this.lastSequence, data.through_seq);
+            this.baselineEstablished = true;
+          }
           return;
         }
         if (typeof data.seq !== 'number' || data.seq <= this.lastSequence) return;

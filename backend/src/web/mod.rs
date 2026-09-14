@@ -115,6 +115,7 @@ pub fn router(state: AppState) -> Router {
                 .patch(hub::edit_chat)
                 .delete(hub::delete_chat),
         )
+        .route("/api/chats/:id/history", get(hub::history))
         .route("/api/chats/:id/prompt", post(hub::prompt))
         .route("/api/chats/:id/cancel", post(hub::cancel))
         .route("/api/chats/:id/resume", post(hub::resume))

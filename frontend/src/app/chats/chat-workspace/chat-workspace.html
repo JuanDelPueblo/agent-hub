@@ -24,10 +24,24 @@
           }
         </div>
       }
-      @if (!items().length) {
+      @if (historyError()) {
+        <div class="status-banner history-banner" role="status">
+          <div class="banner-content">
+            <mat-icon>history</mat-icon>
+            <div class="banner-text">
+              <strong>History page unavailable</strong>
+              <span>{{ historyError() }} New turns and live activity remain available.</span>
+            </div>
+          </div>
+          <button mat-flat-button type="button" (click)="retryHistory()">Retry history</button>
+        </div>
+      }
+      @if (historyLoading() && !items().length) {
+        <section class="status-state"><mat-spinner diameter="36" /><p>Loading recent chat history…</p></section>
+      } @else if (!items().length && !hasOlderHistory()) {
         <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
       } @else {
-        <hub-event-stream [items]="items()" [chatId]="chatId()" />
+        <hub-event-stream [items]="items()" [chatId]="chatId()" [hasOlderHistory]="hasOlderHistory()" [historyLoading]="historyLoading()" (olderRequested)="loadOlderHistory()" />
       }
       <hub-chat-composer [chatId]="chatId()" [options]="options()" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="chat()!.archived" />
     }

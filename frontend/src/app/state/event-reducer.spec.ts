@@ -72,4 +72,21 @@ describe('EventReducer', () => {
     expect(reducer.ingest(event(3, 'state_change', { process: 'DEAD', turn: 'IDLE' }))).toBeNull();
     expect(reducer.items()).toHaveLength(0);
   });
+
+  it('rebuilds chronologically when older history arrives after live events', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(3, 'message_chunk', { text: 'reply' }));
+    reducer.ingest(event(4, 'turn_complete', { stop_reason: 'end_turn' }));
+    reducer.ingest(event(1, 'user_message', { text: 'question' }));
+    reducer.ingest(event(2, 'message_chunk', { text: 'reply' }));
+    reducer.ingest(event(3, 'message_chunk', { text: 'reply' }));
+
+    expect(reducer.items()).toHaveLength(2);
+    expect(reducer.items()[0]).toMatchObject({ type: 'user_message', text: 'question' });
+    expect(reducer.items()[1]).toMatchObject({
+      type: 'turn',
+      status: 'complete',
+      entries: [{ type: 'message_chunk', text: 'replyreply' }],
+    });
+  });
 });

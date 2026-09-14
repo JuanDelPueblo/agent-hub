@@ -16,6 +16,7 @@ type ChatMap = Record<string, Chat[]>;
 type ConfigMap = Record<string, ConfigOption[]>;
 type BooleanMap = Record<string, boolean>;
 type ErrorMap = Record<string, string>;
+type CursorMap = Record<string, number | null>;
 
 /** Owns chat collections, ACP session state, configuration, and event reduction. */
 @Service()
@@ -30,10 +31,16 @@ export class ChatSessionStore {
   readonly connectingChats = signal<ReadonlySet<string>>(new Set());
   readonly connectErrors = signal<ErrorMap>({});
   readonly rejectedConfigByChat = signal<Record<string, string>>({});
+  readonly historyLoadingByChat = signal<ReadonlySet<string>>(new Set());
+  readonly historyHasOlderByChat = signal<BooleanMap>({});
+  readonly historyErrors = signal<ErrorMap>({});
 
   private readonly inFlightConnections = new Map<string, Promise<Chat>>();
   private readonly inFlightConfigs = new Map<string, Promise<ConfigOption[]>>();
   private readonly inFlightChats = new Map<string, Promise<void>>();
+  private readonly inFlightHistory = new Map<string, Promise<void>>();
+  private readonly historyCursors = signal<CursorMap>({});
+  private readonly historyLoaded = new Set<string>();
 
   loadChats(projectId: string): Promise<void> {
     const existing = this.inFlightChats.get(projectId);
@@ -66,9 +73,27 @@ export class ChatSessionStore {
   async autoConnectChat(chatId: string): Promise<void> {
     const chat = this.findChat(chatId);
     if (!chat) return;
+    void this.loadChatHistory(chatId);
     if (!this.configLoadedByChat()[chatId]) {
       await this.loadChatConfig(chatId).catch(() => undefined);
     }
+  }
+
+  loadChatHistory(chatId: string): Promise<void> {
+    if (this.historyLoaded.has(chatId)) return Promise.resolve();
+    return this.requestHistory(chatId, undefined);
+  }
+
+  loadOlderHistory(chatId: string): Promise<void> {
+    if (!this.historyHasOlderByChat()[chatId]) return Promise.resolve();
+    const cursor = this.historyCursors()[chatId];
+    if (cursor == null) return Promise.resolve();
+    return this.requestHistory(chatId, cursor);
+  }
+
+  retryHistory(chatId: string): Promise<void> {
+    if (this.historyLoaded.has(chatId)) return this.loadOlderHistory(chatId);
+    return this.loadChatHistory(chatId);
   }
 
   loadChatConfig(chatId: string): Promise<ConfigOption[]> {
@@ -300,12 +325,16 @@ export class ChatSessionStore {
   }
 
   private removeChatState(chatId: string): void {
+    this.historyLoaded.delete(chatId);
     for (const target of [
       this.reducersByChat,
       this.configOptionsByChat,
       this.configLoadedByChat,
       this.connectErrors,
       this.rejectedConfigByChat,
+      this.historyHasOlderByChat,
+      this.historyErrors,
+      this.historyCursors,
     ] as WritableSignal<Record<string, unknown>>[]) {
       target.update((current) => {
         const next = { ...current };
@@ -313,6 +342,48 @@ export class ChatSessionStore {
         return next;
       });
     }
+  }
+
+  private requestHistory(chatId: string, beforeSeq: number | undefined): Promise<void> {
+    const existing = this.inFlightHistory.get(chatId);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      this.setSetValue(this.historyLoadingByChat, chatId, true);
+      this.historyErrors.update((current) => {
+        if (!(chatId in current)) return current;
+        const next = { ...current };
+        delete next[chatId];
+        return next;
+      });
+      try {
+        const page = await this.api.fetchChatHistory(chatId, beforeSeq);
+        const reducers = { ...this.reducersByChat() };
+        const reducer = reducers[chatId] ?? new EventReducer();
+        for (const event of page.events) reducer.ingest(event);
+        reducers[chatId] = reducer;
+        this.reducersByChat.set(reducers);
+        this.historyLoaded.add(chatId);
+        this.historyHasOlderByChat.update((current) => ({
+          ...current,
+          [chatId]: page.has_older,
+        }));
+        this.historyCursors.update((current) => ({
+          ...current,
+          [chatId]: page.next_cursor,
+        }));
+      } catch (error) {
+        this.historyErrors.update((current) => ({
+          ...current,
+          [chatId]: this.errorMessage(error, 'Failed to load chat history'),
+        }));
+      } finally {
+        this.setSetValue(this.historyLoadingByChat, chatId, false);
+        this.inFlightHistory.delete(chatId);
+      }
+    })();
+    this.inFlightHistory.set(chatId, promise);
+    return promise;
   }
 
   private setError(chatId: string, message: string): void {

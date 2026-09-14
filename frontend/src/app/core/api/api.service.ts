@@ -10,6 +10,7 @@ import type {
   Project,
   ChatWorkspaceSelection,
   WorkspaceOptions,
+  ChatHistoryPage,
 } from './types';
 
 export interface AgentStatus {
@@ -112,6 +113,13 @@ export class ApiService {
 
   fetchChat(chatId: string): Promise<Chat> {
     return this.request<Chat>(`/api/chats/${encodeURIComponent(chatId)}`);
+  }
+
+  fetchChatHistory(chatId: string, beforeSeq?: number): Promise<ChatHistoryPage> {
+    const query = beforeSeq === undefined ? '' : `?before_seq=${beforeSeq}`;
+    return this.request<ChatHistoryPage>(
+      `/api/chats/${encodeURIComponent(chatId)}/history${query}`,
+    );
   }
 
   editChat(

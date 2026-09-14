@@ -59,6 +59,20 @@ describe('fake backend seed history', () => {
     }
   });
 
+  it('returns bounded, chat-scoped pages with stable older cursors', () => {
+    const state = new FakeState();
+    const chat = [...state.chats.values()][0];
+    const all = historyFor(state, chat.id);
+    const first = state.historyPage(chat.id, undefined, 2);
+    assert.equal(first.events.length, 2);
+    assert.equal(first.has_older, true);
+    assert.deepEqual(first.events.map((event) => event.seq), all.slice(-2).map((event) => event.seq));
+
+    const older = state.historyPage(chat.id, first.next_cursor, 2);
+    assert.ok(older.events.every((event) => event.session_id === chat.id));
+    assert.ok(older.events.at(-1).seq < first.events[0].seq);
+  });
+
   it('keeps history for the archived seed chat and none for a new chat', () => {
     const state = new FakeState();
     const archived = [...state.chats.values()].find((chat) => chat.archived);

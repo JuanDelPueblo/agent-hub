@@ -256,6 +256,15 @@ impl Store {
         events::page(&self.conn.lock().unwrap(), from_seq, through_seq, limit)
     }
 
+    pub fn chat_event_page(
+        &self,
+        session_id: &str,
+        before_seq: Option<u64>,
+        limit: usize,
+    ) -> StoreResult<(Vec<crate::events::SessionEvent>, bool)> {
+        events::chat_page(&self.conn.lock().unwrap(), session_id, before_seq, limit)
+    }
+
     pub fn max_event_seq(&self) -> StoreResult<u64> {
         events::max_seq(&self.conn.lock().unwrap())
     }
@@ -410,5 +419,65 @@ mod tests {
             remaining.iter().filter(|e| e.session_id == kept.id).count(),
             1
         );
+    }
+
+    #[test]
+    fn chat_event_pages_are_bounded_and_do_not_scan_other_chat_history() {
+        use crate::events::{EventPayload, SessionEvent};
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Store::open(&tmp.path().join("hub.db")).unwrap();
+        let mut connection = db.conn.lock().unwrap();
+        let transaction = connection.transaction().unwrap();
+        for index in 0..20_050 {
+            let event = SessionEvent {
+                seq: index + 1,
+                timestamp: chrono::Utc::now(),
+                session_id: if index % 2 == 0 {
+                    "target".into()
+                } else {
+                    "other".into()
+                },
+                agent: "codex".into(),
+                payload: EventPayload::MessageChunk {
+                    text: index.to_string(),
+                },
+            };
+            transaction
+                .execute(
+                    "INSERT INTO events (seq, session_id, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![
+                        event.seq as i64,
+                        event.session_id,
+                        serde_json::to_string(&event).unwrap(),
+                    ],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        drop(connection);
+
+        let (first, has_older) = db.chat_event_page("target", None, 100).unwrap();
+        assert_eq!(first.len(), 100);
+        assert!(has_older);
+        assert!(first.iter().all(|event| event.session_id == "target"));
+        assert!(first.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+
+        let mut total = first.len();
+        if has_older {
+            let mut cursor = first.first().unwrap().seq;
+            loop {
+                let (page, more) = db.chat_event_page("target", Some(cursor), 100).unwrap();
+                if page.is_empty() {
+                    break;
+                }
+                assert!(page.iter().all(|event| event.session_id == "target"));
+                cursor = page.first().unwrap().seq;
+                total += page.len();
+                if !more {
+                    break;
+                }
+            }
+        }
+        assert_eq!(total, 10_025);
     }
 }

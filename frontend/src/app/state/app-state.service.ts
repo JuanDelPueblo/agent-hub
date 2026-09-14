@@ -32,6 +32,9 @@ export class AppStateService {
   readonly connectingChats = this.chatStore.connectingChats;
   readonly connectErrors = this.chatStore.connectErrors;
   readonly rejectedConfigByChat = this.chatStore.rejectedConfigByChat;
+  readonly historyLoadingByChat = this.chatStore.historyLoadingByChat;
+  readonly historyHasOlderByChat = this.chatStore.historyHasOlderByChat;
+  readonly historyErrors = this.chatStore.historyErrors;
   readonly activeProjectId = this.uiStore.activeProjectId;
   readonly activeChatId = this.uiStore.activeChatId;
   readonly isMobileDrawerOpen = this.uiStore.isMobileDrawerOpen;
@@ -77,6 +80,9 @@ export class AppStateService {
   findChat(chatId: string) { return this.chatStore.findChat(chatId); }
   chatActivity(chatId: string): ChatActivity { return this.chatStore.chatActivity(chatId); }
   autoConnectChat(chatId: string): Promise<void> { return this.chatStore.autoConnectChat(chatId); }
+  loadChatHistory(chatId: string): Promise<void> { return this.chatStore.loadChatHistory(chatId); }
+  loadOlderHistory(chatId: string): Promise<void> { return this.chatStore.loadOlderHistory(chatId); }
+  retryHistory(chatId: string): Promise<void> { return this.chatStore.retryHistory(chatId); }
   loadChatConfig(chatId: string) { return this.chatStore.loadChatConfig(chatId); }
   retryConnection(chatId: string): Promise<void> { return this.chatStore.retryConnection(chatId); }
   resetRejectedConfig(chatId: string): Promise<void> { return this.chatStore.resetRejectedConfig(chatId); }

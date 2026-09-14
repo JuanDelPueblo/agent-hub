@@ -101,6 +101,7 @@ describe('EventSocketService', () => {
     const firstSocket = FakeWebSocket.instances[0];
     firstSocket.open();
     firstSocket.message(JSON.stringify(sessionEvent(7)));
+    firstSocket.message(JSON.stringify({ type: 'subscribed', through_seq: 7 }));
     firstSocket.close();
 
     vi.advanceTimersByTime(2000);
@@ -111,6 +112,23 @@ describe('EventSocketService', () => {
 
     service.destroy();
     expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('resumes from an established baseline even when no event arrived before disconnect', () => {
+    vi.useFakeTimers();
+    const service = new EventSocketService();
+    service.connect();
+    const firstSocket = FakeWebSocket.instances[0];
+    firstSocket.open();
+    firstSocket.message(JSON.stringify({ type: 'subscribed', through_seq: 4 }));
+    firstSocket.close();
+
+    vi.advanceTimersByTime(2000);
+    const secondSocket = FakeWebSocket.instances[1];
+    secondSocket.open();
+    expect(secondSocket.sent).toEqual([JSON.stringify({ type: 'subscribe', from_seq: 5 })]);
+
+    service.destroy();
   });
 
   it('surfaces a durable replay failure and does not reconnect past it', () => {

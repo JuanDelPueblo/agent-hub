@@ -1,7 +1,10 @@
 use super::AppState;
 use crate::{
     acp::callbacks::CallbackPolicy,
-    service::{ChatEdit, ChatView, HubService, ServiceError, WorkspaceOptions, WorkspaceSelection},
+    service::{
+        ChatEdit, ChatView, HubService, ServiceError, WorkspaceOptions, WorkspaceSelection,
+        DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE,
+    },
 };
 use axum::{
     extract::{Path, Query, State},
@@ -298,6 +301,24 @@ pub async fn create_chat(
 }
 pub async fn chat(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<ChatView>> {
     Ok(Json(hub(&s)?.get_chat(&id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub before_seq: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+pub async fn history(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<crate::service::ChatHistoryPage>> {
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_HISTORY_PAGE_SIZE)
+        .min(MAX_HISTORY_PAGE_SIZE);
+    Ok(Json(hub(&s)?.chat_history(&id, query.before_seq, limit)?))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

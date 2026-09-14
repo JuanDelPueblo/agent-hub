@@ -1,5 +1,7 @@
 //! Chat and turn operations.
-use super::{workspaces::workspace_error, ChatView, HubService, ServiceError, ServiceResult};
+use super::{
+    workspaces::workspace_error, ChatHistoryPage, ChatView, HubService, ServiceError, ServiceResult,
+};
 use crate::acp::callbacks::CallbackPolicy;
 use crate::store::{validate_name, Chat, ChatWorkspace, WorkspaceMode};
 use crate::workspace::{self, BranchInfo, ManagedPaths, RepoInfo};
@@ -27,6 +29,8 @@ pub struct ChatEdit {
 /// A prompt must fit this range. The limit keeps one request from filling the
 /// event log and the agent's context at once.
 const MAX_PROMPT_BYTES: usize = 100_000;
+pub const DEFAULT_HISTORY_PAGE_SIZE: usize = 100;
+pub const MAX_HISTORY_PAGE_SIZE: usize = 200;
 
 impl HubService {
     /// Adds the live process and turn state to a stored chat. A chat with no
@@ -76,6 +80,25 @@ impl HubService {
     pub async fn get_chat(&self, chat_id: &str) -> ServiceResult<ChatView> {
         let chat = self.store.chat(chat_id)?;
         Ok(self.view(chat).await)
+    }
+
+    pub fn chat_history(
+        &self,
+        chat_id: &str,
+        before_seq: Option<u64>,
+        limit: usize,
+    ) -> ServiceResult<ChatHistoryPage> {
+        self.store.chat(chat_id)?;
+        let limit = limit.clamp(1, MAX_HISTORY_PAGE_SIZE);
+        let (events, has_older) = self.store.chat_event_page(chat_id, before_seq, limit)?;
+        let next_cursor = has_older
+            .then(|| events.first().map(|event| event.seq))
+            .flatten();
+        Ok(ChatHistoryPage {
+            events,
+            next_cursor,
+            has_older,
+        })
     }
 
     pub async fn create_chat(

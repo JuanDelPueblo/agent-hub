@@ -1,4 +1,5 @@
 //! The chat shape every caller receives.
+use crate::events::SessionEvent;
 use crate::store::{Chat, ChatWorkspace, WorkspaceMode};
 use serde::Serialize;
 
@@ -30,4 +31,11 @@ pub struct ChatView {
     pub process_state: String,
     pub turn_state: String,
     pub workspace: Option<ChatWorkspaceSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatHistoryPage {
+    pub events: Vec<SessionEvent>,
+    pub next_cursor: Option<u64>,
+    pub has_older: bool,
 }

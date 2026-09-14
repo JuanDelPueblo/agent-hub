@@ -63,6 +63,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 tempfile = "3.14"
 # `oneshot` drives the axum router directly in the integration tests.
 tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.24"
 
 # The Rust sources sit in `backend/src`, next to the fake backend, so Cargo
 # needs the paths. Integration tests keep the default `tests/` location.

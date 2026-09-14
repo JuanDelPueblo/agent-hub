@@ -10,6 +10,7 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
@@ -235,6 +236,201 @@ async fn api_validation_and_chat_identity() {
         .await
         .unwrap();
     assert_eq!(response.status(), 403);
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
+    let tmp = tempfile::tempdir().unwrap();
+    let setup = manager(tmp.path(), true);
+    let db = setup.store.as_ref().unwrap();
+    let project = db
+        .create_project("history".into(), tmp.path().display().to_string())
+        .unwrap();
+    let target = db
+        .create_chat(project.id.clone(), "codex".into(), Some("target".into()))
+        .unwrap();
+    let other = db
+        .create_chat(project.id, "codex".into(), Some("other".into()))
+        .unwrap();
+    let target_id = target.id.clone();
+    let other_id = other.id.clone();
+    drop(setup);
+
+    // Seed the large durable fixture in one transaction. Normal EventLog
+    // writes remain one-event-at-a-time and fail closed; this only keeps the
+    // integration fixture from spending a commit on each of 20,050 rows.
+    let connection = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+    let transaction = connection.unchecked_transaction().unwrap();
+    for index in 0..20_050 {
+        let event = agent_hub::events::SessionEvent {
+            seq: index + 1,
+            timestamp: chrono::Utc::now(),
+            session_id: if index % 2 == 0 {
+                target_id.clone()
+            } else {
+                other_id.clone()
+            },
+            agent: "codex".into(),
+            payload: EventPayload::MessageChunk {
+                text: index.to_string(),
+            },
+        };
+        transaction
+            .execute(
+                "INSERT INTO events (seq, session_id, data) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    event.seq as i64,
+                    event.session_id,
+                    serde_json::to_string(&event).unwrap(),
+                ],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+
+    let mgr = manager(tmp.path(), true);
+
+    let mut config = Config::default();
+    config.web.project_roots = vec![tmp.path().display().to_string()];
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
+    let mut cursor = None;
+    let mut total = 0;
+    let mut pages = 0;
+    loop {
+        let query = cursor
+            .map(|value| format!("&before_seq={value}"))
+            .unwrap_or_default();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/chats/{}/history?limit=37{}",
+                        target_id, query
+                    ))
+                    .header("host", "127.0.0.1:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap())
+                .unwrap();
+        let events = body["events"].as_array().unwrap();
+        assert!(events.len() <= 37);
+        assert!(events.iter().all(|event| event["session_id"] == target_id));
+        total += events.len();
+        pages += 1;
+        if !body["has_older"].as_bool().unwrap() {
+            break;
+        }
+        cursor = body["next_cursor"].as_u64();
+        assert!(cursor.is_some());
+    }
+    assert_eq!(total, 10_025);
+    assert!(pages > 250);
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mgr = manager(tmp.path(), true);
+    let db = mgr.store.as_ref().unwrap();
+    let project = db
+        .create_project("socket".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = db
+        .create_chat(project.id, "codex".into(), Some("socket".into()))
+        .unwrap();
+    mgr.event_log()
+        .append(
+            &chat.id,
+            "codex",
+            EventPayload::MessageChunk { text: "old".into() },
+        )
+        .unwrap();
+
+    let mut config = Config::default();
+    config.web.project_roots = vec![tmp.path().display().to_string()];
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), address.port()));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
+        .await
+        .unwrap();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            json!({ "type": "subscribe", "from_seq": 0 }).to_string(),
+        ))
+        .await
+        .unwrap();
+
+    let subscribed = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let subscribed: Value = serde_json::from_str(subscribed.to_text().unwrap()).unwrap();
+    assert_eq!(subscribed["type"], "subscribed");
+    assert_eq!(subscribed["through_seq"], 1);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), socket.next())
+            .await
+            .is_err()
+    );
+
+    mgr.event_log()
+        .append(
+            &chat.id,
+            "codex",
+            EventPayload::MessageChunk {
+                text: "live".into(),
+            },
+        )
+        .unwrap();
+    let live = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let live: Value = serde_json::from_str(live.to_text().unwrap()).unwrap();
+    assert_eq!(live["seq"], 2);
+    socket.close(None).await.unwrap();
+
+    mgr.event_log()
+        .append(
+            &chat.id,
+            "codex",
+            EventPayload::MessageChunk {
+                text: "missed while disconnected".into(),
+            },
+        )
+        .unwrap();
+    let (mut reconnect, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
+        .await
+        .unwrap();
+    reconnect
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            json!({ "type": "subscribe", "from_seq": 3 }).to_string(),
+        ))
+        .await
+        .unwrap();
+    let missed = tokio::time::timeout(Duration::from_secs(2), reconnect.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let missed: Value = serde_json::from_str(missed.to_text().unwrap()).unwrap();
+    assert_eq!(missed["seq"], 3);
+    reconnect.close(None).await.unwrap();
+    server.abort();
     mgr.shutdown_all().await;
 }
 

@@ -33,6 +33,19 @@ describe('ApiService', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it('requests chat-scoped history with a sequence cursor', async () => {
+    const firstPromise = api.fetchChatHistory('chat/a');
+    const first = http.expectOne('/api/chats/chat%2Fa/history');
+    expect(first.request.method).toBe('GET');
+    first.flush({ events: [], next_cursor: 42, has_older: true });
+    await expect(firstPromise).resolves.toMatchObject({ next_cursor: 42, has_older: true });
+
+    const olderPromise = api.fetchChatHistory('chat/a', 42);
+    const older = http.expectOne('/api/chats/chat%2Fa/history?before_seq=42');
+    older.flush({ events: [], next_cursor: null, has_older: false });
+    await expect(olderPromise).resolves.toMatchObject({ has_older: false });
+  });
+
   it('fetches workspace options and sends the Phase 2 workspace selection', async () => {
     const optionsPromise = api.fetchWorkspaceOptions('git/project');
     const optionsRequest = http.expectOne('/api/projects/git%2Fproject/workspace-options');

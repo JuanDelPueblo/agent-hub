@@ -18,21 +18,38 @@ import type {
  */
 export class EventReducer {
   private nextId = 1;
-  private readonly seenSeqs = new Set<number>();
+  private readonly eventsBySeq = new Map<number, SessionEvent>();
   private readonly itemList = signal<DisplayItem[]>([]);
   readonly items = this.itemList.asReadonly();
   private currentTurnId: number | null = null;
 
   constructor(initialEvents: SessionEvent[] = []) {
-    for (const event of initialEvents) this.ingest(event);
+    for (const event of initialEvents) this.eventsBySeq.set(event.seq, event);
+    this.rebuild();
   }
 
   ingest(event: SessionEvent): DisplayItem | null {
-    if (typeof event.seq === 'number') {
-      if (this.seenSeqs.has(event.seq)) return null;
-      this.seenSeqs.add(event.seq);
-    }
+    if (typeof event.seq !== 'number' || this.eventsBySeq.has(event.seq)) return null;
+    this.eventsBySeq.set(event.seq, event);
+    this.rebuild();
+    if (!event.payload || event.payload.type === 'state_change') return null;
+    return this.itemList().at(-1) ?? null;
+  }
 
+  /**
+   * Pages can arrive older than live events. Replaying the durable sequence
+   * from the merged map keeps turn grouping and permission resolution
+   * chronological regardless of arrival order.
+   */
+  private rebuild(): void {
+    this.nextId = 1;
+    this.currentTurnId = null;
+    this.itemList.set([]);
+    const ordered = [...this.eventsBySeq.values()].sort((a, b) => a.seq - b.seq);
+    for (const event of ordered) this.ingestOrdered(event);
+  }
+
+  private ingestOrdered(event: SessionEvent): DisplayItem | null {
     const payload = event.payload;
     if (!payload) return null;
 

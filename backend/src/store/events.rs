@@ -81,6 +81,40 @@ pub(crate) fn page(
     Ok(events)
 }
 
+/// Returns one chat's newest or older history page. The descending query lets
+/// SQLite use the `(session_id)` index while the returned page is reversed for
+/// the chronological order expected by reducers.
+pub(crate) fn chat_page(
+    conn: &Connection,
+    session_id: &str,
+    before_seq: Option<u64>,
+    limit: usize,
+) -> StoreResult<(Vec<SessionEvent>, bool)> {
+    let before = before_seq
+        .map(|seq| i64::try_from(seq).map_err(|e| StoreError::Internal(e.into())))
+        .transpose()?;
+    let query_limit =
+        i64::try_from(limit.saturating_add(1)).map_err(|e| StoreError::Internal(e.into()))?;
+    let mut stmt = conn.prepare(
+        "SELECT data FROM events
+         WHERE session_id = ?1 AND (?2 IS NULL OR seq < ?2)
+         ORDER BY seq DESC LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![session_id, before, query_limit], |r| {
+        r.get::<_, String>(0)
+    })?;
+    let mut events = Vec::new();
+    for row in rows {
+        events.push(serde_json::from_str(&row?)?);
+    }
+    let has_older = events.len() > limit;
+    if has_older {
+        events.pop();
+    }
+    events.reverse();
+    Ok((events, has_older))
+}
+
 pub(crate) fn max_seq(conn: &Connection) -> StoreResult<u64> {
     let value: i64 =
         conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?;

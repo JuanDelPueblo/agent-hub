@@ -32,6 +32,7 @@ const routes = [
   ['GET', /^\/api\/projects\/([^/]+)\/workspace-options$/, workspaceOptions],
   ['POST', /^\/api\/projects\/([^/]+)\/chats$/, createChat],
   ['GET', /^\/api\/chats\/([^/]+)$/, getChat],
+  ['GET', /^\/api\/chats\/([^/]+)\/history$/, history],
   ['PATCH', /^\/api\/chats\/([^/]+)$/, editChat],
   ['DELETE', /^\/api\/chats\/([^/]+)$/, deleteChat],
   ['POST', /^\/api\/chats\/([^/]+)\/prompt$/, promptChat],
@@ -112,8 +113,12 @@ function handleWebSocket(request, rawSocket, head) {
 
     if (message.type === 'subscribe') {
       const fromSeq = Number(message.from_seq) || 0;
-      for (const event of state.replayFrom(fromSeq)) {
-        socket.send(JSON.stringify(event));
+      // A fresh browser gets only the live baseline. Reconnects use the last
+      // durable sequence and replay the missed global interval.
+      if (fromSeq > 0) {
+        for (const event of state.replayFrom(fromSeq)) {
+          socket.send(JSON.stringify(event));
+        }
       }
       socket.send(JSON.stringify({ type: 'subscribed', through_seq: state.nextSeq - 1 }));
 
@@ -245,6 +250,23 @@ function createChat({ params, body }) {
 
 function getChat({ params }) {
   return json(state.chatView(requireChat(params[0])));
+}
+
+async function history({ params, url }) {
+  const chat = requireChat(params[0]);
+  if (options.historyDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, options.historyDelayMs * options.latency));
+  }
+  if (options.failHistoryPages > 0) {
+    options.failHistoryPages -= 1;
+    throw httpError(503, 'History page temporarily unavailable');
+  }
+  const before = url.searchParams.has('before_seq')
+    ? Number(url.searchParams.get('before_seq'))
+    : undefined;
+  const requested = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 100;
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 200) : 100;
+  return json(state.historyPage(chat.id, before, limit));
 }
 
 function editChat({ params, body }) {
@@ -555,18 +577,22 @@ function readJsonBody(request) {
 }
 
 function parseArgs(argv) {
-  const parsed = { port: 8765, latency: 1 };
+  const parsed = { port: 8765, latency: 1, historyDelayMs: 0, failHistoryPages: 0 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--port') parsed.port = Number(argv[++index]);
     else if (arg === '--latency') parsed.latency = Number(argv[++index]);
+    else if (arg === '--history-delay-ms') parsed.historyDelayMs = Number(argv[++index]);
+    else if (arg === '--fail-history-pages') parsed.failHistoryPages = Number(argv[++index]);
     else if (arg === '--help') {
-      console.log('Usage: node fake-backend/server.mjs [--port 8765] [--latency 1.0]');
+      console.log('Usage: node fake-backend/server.mjs [--port 8765] [--latency 1.0] [--history-delay-ms 0] [--fail-history-pages 0]');
       process.exit(0);
     }
   }
   if (!Number.isFinite(parsed.port) || parsed.port <= 0) throw new Error('Invalid --port');
   if (!Number.isFinite(parsed.latency) || parsed.latency < 0) throw new Error('Invalid --latency');
+  if (!Number.isFinite(parsed.historyDelayMs) || parsed.historyDelayMs < 0) throw new Error('Invalid --history-delay-ms');
+  if (!Number.isInteger(parsed.failHistoryPages) || parsed.failHistoryPages < 0) throw new Error('Invalid --fail-history-pages');
   return parsed;
 }
 

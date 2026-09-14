@@ -1,5 +1,13 @@
 <div #viewport class="stream" (scroll)="onScroll()" aria-live="polite">
   <div class="stream-content">
+    @if (hasOlderHistory()) {
+      <div class="history-control">
+        <button mat-stroked-button type="button" (click)="requestOlder()" [disabled]="historyLoading()">
+          @if (historyLoading()) { <mat-spinner diameter="18" /> } @else { <mat-icon>history</mat-icon> }
+          {{ historyLoading() ? 'Loading older history…' : 'Load older history' }}
+        </button>
+      </div>
+    }
     @for (item of items(); track item.id) {
       <hub-message-item [item]="item" [chatId]="chatId()" />
     }
