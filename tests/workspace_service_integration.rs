@@ -80,7 +80,7 @@ async fn workspace_options_enumerate_sorted_local_branches_and_non_git() {
 
     let options = hub.workspace_options(&project.id).await.unwrap();
     assert!(options.is_git);
-    assert_eq!(options.branch.as_deref(), Some("main"));
+    assert_eq!(options.current_branch.as_deref(), Some("main"));
     assert!(!options.dirty);
     assert_eq!(
         options
@@ -262,7 +262,8 @@ async fn http_workspace_options_route_and_chat_workspace_payload_work() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let options: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(options["is_git"], true);
-    assert_eq!(options["branch"], "main");
+    assert_eq!(options["current_branch"], "main");
+    assert!(options.get("branch").is_none());
 
     let response = app
         .oneshot(

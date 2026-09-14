@@ -13,7 +13,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceOptions {
     pub is_git: bool,
-    pub branch: Option<String>,
+    pub current_branch: Option<String>,
     pub head_sha: Option<String>,
     pub dirty: bool,
     pub branches: Vec<WorkspaceBranch>,
@@ -68,7 +68,7 @@ impl HubService {
             .collect();
         Ok(WorkspaceOptions {
             is_git: info.is_git,
-            branch: info.branch,
+            current_branch: info.branch,
             head_sha: info.head_sha,
             dirty: info.dirty,
             branches,
