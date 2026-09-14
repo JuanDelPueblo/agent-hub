@@ -229,7 +229,7 @@ function workspaceOptions({ params }) {
 function createChat({ params, body }) {
   if (!state.projects.has(params[0])) throw httpError(404, 'Project not found');
   const agent = requireString(body, 'agent');
-  if (!AGENTS.includes(agent)) throw httpError(400, 'Unknown agent');
+  if (!AGENTS.some((candidate) => candidate.id === agent)) throw httpError(400, 'Unknown agent');
 
   const workspace = body.workspace;
   if (workspace !== undefined) {
@@ -425,8 +425,8 @@ function remoteSessions({ params }) {
 function getStatus() {
   return json({
     project_root: PROJECT_ROOT,
-    agents: AGENTS.map((name) => ({
-      name,
+    agents: AGENTS.map(({ id }) => ({
+      name: id,
       process_state: 'STOPPED',
       turn_state: 'IDLE',
     })),

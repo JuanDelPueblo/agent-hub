@@ -1,5 +1,5 @@
 use crate::acp::{AcpClient, SavedConfigRejected};
-use crate::agents::{AgentRegistry, AgentRuntime};
+use crate::agents::{AgentCatalog, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
 use crate::store::{Chat, ChatWorkspace, Project, WorkspaceMode};
@@ -1160,19 +1160,19 @@ fn stop_reason_to_string(stop_reason: StopReason) -> String {
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<AcpSession>>>,
     sessions_by_id: RwLock<HashMap<String, Arc<AcpSession>>>,
-    agents: Arc<AgentRegistry>,
+    agents: Arc<AgentCatalog>,
     event_log: Arc<EventLog>,
     checkout_guards: StdMutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     pub store: Option<Arc<crate::store::Store>>,
 }
 
 impl SessionManager {
-    pub fn new(agents: Arc<AgentRegistry>, event_log: Arc<EventLog>) -> Arc<Self> {
+    pub fn new(agents: Arc<AgentCatalog>, event_log: Arc<EventLog>) -> Arc<Self> {
         Self::with_store(agents, event_log, None)
     }
 
     pub fn with_store(
-        agents: Arc<AgentRegistry>,
+        agents: Arc<AgentCatalog>,
         event_log: Arc<EventLog>,
         store: Option<Arc<crate::store::Store>>,
     ) -> Arc<Self> {
@@ -1425,7 +1425,7 @@ impl SessionManager {
     }
 
     pub fn has_agent(&self, name: &str) -> bool {
-        self.agents.contains(name)
+        self.agents.is_available(name)
     }
 
     pub async fn remove_session(&self, key: &str) -> Option<Arc<AcpSession>> {

@@ -11,8 +11,11 @@ describe('NewChatDialogComponent', () => {
   let api: { fetchWorkspaceOptions: ReturnType<typeof vi.fn> };
   let close: ReturnType<typeof vi.fn>;
 
-  async function setup(options: unknown) {
-    state = { agents: vi.fn(() => ['codex', 'claude']), createChat: vi.fn(async () => ({ id: 'chat-1' })) };
+  async function setup(options: unknown, agents = [
+    { id: 'codex', display_name: 'Codex CLI', source: 'builtin', availability: 'available', metadata: null },
+    { id: 'claude', display_name: 'Claude', source: 'file', availability: 'available', metadata: null },
+  ]) {
+    state = { agents: vi.fn(() => agents), createChat: vi.fn(async () => ({ id: 'chat-1' })) };
     api = { fetchWorkspaceOptions: vi.fn(async () => options) };
     close = vi.fn();
     await TestBed.configureTestingModule({
@@ -52,5 +55,14 @@ describe('NewChatDialogComponent', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Branch');
     await fixture.componentInstance.create();
     expect(state.createChat).toHaveBeenCalledWith('project-1', 'codex', undefined, undefined);
+  });
+
+  it('loads the first available catalog entry and disables unavailable entries', async () => {
+    await setup({ is_git: false, current_branch: null, head_sha: null, dirty: false, branches: [] }, [
+      { id: 'offline', display_name: 'Offline', source: 'file', availability: 'unavailable', metadata: null },
+      { id: 'custom', display_name: 'Custom ACP', source: 'pueblo_managed', availability: 'available', metadata: null },
+    ]);
+    expect(fixture.componentInstance.selectedAgent()).toBe('custom');
+    expect(fixture.componentInstance.availableAgents().map((agent) => agent.id)).toEqual(['custom']);
   });
 });

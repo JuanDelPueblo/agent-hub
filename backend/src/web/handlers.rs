@@ -166,7 +166,7 @@ pub async fn api_permission_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{AgentDefinition, AgentRegistry};
+    use crate::agents::{AgentCatalog, AgentDefinition};
     use crate::config::Config;
     use crate::events::EventLog;
     use crate::session::SessionManager;
@@ -177,7 +177,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
 
         let mut config = Config {
-            agents: Arc::new(AgentRegistry::new([
+            agents: Arc::new(AgentCatalog::new([
                 AgentDefinition::codex_default(),
                 AgentDefinition::gemini_default(),
             ])),

@@ -1,4 +1,4 @@
-use crate::agents::{AgentDefinition, AgentRegistry};
+use crate::agents::{AgentCatalog, AgentDefinition};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -148,7 +148,7 @@ pub struct Config {
     pub paths: PuebloPaths,
     pub server: ServerConfig,
     /// Shared with `SessionManager`, so the two can never drift apart.
-    pub agents: Arc<AgentRegistry>,
+    pub agents: Arc<AgentCatalog>,
     pub timeouts: TimeoutConfig,
     pub web: WebConfig,
 }
@@ -158,7 +158,7 @@ impl Default for Config {
         Self {
             paths: PuebloPaths::from_environment(PathOverrides::default()),
             server: ServerConfig::default(),
-            agents: Arc::new(AgentRegistry::new([
+            agents: Arc::new(AgentCatalog::new([
                 AgentDefinition::codex_default(),
                 AgentDefinition::antigravity_default(),
                 AgentDefinition::opencode_default(),
@@ -199,7 +199,7 @@ pub struct WebConfig {
 }
 
 impl Config {
-    pub fn get_agent(&self, id: &str) -> Option<&AgentDefinition> {
+    pub fn get_agent(&self, id: &str) -> Option<Arc<AgentDefinition>> {
         self.agents.definition(id)
     }
 }

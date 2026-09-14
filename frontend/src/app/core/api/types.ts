@@ -1,6 +1,17 @@
 export type ProcessState = 'STARTING' | 'RUNNING' | 'STOPPED' | 'DEAD';
 export type TurnState = 'IDLE' | 'PROMPTING' | 'CANCELLING';
 export type PermissionPolicy = 'ask' | 'read-only' | 'auto-approve' | 'deny-all';
+export type AgentSource = 'builtin' | 'file' | 'pueblo_managed' | 'registry' | 'declarative';
+export type AgentAvailability = 'available' | 'unavailable';
+
+export interface AgentSummary {
+  id: string;
+  display_name: string;
+  source: AgentSource;
+  availability: AgentAvailability;
+  usage_provider?: string | null;
+  metadata: unknown;
+}
 
 export interface Project {
   id: string;

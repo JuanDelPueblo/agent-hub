@@ -1,14 +1,14 @@
 import { inject, Service, signal } from '@angular/core';
 import { ApiService } from '../core/api/api.service';
-import type { CloneProjectInput, Project } from '../core/api/types';
+import type { AgentSummary, CloneProjectInput, Project } from '../core/api/types';
 
-/** Owns the project collection and configured agent names. */
+/** Owns the project collection and installed-agent catalog. */
 @Service()
 export class ProjectStore {
   private readonly api = inject(ApiService);
 
   readonly projects = signal<Project[]>([]);
-  readonly agents = signal<string[]>(['codex', 'claude', 'opencode', 'antigravity']);
+  readonly agents = signal<AgentSummary[]>([]);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
 
@@ -29,7 +29,9 @@ export class ProjectStore {
     try {
       this.agents.set(await this.api.fetchAgents());
     } catch {
-      // Keep the built-in names when the optional agent listing is unavailable.
+      // An unavailable catalog must not be replaced with an authoritative
+      // client-side list. The next load can retry the backend source.
+      this.agents.set([]);
     }
   }
 

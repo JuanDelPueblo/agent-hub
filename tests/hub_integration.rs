@@ -4,7 +4,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use pueblo_hub::{
-    agents::{parse_agents, AgentDefinition, AgentRegistry},
+    agents::{parse_agents, AgentDefinition, AgentRegistry, AgentSource},
     config::Config,
     events::{EventLog, EventPayload},
     session::SessionManager,
@@ -29,6 +29,50 @@ fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
         ])
         .with_idle_timeout(Duration::ZERO);
     SessionManager::with_store(Arc::new(AgentRegistry::new([agent])), log, Some(store))
+}
+
+#[tokio::test]
+async fn agents_api_returns_provider_neutral_catalog_summaries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agents = Arc::new(AgentRegistry::new([
+        AgentDefinition::codex_default()
+            .with_display_name("Codex CLI".into())
+            .with_source(AgentSource::File)
+            .with_usage_provider(Some("quota-service".into()))
+            .with_metadata(json!({"package": "codex"})),
+        AgentDefinition::new("offline", "missing-acp").with_available(false),
+    ]));
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store));
+    let config = Arc::new(Config {
+        agents,
+        ..Default::default()
+    });
+    let app = router(AppState::new(sessions.clone(), config, 8765));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents")
+                .header("host", "127.0.0.1:8765")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(body[0]["id"], "codex");
+    assert_eq!(body[0]["display_name"], "Codex CLI");
+    assert_eq!(body[0]["source"], "file");
+    assert_eq!(body[0]["availability"], "available");
+    assert_eq!(body[0]["usage_provider"], "quota-service");
+    assert_eq!(body[0]["metadata"]["package"], "codex");
+    assert_eq!(body[1]["id"], "offline");
+    assert_eq!(body[1]["availability"], "unavailable");
+    sessions.shutdown_all().await;
 }
 
 #[tokio::test]

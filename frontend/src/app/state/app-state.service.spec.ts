@@ -25,7 +25,7 @@ describe('AppStateService', () => {
     events = new Subject<SessionEvent>();
     replayGaps = new Subject<void>();
     const api = {
-      fetchProjects: async () => [...projects], fetchAgents: async () => ['codex'], fetchChats: async () => [...chats],
+      fetchProjects: async () => [...projects], fetchAgents: async () => [{ id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', metadata: null }], fetchChats: async () => [...chats],
       createProject: async (name: string, path: string) => ({ id: 'project-2', name, path, created_at: 'now', updated_at: 'now', chat_count: 0 }),
       editProject: async (id: string, name: string, path: string) => ({ ...projects[0], id, name, path }),
       deleteProject: async () => undefined,
