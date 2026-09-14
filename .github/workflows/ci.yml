@@ -50,7 +50,7 @@ jobs:
           node-version: 22
 
       - name: Run fake-backend tests
-        run: node --test backend/fake/
+        run: node --test backend/fake/*.test.mjs
 
   test:
     name: Rust Tests

@@ -38,10 +38,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 stage "Rust tests (cargo nextest run)"
 cargo nextest run --all-features
 
-if [ ! -d frontend/node_modules ]; then
-  stage "Frontend dependencies (npm ci)"
-  npm ci --prefix frontend
-fi
+stage "Frontend dependencies (npm ci)"
+npm ci --prefix frontend
 
 stage "Frontend tests (npm test)"
 npm test --prefix frontend
@@ -49,7 +47,7 @@ npm test --prefix frontend
 stage "Frontend production build (npm run build)"
 npm run build --prefix frontend
 
-stage "Fake-backend tests (node --test backend/fake/)"
-node --test backend/fake/
+stage "Fake-backend tests (node --test backend/fake/*.test.mjs)"
+node --test backend/fake/*.test.mjs
 
 printf '\nAll verification stages passed.\n'

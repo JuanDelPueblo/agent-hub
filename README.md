@@ -57,15 +57,8 @@ Build the complete application with embedded frontend assets:
 nix build .#pueblo-hub
 ```
 
-The resulting binary will be in `result/bin/pueblo-hub`.
-
-For standalone backend development without embedded frontend assets:
-
-```sh
-cargo build --bin pueblo-hub
-```
-
-Then run it with a database, project directory, and agent configuration:
+This produces `result/bin/pueblo-hub`, which includes the embedded production
+frontend:
 
 ```sh
 result/bin/pueblo-hub \
@@ -74,6 +67,18 @@ result/bin/pueblo-hub \
   --agents-file agents.json \
   --public-origin https://example.com \
   --port 9123
+```
+
+For standalone backend development without embedded frontend assets:
+
+```sh
+cargo build --bin pueblo-hub
+```
+
+This produces `target/debug/pueblo-hub`:
+
+```sh
+target/debug/pueblo-hub --help
 ```
 
 The fake backend accepts two options:
