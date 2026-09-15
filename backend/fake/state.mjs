@@ -133,6 +133,31 @@ export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-al
 /** Root of the synthetic directory tree that the folder picker browses. */
 export const PROJECT_ROOT = '/home/dev/projects';
 
+// Small, valid ACP content used by the rich-history fixture and the `rich`
+// prompt scenario. It is intentionally self-contained: the fake backend
+// never reads files or fetches remote resources.
+export const RICH_IMAGE_DATA = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+export const RICH_HISTORY_CONTENT = [
+  { type: 'text', text: 'The captured dashboard state after the Material 3 migration.' },
+  { type: 'image', data: RICH_IMAGE_DATA, mimeType: 'image/png', uri: 'https://example.invalid/pueblo-hub/dashboard.png' },
+  {
+    type: 'resource_link',
+    name: 'Render trace',
+    title: 'Open the render trace',
+    description: 'A safe, metadata-only link from the fake ACP agent.',
+    uri: 'https://example.invalid/pueblo-hub/render-trace.json',
+    mimeType: 'application/json',
+  },
+  {
+    type: 'resource',
+    resource: {
+      uri: 'https://example.invalid/pueblo-hub/artifacts/render-trace.json',
+      mimeType: 'application/json',
+      text: '{"route":"/projects/pueblo-hub","firstPaintMs":184,"layoutShift":0.01}',
+    },
+  },
+];
+
 function now() {
   return new Date().toISOString();
 }
@@ -239,6 +264,10 @@ export class FakeState {
     this.runtime = new Map();
     this.tasksByChat = new Map();
     this.blockedChats = new Set();
+    // Internal startup instructions consumed by the fake turn runner. These
+    // are not part of any HTTP response; they keep seeded open turns alive
+    // after their durable event history has been written.
+    this.seededTurns = new Map();
 
     this.events = [];
     this.nextSeq = 1;
@@ -256,10 +285,10 @@ export class FakeState {
   // ---------------------------------------------------------------- events
 
   /** Appends an event and publishes it, exactly like `EventLog::append`. */
-  emit(sessionId, agent, payload) {
+  emit(sessionId, agent, payload, timestamp = now()) {
     const event = {
       seq: this.nextSeq,
-      timestamp: now(),
+      timestamp,
       session_id: sessionId,
       agent,
       payload,
@@ -271,8 +300,8 @@ export class FakeState {
   }
 
   /** Tells the browser that projects or chats changed. */
-  metadataChanged() {
-    this.emit('', '', { type: 'metadata_changed' });
+  metadataChanged(timestamp = now()) {
+    this.emit('', '', { type: 'metadata_changed' }, timestamp);
   }
 
   replayFrom(fromSeq) {
@@ -447,7 +476,7 @@ export class FakeState {
     return true;
   }
 
-  createTask(chatId, command, cwd, initialOutput = '') {
+  createTask(chatId, command, cwd, initialOutput = '', startedAt = now()) {
     if (!this.tasksByChat.has(chatId)) {
       this.tasksByChat.set(chatId, []);
     }
@@ -459,13 +488,13 @@ export class FakeState {
       cwd: cwd ?? `${PROJECT_ROOT}/agent-hub`,
       state: 'running',
       exit_code: null,
-      started_at: now(),
+      started_at: startedAt,
       completed_at: null,
       output: initialOutput,
       truncated: false,
     };
     tasks.push(task);
-    this.metadataChanged();
+    this.metadataChanged(startedAt);
     return task;
   }
 
@@ -506,7 +535,7 @@ export class FakeState {
     return chat;
   }
 
-  setRuntime(chatId, process, turn) {
+  setRuntime(chatId, process, turn, timestamp = now()) {
     const chat = this.chats.get(chatId);
     if (!chat) return;
     const runtime = this.runtime.get(chatId) ?? { process: 'STOPPED', turn: 'IDLE' };
@@ -516,7 +545,7 @@ export class FakeState {
       type: 'state_change',
       process: next.process,
       turn: next.turn,
-    });
+    }, timestamp);
   }
 
   agent(id) { return AGENTS.find((agent) => agent.id === id); }
@@ -814,104 +843,334 @@ export class FakeState {
       ],
     });
     const firmware = this.createProject('corolla-firmware', `${PROJECT_ROOT}/corolla-firmware`);
-    this.createProject('scratch', `${PROJECT_ROOT}/scratch`);
+    const scratch = this.createProject('scratch', `${PROJECT_ROOT}/scratch`);
+    this.setSeedProjectDates(hub, '2026-09-15T08:00:00.000Z', '2026-09-15T15:40:00.000Z');
+    this.setSeedProjectDates(firmware, '2026-09-12T09:00:00.000Z', '2026-09-15T14:10:00.000Z');
+    this.setSeedProjectDates(scratch, '2026-09-10T10:00:00.000Z', '2026-09-15T13:10:00.000Z');
 
+    // The titles and timestamps are deliberately stable so a fresh `npm run
+    // dev` presents the same useful starting point every time. UUIDs remain
+    // realistic because managed workspace branches contain chat UUIDs.
     const review = this.createChat(hub.id, 'claude', 'Review the WebSocket replay path');
-    review.workspace = {
-      mode: 'managed_worktree',
-      branch: `pueblo-hub/chat/${review.id}`,
-      base_commit: '1111111111111111111111111111111111111111',
-    };
-    review.acp_session_id = 'acp-session-1';
-    this.runtime.set(review.id, { process: 'RUNNING', turn: 'IDLE' });
+    this.setManagedWorkspace(review, '1111111111111111111111111111111111111111');
+    review.acp_session_id = 'acp-session-review-replay';
+    this.seedTranscript(review, '2026-09-15T15:40:00.000Z');
+    this.setSeedUsage(review, { used: 18400, size: 200000, cost_amount: 0.184, cost_currency: 'USD' });
 
-    const migrate = this.createChat(hub.id, 'codex', 'Port the store to migrations');
-    migrate.archived = true;
+    const working = this.createChat(hub.id, 'codex', 'Trace the reconnect race in EventLog');
+    this.setManagedWorkspace(working, '2222222222222222222222222222222222222222');
+    working.acp_session_id = 'acp-session-reconnect-race';
+    this.seedIncompleteTurn(working, '2026-09-15T15:35:00.000Z');
+    this.setSeedConfig(working, 'model', 'gpt-5');
+    this.setSeedUsage(working, { used: 5200, size: 200000, cost_amount: 0.052, cost_currency: 'USD' });
 
-    const theme = this.createChat(hub.id, 'opencode', 'Frontend theme cleanup');
-    theme.workspace = {
-      mode: 'project_checkout',
-      branch: 'feature/ui',
-      base_commit: '2222222222222222222222222222222222222222',
-    };
+    const waiting = this.createChat(hub.id, 'opencode', 'Approve the WebSocket backpressure fix');
+    this.setProjectCheckout(waiting, 'feature/ui', '2222222222222222222222222222222222222222');
+    waiting.acp_session_id = 'acp-session-backpressure';
+    this.seedPermissionTurn(waiting, '2026-09-15T15:30:00.000Z', 'seed-permission-backpressure');
+    this.setSeedUsage(waiting, { used: 7600, size: 200000, cost_amount: 0.076, cost_currency: 'USD' });
 
-    const flash = this.createChat(firmware.id, 'claude', 'Unscramble the calibration block');
-    flash.permission_policy = 'read-only';
+    const failed = this.createChat(hub.id, 'claude', 'Recover the failed schema migration check');
+    this.setProjectCheckout(failed, 'feature/ui', '2222222222222222222222222222222222222222');
+    failed.acp_session_id = 'acp-session-migration-failure';
+    this.seedFailedTurn(failed, '2026-09-15T15:25:00.000Z');
+    this.setSeedConfig(failed, 'reasoning_effort', 'high');
+    this.setSeedUsage(failed, { used: 31200, size: 200000, cost_amount: 0.312, cost_currency: 'USD' });
 
-    this.seedTranscript(review);
-    this.seedConversation(migrate, {
+    const terminal = this.createChat(hub.id, 'antigravity', 'Run the workspace verification suite');
+    this.setManagedWorkspace(terminal, '1111111111111111111111111111111111111111');
+    terminal.acp_session_id = 'acp-session-verification-task';
+    this.seedConversation(terminal, {
+      user: 'Can you run the workspace verification suite and leave the output available?',
+      thought: 'The suite is long enough to keep as a background terminal task while I report the launch details.',
+      answer: 'I started the verification suite in a background terminal task. Open Terminal tasks to follow its output.',
+    }, '2026-09-15T15:20:00.000Z');
+    this.createTask(
+      terminal.id,
+      'nix run .#verify',
+      `${PROJECT_ROOT}/pueblo-hub`,
+      'checking Rust formatting…\nwaiting for frontend build…',
+      '2026-09-15T15:20:04.000Z',
+    );
+    this.setSeedUsage(terminal, { used: 9400, size: 200000, cost_amount: 0.094, cost_currency: 'USD' });
+
+    const blocked = this.createChat(hub.id, 'codex', 'Authorize the project .envrc before running tests');
+    this.setProjectCheckout(blocked, 'feature/ui', '2222222222222222222222222222222222222222');
+    blocked.acp_session_id = 'acp-session-blocked-env';
+    this.seedConversation(blocked, {
+      user: 'Why does the test runner need the project environment?',
+      thought: 'The workspace uses direnv to provide the pinned toolchain and test credentials.',
+      answer: 'The environment is ready once the project .envrc is authorized. The next connection attempt will retry the agent.',
+    }, '2026-09-15T15:15:00.000Z');
+    this.blockEnvironment(blocked.id);
+    this.setSeedUsage(blocked, { used: 2800, size: 200000, cost_amount: 0.028, cost_currency: 'USD' });
+
+    const archived = this.createChat(hub.id, 'codex', 'Port the store to versioned migrations');
+    this.setManagedWorkspace(archived, '1111111111111111111111111111111111111111');
+    archived.acp_session_id = 'acp-session-archived-migrations';
+    archived.archived = true;
+    archived.permission_policy = 'read-only';
+    this.seedConversation(archived, {
       user: 'How do we port the store to versioned migrations?',
       thought: 'The store opens SQLite directly. I must list the tables before I draft the migration steps.',
       answer: 'I drafted the migration plan. Each migration runs once and records its version, so a restart never replays it.',
-    });
-    this.seedConversation(theme, {
-      user: 'What is left in the frontend theme cleanup?',
-      thought: 'The theme tokens live in styles.scss. I must check which components still use the old values.',
-      answer: 'I removed the old theme overrides. The app now uses the Material 3 tokens, so dark mode follows the system setting.',
-    });
-    this.seedConversation(flash, {
-      user: 'How do we unscramble the calibration block?',
-      thought: 'The dump is XOR-scrambled. I must read the flash tool before I touch the bytes.',
-      answer: 'I unscrambled the block with the vendor XOR key. The checksum now matches, so the flash tool accepts the image.',
-    });
+    }, '2026-09-15T14:40:00.000Z');
+    this.setSeedUsage(archived, { used: 6600, size: 200000, cost_amount: 0.066, cost_currency: 'USD' });
+
+    const firmwareReview = this.createChat(firmware.id, 'claude', 'Inspect the Corolla calibration checksum');
+    firmwareReview.acp_session_id = 'acp-session-calibration';
+    firmwareReview.permission_policy = 'read-only';
+    this.seedConversation(firmwareReview, {
+      user: 'Can you inspect the calibration checksum without changing the dump?',
+      thought: 'This is a read-only review. I will compare the checksum routine with the captured bytes.',
+      answer: 'The checksum mismatch is isolated to the final calibration block; no files were changed under the read-only policy.',
+    }, '2026-09-15T14:10:00.000Z');
+    this.setSeedUsage(firmwareReview, { used: 4100, size: 200000, cost_amount: 0.041, cost_currency: 'USD' });
+
+    const rich = this.createChat(scratch.id, 'opencode', 'Compare the dashboard render trace and screenshot');
+    rich.acp_session_id = 'acp-session-rich-render';
+    this.seedRichConversation(rich, '2026-09-15T13:10:00.000Z');
+    this.setSeedConfig(rich, 'model', 'claude-sonnet-5');
+    this.setSeedUsage(rich, { used: 14300, size: 200000, cost_amount: 0.143, cost_currency: 'USD' });
+
+    // A genuinely new chat exercises the empty-state composer and connection
+    // setup without requiring a prompt or a special frontend branch.
+    const fresh = this.createChat(scratch.id, 'example-acp', 'Draft a release checklist');
+    fresh.acp_session_id = null;
+    this.setSeedChatDates(fresh, '2026-09-15T12:50:00.000Z', '2026-09-15T12:50:00.000Z');
+    this.setSeedConfig(fresh, 'web_search', true);
+    this.setSeedUsage(fresh, { used: 0, size: 200000, cost_amount: 0, cost_currency: 'USD' });
   }
 
   /**
    * Writes one finished user/answer turn from a small script, so each seeded
    * chat shows history without duplicating `emit()` blocks.
    */
-  seedConversation(chat, script) {
+  seedConversation(chat, script, startAt) {
+    this.setSeedCreatedAt(chat, startAt);
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
     const userEvent = this.emit(chat.id, chat.agent, {
       type: 'user_message',
       text: script.user,
-    });
+      ...(script.userContent ? { content: script.userContent } : {}),
+    }, timestamp(0));
     this.touchChatActivity(chat.id, userEvent.timestamp);
     if (script.thought) {
       this.emit(chat.id, chat.agent, {
         type: 'thought_chunk',
         text: script.thought,
-      });
+        ...(script.thoughtContent ? { content: script.thoughtContent } : {}),
+      }, timestamp(1));
     }
     this.emit(chat.id, chat.agent, {
       type: 'message_chunk',
       text: script.answer,
-    });
-    this.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'end_turn' });
+      ...(script.answerContent ? { content: script.answerContent } : {}),
+    }, timestamp(2));
+    this.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'end_turn' }, timestamp(3));
   }
 
   /** Writes a finished turn, so a freshly opened UI already shows content. */
-  seedTranscript(chat) {
+  seedTranscript(chat, startAt) {
+    this.setSeedCreatedAt(chat, startAt);
     const agent = chat.agent;
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
     const userEvent = this.emit(chat.id, agent, {
       type: 'user_message',
       text: 'Why does the WebSocket drop events after a reconnect?',
-    });
+    }, timestamp(0));
     this.touchChatActivity(chat.id, userEvent.timestamp);
     this.emit(chat.id, agent, {
       type: 'thought_chunk',
       text: 'The client sends from_seq. I must check how the log replays it.',
-    });
+    }, timestamp(1));
     this.emit(chat.id, agent, {
       type: 'tool_call',
       id: 'seed-tool-1',
       title: 'Read backend/src/events.rs',
+      kind: 'read',
       status: 'in_progress',
-    });
+    }, timestamp(2));
     this.emit(chat.id, agent, {
       type: 'tool_call_update',
       id: 'seed-tool-1',
       status: 'completed',
       output: 'replay_from() filters on seq >= from_seq.',
-    });
+    }, timestamp(3));
     this.emit(chat.id, agent, {
       type: 'message_chunk',
       text: 'The replay is correct. ',
-    });
+    }, timestamp(4));
     this.emit(chat.id, agent, {
       type: 'message_chunk',
       text: 'The gap comes from the broadcast channel, which drops a slow reader.',
-    });
-    this.emit(chat.id, agent, { type: 'turn_complete', stop_reason: 'end_turn' });
+    }, timestamp(5));
+    this.emit(chat.id, agent, { type: 'turn_complete', stop_reason: 'end_turn' }, timestamp(6));
+  }
+
+  /** Writes an open turn with partial ACP output and no completion event. */
+  seedIncompleteTurn(chat, startAt) {
+    this.setSeedCreatedAt(chat, startAt);
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
+    const userEvent = this.emit(chat.id, chat.agent, {
+      type: 'user_message',
+      text: 'Trace the reconnect race and show me where the event high-water mark moves.',
+    }, timestamp(0));
+    this.touchChatActivity(chat.id, userEvent.timestamp);
+    this.setRuntime(chat.id, 'RUNNING', 'PROMPTING', timestamp(1));
+    this.emit(chat.id, chat.agent, {
+      type: 'thought_chunk',
+      text: 'I am comparing the replay cursor with the broadcast subscriber now.',
+    }, timestamp(2));
+    this.emit(chat.id, chat.agent, {
+      type: 'plan',
+      entries: [
+        { content: 'Compare replay and live delivery', status: 'completed' },
+        { content: 'Trace the reconnect cursor update', status: 'in_progress' },
+        { content: 'Write a regression test', status: 'pending' },
+      ],
+    }, timestamp(3));
+    this.emit(chat.id, chat.agent, {
+      type: 'tool_call',
+      id: 'seed-working-tool',
+      title: 'Read backend/src/events.rs::replay_page',
+      kind: 'read',
+      status: 'in_progress',
+      locations: [{ path: 'backend/src/events.rs', line: 342 }],
+    }, timestamp(4));
+    this.emit(chat.id, chat.agent, {
+      type: 'message_chunk',
+      text: 'The replay cursor is still open while I inspect the subscriber handoff…',
+    }, timestamp(5));
+    this.seededTurns.set(chat.id, { kind: 'working' });
+  }
+
+  /** Writes an open turn whose permission request is still unresolved. */
+  seedPermissionTurn(chat, startAt, permissionId) {
+    this.setSeedCreatedAt(chat, startAt);
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
+    const userEvent = this.emit(chat.id, chat.agent, {
+      type: 'user_message',
+      text: 'Apply the backpressure fix to the WebSocket send loop.',
+    }, timestamp(0));
+    this.touchChatActivity(chat.id, userEvent.timestamp);
+    this.setRuntime(chat.id, 'RUNNING', 'PROMPTING', timestamp(1));
+    this.emit(chat.id, chat.agent, {
+      type: 'thought_chunk',
+      text: 'The fix changes the sender loop, so I need approval before writing the Rust handler.',
+    }, timestamp(2));
+    this.emit(chat.id, chat.agent, {
+      type: 'tool_call',
+      id: 'seed-waiting-tool',
+      title: 'Edit backend/src/web/websocket.rs',
+      kind: 'edit',
+      status: 'in_progress',
+    }, timestamp(3));
+    this.emit(chat.id, chat.agent, {
+      type: 'permission_request',
+      id: permissionId,
+      method: 'fs/write_text_file',
+      title: 'Write WebSocket sender loop',
+      kind: 'edit',
+      description: 'Write backend/src/web/websocket.rs to preserve the reconnect high-water mark.',
+    }, timestamp(4));
+    this.seededTurns.set(chat.id, { kind: 'waiting', permission_id: permissionId });
+  }
+
+  /** Writes both an ACP error event and the failed stop reason. */
+  seedFailedTurn(chat, startAt) {
+    this.setSeedCreatedAt(chat, startAt);
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
+    const userEvent = this.emit(chat.id, chat.agent, {
+      type: 'user_message',
+      text: 'Run the migration check and explain any schema failure.',
+    }, timestamp(0));
+    this.touchChatActivity(chat.id, userEvent.timestamp);
+    this.setRuntime(chat.id, 'RUNNING', 'PROMPTING', timestamp(1));
+    this.emit(chat.id, chat.agent, {
+      type: 'thought_chunk',
+      text: 'I am opening the migration check output before reporting the failure.',
+    }, timestamp(2));
+    this.emit(chat.id, chat.agent, {
+      type: 'error',
+      message: 'Agent process exited with code 1: migration check found a duplicate user_version advance.',
+    }, timestamp(3));
+    this.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'error' }, timestamp(4));
+    this.setRuntime(chat.id, 'DEAD', 'IDLE', timestamp(5));
+  }
+
+  seedRichConversation(chat, startAt) {
+    this.setSeedCreatedAt(chat, startAt);
+    const timestamp = (seconds) => new Date(Date.parse(startAt) + seconds * 1000).toISOString();
+    const content = RICH_HISTORY_CONTENT.map((block) => ({ ...block }));
+    const userEvent = this.emit(chat.id, chat.agent, {
+      type: 'user_message',
+      text: 'Compare the dashboard screenshot with the render trace and identify the layout shift.',
+      content: content.slice(0, 2),
+    }, timestamp(0));
+    this.touchChatActivity(chat.id, userEvent.timestamp);
+    this.emit(chat.id, chat.agent, {
+      type: 'thought_chunk',
+      text: 'The screenshot and the trace agree on a small first-paint shift; I will correlate the route and resource metadata.',
+    }, timestamp(1));
+    this.emit(chat.id, chat.agent, {
+      type: 'tool_call',
+      id: 'seed-rich-tool',
+      title: 'Inspect dashboard render trace',
+      kind: 'read',
+      status: 'in_progress',
+      content: [{ type: 'content', content: { type: 'text', text: 'Reading the retained render trace metadata.' } }],
+    }, timestamp(2));
+    this.emit(chat.id, chat.agent, {
+      type: 'tool_call_update',
+      id: 'seed-rich-tool',
+      status: 'completed',
+      output: 'firstPaintMs=184; layoutShift=0.01',
+      content: [{ type: 'content', content: content[3] }],
+    }, timestamp(3));
+    this.emit(chat.id, chat.agent, {
+      type: 'message_chunk',
+      text: 'The screenshot matches the captured route. The small layout shift comes from the deferred status badge, not the project content.',
+      content: content.slice(2),
+    }, timestamp(4));
+    this.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'end_turn' }, timestamp(5));
+  }
+
+  setManagedWorkspace(chat, baseCommit) {
+    chat.workspace = {
+      mode: 'managed_worktree',
+      branch: `pueblo-hub/chat/${chat.id}`,
+      base_commit: baseCommit,
+    };
+  }
+
+  setProjectCheckout(chat, branch, baseCommit) {
+    chat.workspace = { mode: 'project_checkout', branch, base_commit: baseCommit };
+  }
+
+  setSeedProjectDates(project, createdAt, updatedAt) {
+    project.created_at = createdAt;
+    project.updated_at = updatedAt;
+  }
+
+  setSeedChatDates(chat, createdAt, updatedAt) {
+    chat.created_at = createdAt;
+    chat.updated_at = updatedAt;
+  }
+
+  setSeedCreatedAt(chat, startAt) {
+    chat.created_at = new Date(Date.parse(startAt) - 60 * 60 * 1000).toISOString();
+  }
+
+  setSeedUsage(chat, usage) {
+    this.usageByChat.set(chat.id, usage);
+  }
+
+  setSeedConfig(chat, optionId, value) {
+    const options = this.configByChat.get(chat.id) ?? [];
+    const option = options.find((candidate) => candidate.id === optionId);
+    if (option) option.currentValue = value;
+    chat.config_values = { ...chat.config_values, [optionId]: value };
   }
 }
 
