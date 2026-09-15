@@ -7,10 +7,114 @@ import { randomUUID } from 'node:crypto';
 // catalog. Keep metadata explicit rather than deriving it from the id.
 export const AGENTS = [
   { id: 'antigravity', display_name: 'Antigravity', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
-  { id: 'claude', display_name: 'Claude', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
-  { id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
+  { id: 'claude', display_name: 'Claude', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: { description: 'Anthropic Claude ACP agent.', version: '5.0.0' } },
+  { id: 'codex', display_name: 'Codex', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: { description: 'OpenAI Codex ACP agent.', version: '5.1.0' } },
   { id: 'opencode', display_name: 'OpenCode', source: 'builtin', availability: 'available', usage_provider: null, metadata: {}, mutability: 'read_only', display: {} },
+  {
+    id: 'legacy-file',
+    display_name: 'Legacy File Agent',
+    source: 'file',
+    availability: 'available',
+    usage_provider: null,
+    metadata: {},
+    mutability: 'read_only',
+    display: { description: 'Defined by the --agents-file source.', version: '0.9.0' },
+  },
+  {
+    id: 'nix-agent',
+    display_name: 'Nix Declarative Agent',
+    source: 'declarative',
+    availability: 'available',
+    usage_provider: null,
+    metadata: {},
+    mutability: 'read_only',
+    display: { description: 'Supplied by the declarative deployment source.' },
+  },
+  {
+    id: 'broken-agent',
+    display_name: 'Broken Agent',
+    source: 'builtin',
+    availability: 'unavailable',
+    unavailable_reason: 'The configured command is not installed on this host.',
+    usage_provider: null,
+    metadata: {},
+    mutability: 'read_only',
+    display: {},
+  },
+  {
+    id: 'example-acp',
+    display_name: 'Example ACP',
+    source: 'registry',
+    registry_id: 'example-acp',
+    availability: 'available',
+    usage_provider: null,
+    metadata: {},
+    mutability: 'registry_managed',
+    display: { description: 'A representative ACP Registry entry for frontend development.', version: '1.0.0' },
+  },
 ];
+
+// The fake ACP Registry catalog. `unsupported_reason` mirrors a host that
+// cannot install an entry; the frontend must present it honestly.
+export const REGISTRY_ENTRIES = [
+  {
+    id: 'example-acp',
+    name: 'Example ACP',
+    version: '1.2.0',
+    description: 'A representative ACP Registry entry for frontend development.',
+    repository: 'https://example.invalid/example-acp',
+    website: 'https://example.invalid',
+    authors: ['Example Author'],
+    license: 'MIT',
+    distributions: ['npx'],
+    platforms: [],
+    selected_distribution: 'npx',
+  },
+  {
+    id: 'native-agent',
+    name: 'Native Agent',
+    version: '2.0.0',
+    description: 'A binary ACP agent for this host.',
+    repository: 'https://example.invalid/native-agent',
+    authors: ['Native Author'],
+    license: 'Apache-2.0',
+    distributions: ['binary'],
+    platforms: ['linux-x86_64'],
+    selected_distribution: 'binary',
+  },
+  {
+    id: 'windows-only',
+    name: 'Windows Only',
+    version: '1.0.0',
+    description: 'A binary ACP agent that this host cannot install.',
+    distributions: ['binary'],
+    platforms: ['windows-x86_64'],
+    selected_distribution: null,
+    unsupported_reason: 'No binary distribution covers this platform.',
+  },
+];
+
+/** Provider-neutral authentication state, keyed by agent id. */
+function defaultAuth(agentId) {
+  return { agent_id: agentId, authenticated: false, methods: [] };
+}
+
+export const AUTH_METHODS = {
+  claude: [
+    { id: 'claude-oauth', name: 'Sign in with Claude', type: 'agent', description: 'Open the provider sign-in page.' },
+  ],
+  codex: [
+    { id: 'openai-oauth', name: 'Sign in with OpenAI', type: 'agent' },
+    { id: 'api-key', name: 'API key', type: 'terminal', description: 'Enter an API key in a terminal.' },
+  ],
+  opencode: [
+    { id: 'opencode-oauth', name: 'OAuth', type: 'agent' },
+    { id: 'device-code', name: 'Legacy device flow', type: 'unsupported', kind: 'device_code' },
+  ],
+  'example-acp': [
+    { id: 'example-token', name: 'Example token', type: 'terminal' },
+  ],
+};
 
 export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-all'];
 
@@ -125,6 +229,12 @@ export class FakeState {
     this.events = [];
     this.nextSeq = 1;
     this.listeners = new Set();
+
+    // Authentication state and opaque terminal flows (T111 contract).
+    this.authByAgent = new Map();
+    this.flows = new Map();
+    // Editable Pueblo-managed definitions, including their launch environment.
+    this.customDetails = new Map();
 
     this.seed();
   }
@@ -397,6 +507,7 @@ export class FakeState {
     if (this.agent(input.id)) throw Object.assign(new Error('An agent already uses that id'), { status: 409 });
     const agent = customSummary(input);
     AGENTS.push(agent);
+    this.customDetails.set(agent.id, customDetail(input));
     this.metadataChanged();
     return agent;
   }
@@ -407,8 +518,18 @@ export class FakeState {
     if (agent.source !== 'pueblo_managed') throw Object.assign(new Error('This agent is not Pueblo-managed'), { status: 409 });
     if (input.id !== id) throw Object.assign(new Error('An agent id cannot change'), { status: 400 });
     Object.assign(agent, customSummary(input));
+    this.customDetails.set(id, customDetail(input));
     this.metadataChanged();
     return agent;
+  }
+
+  agentDetail(id) {
+    const agent = this.agent(id);
+    if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    if (agent.source !== 'pueblo_managed') {
+      throw Object.assign(new Error('This agent is not an editable Pueblo-managed definition'), { status: 409 });
+    }
+    return { ...this.customDetails.get(id), id };
   }
 
   removeAgent(id) {
@@ -417,13 +538,256 @@ export class FakeState {
     const agent = AGENTS[index];
     if (agent.mutability === 'read_only') throw Object.assign(new Error('This agent is read-only'), { status: 409 });
     AGENTS.splice(index, 1);
+    this.customDetails.delete(id);
+    this.authByAgent.delete(id);
     this.metadataChanged();
     return { id, deleted: true, retained_chats: 0 };
   }
 
+  // -------------------------------------------------------- ACP Registry
+
+  /** The browse view. Installed state is derived from the one catalog. */
+  registryView(query) {
+    const filter = (query ?? '').trim().toLowerCase();
+    const installedByRegistry = new Map(
+      AGENTS.filter((agent) => agent.registry_id).map((agent) => [agent.registry_id, agent]),
+    );
+    const agents = REGISTRY_ENTRIES
+      .filter((entry) => !filter || `${entry.id} ${entry.name} ${entry.description}`.toLowerCase().includes(filter))
+      .map((entry) => {
+        const installed = installedByRegistry.get(entry.id);
+        const installedVersion = installed?.display?.version ?? null;
+        return {
+          ...entry,
+          ...(installed ? { installed_as: installed.id, installed_version: installedVersion } : {}),
+          update_available: installedVersion !== null && installedVersion !== entry.version,
+        };
+      });
+    return {
+      status: 'cached',
+      source_url: 'https://registry.example.invalid/registry.json',
+      registry_version: '1.0.0',
+      fetched_at: '2026-01-01T00:00:00Z',
+      host_platform: 'linux-x86_64',
+      host: 'linux-x86_64 (fake)',
+      rejected: [],
+      agents,
+    };
+  }
+
+  installRegistryAgent(body) {
+    const entry = REGISTRY_ENTRIES.find((candidate) => candidate.id === body.registry_id);
+    if (!entry) throw Object.assign(new Error('Registry agent not found'), { status: 404 });
+    if (entry.unsupported_reason) {
+      throw Object.assign(new Error(entry.unsupported_reason), { status: 422 });
+    }
+    const id = (body.agent_id ?? '').trim() || entry.id;
+    if (this.agent(id)) throw Object.assign(new Error('An agent already uses that id'), { status: 409 });
+    const agent = {
+      id,
+      display_name: body.display_name?.trim() || entry.name,
+      source: 'registry',
+      registry_id: entry.id,
+      availability: 'available',
+      usage_provider: body.usage_provider ?? null,
+      metadata: body.metadata ?? null,
+      mutability: 'registry_managed',
+      display: { description: entry.description, version: entry.version },
+    };
+    AGENTS.push(agent);
+    this.metadataChanged();
+    return agent;
+  }
+
+  updateRegistryAgent(id) {
+    const agent = this.agent(id);
+    if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    if (agent.source !== 'registry') throw Object.assign(new Error('Only registry agents can update'), { status: 409 });
+    const entry = REGISTRY_ENTRIES.find((candidate) => candidate.id === agent.registry_id);
+    if (!entry) throw Object.assign(new Error('The registry entry is gone'), { status: 404 });
+    const from = agent.display.version ?? '0.0.0';
+    if (from === entry.version) {
+      return { updated: false, from_version: from, to_version: entry.version, agent };
+    }
+    agent.display = { ...agent.display, version: entry.version };
+    this.metadataChanged();
+    return { updated: true, from_version: from, to_version: entry.version, agent };
+  }
+
+  // ------------------------------------------------------- authentication
+
+  agentAuth(id) {
+    if (!this.agent(id)) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    const stored = this.authByAgent.get(id);
+    if (stored) return stored;
+    return { agent_id: id, authenticated: false, methods: AUTH_METHODS[id] ?? [] };
+  }
+
+  setAgentAuth(id, state) {
+    this.authByAgent.set(id, state);
+    return state;
+  }
+
+  authenticateAgent(id, methodId) {
+    const auth = this.agentAuth(id);
+    const method = (AUTH_METHODS[id] ?? auth.methods).find((candidate) => candidate.id === methodId);
+    if (!method) throw Object.assign(new Error(`Unknown authentication method '${methodId}'`), { status: 404 });
+    if (method.type === 'terminal') {
+      throw Object.assign(new Error('Terminal methods run in a terminal, not through authenticate'), { status: 400 });
+    }
+    if (method.type !== 'agent') {
+      throw Object.assign(new Error(`Unsupported authentication method '${method.kind ?? method.type}'`), { status: 400 });
+    }
+    return this.setAgentAuth(id, {
+      agent_id: id,
+      authenticated: true,
+      account: `${id} account`,
+      methods: AUTH_METHODS[id] ?? auth.methods,
+    });
+  }
+
+  logoutAgent(id) {
+    const auth = this.agentAuth(id);
+    return this.setAgentAuth(id, {
+      agent_id: id,
+      authenticated: false,
+      account: null,
+      methods: AUTH_METHODS[id] ?? auth.methods,
+    });
+  }
+
+  startTerminalFlow(id, methodId) {
+    const auth = this.agentAuth(id);
+    const method = (AUTH_METHODS[id] ?? auth.methods).find((candidate) => candidate.id === methodId);
+    if (!method) throw Object.assign(new Error(`Unknown authentication method '${methodId}'`), { status: 404 });
+    if (method.type !== 'terminal') {
+      throw Object.assign(new Error('Only terminal methods start a PTY flow'), { status: 400 });
+    }
+    const flow = {
+      flow_id: randomUUID(),
+      agent_id: id,
+      method_id: methodId,
+      method_name: method.name,
+      state: 'running',
+      exit_code: null,
+      error: null,
+      output: `Sign in to ${id}.\nType a token and press Enter. Type "fail" to simulate a failure.\n`,
+      cols: 80,
+      rows: 24,
+      socket: null,
+    };
+    this.flows.set(flow.flow_id, flow);
+    return flow;
+  }
+
+  flowView(flowId) {
+    const flow = this.flows.get(flowId);
+    if (!flow) return null;
+    const { socket, output, cols, rows, ...view } = flow;
+    return view;
+  }
+
+  attachFlowSocket(flowId, socket) {
+    const flow = this.flows.get(flowId);
+    if (!flow) {
+      socket.close();
+      return;
+    }
+    flow.socket = socket;
+    socket.send(JSON.stringify({ type: 'state', state: flow.state, exit_code: flow.exit_code, error: flow.error }));
+    socket.send(JSON.stringify({ type: 'output', data: flow.output }));
+    socket.onMessage = (text) => {
+      let message;
+      try {
+        message = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (message.type === 'input') this.flowInput(flowId, String(message.data ?? ''));
+      else if (message.type === 'resize') this.flowResize(flowId, message.cols, message.rows);
+    };
+    socket.onClose = () => {
+      if (flow.socket === socket) flow.socket = null;
+    };
+  }
+
+  flowInput(flowId, data) {
+    const flow = this.flows.get(flowId);
+    if (!flow || flow.state !== 'running') return;
+    flow.output += data;
+    this.sendFlow(flow, { type: 'output', data });
+    if (data.includes('\r')) {
+      const line = flow.output.split('\n').pop().replace(/\r/g, '').trim().toLowerCase();
+      if (line.includes('fail')) this.finishFlow(flowId, 'failed', 1, 'Authentication was rejected.');
+      else if (line.includes('cancel')) this.finishFlow(flowId, 'cancelled', null, null);
+      else this.finishFlow(flowId, 'succeeded', 0, null);
+    }
+  }
+
+  flowResize(flowId, cols, rows) {
+    const flow = this.flows.get(flowId);
+    if (!flow) return;
+    flow.cols = Number(cols) || flow.cols;
+    flow.rows = Number(rows) || flow.rows;
+  }
+
+  cancelFlow(flowId) {
+    const flow = this.flows.get(flowId);
+    if (!flow) throw Object.assign(new Error('Authentication flow not found'), { status: 404 });
+    if (flow.state === 'running') this.finishFlow(flowId, 'cancelled', null, null);
+    return this.flowView(flowId);
+  }
+
+  finishFlow(flowId, flowState, exitCode, error) {
+    const flow = this.flows.get(flowId);
+    if (!flow || flow.state !== 'running') return;
+    flow.state = flowState;
+    flow.exit_code = exitCode;
+    flow.error = error;
+    this.sendFlow(flow, { type: 'state', state: flowState, exit_code: exitCode, error });
+    if (flowState === 'succeeded') {
+      const auth = this.authByAgent.get(flow.agent_id) ?? defaultAuth(flow.agent_id);
+      this.setAgentAuth(flow.agent_id, {
+        agent_id: flow.agent_id,
+        authenticated: true,
+        account: `${flow.agent_id} account`,
+        methods: auth.methods,
+      });
+    }
+  }
+
+  sendFlow(flow, message) {
+    if (flow.socket?.open) flow.socket.send(JSON.stringify(message));
+  }
+
   // ------------------------------------------------------------------ seed
 
+  /** Seeds the editable definition and the representative auth states. */
+  seedAgents() {
+    const custom = {
+      id: 'my-custom',
+      display_name: 'My Custom Agent',
+      command: 'my-agent',
+      args: ['--acp'],
+      env: { MY_AGENT_TOKEN: 'fake-token' },
+      idle_timeout: 900,
+      usage_provider: null,
+      metadata: null,
+      default_permission_policy: 'ask',
+      description: 'A Pueblo-managed custom agent.',
+    };
+    if (!this.agent(custom.id)) AGENTS.push(customSummary(custom));
+    this.customDetails.set(custom.id, customDetail(custom));
+    this.authByAgent.set('claude', {
+      agent_id: 'claude',
+      authenticated: true,
+      account: 'dev@example.com',
+      methods: AUTH_METHODS.claude,
+    });
+  }
+
   seed() {
+    this.seedAgents();
     const hub = this.createProject('pueblo-hub', `${PROJECT_ROOT}/pueblo-hub`, {
       is_git: true,
       current_branch: 'master',
@@ -543,7 +907,26 @@ function customSummary(input) {
     id: input.id.trim(), display_name: input.display_name?.trim() || input.id.trim(),
     source: 'pueblo_managed', availability: 'available', usage_provider: input.usage_provider ?? null,
     metadata: input.metadata ?? null, mutability: 'editable',
-    display: input.description?.trim() ? { description: input.description.trim() } : {},
+    display: {
+      ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+      ...(input.display?.version ? { version: input.display.version } : {}),
+    },
+  };
+}
+
+/** The authenticated per-agent management detail, including launch env. */
+function customDetail(input) {
+  return {
+    id: input.id.trim(),
+    display_name: input.display_name?.trim() || input.id.trim(),
+    command: input.command ?? '',
+    args: Array.isArray(input.args) ? [...input.args] : [],
+    env: { ...(input.env ?? {}) },
+    idle_timeout: input.idle_timeout ?? 900,
+    usage_provider: input.usage_provider ?? null,
+    metadata: input.metadata ?? null,
+    default_permission_policy: input.default_permission_policy ?? 'ask',
+    description: input.description?.trim() || null,
   };
 }
 

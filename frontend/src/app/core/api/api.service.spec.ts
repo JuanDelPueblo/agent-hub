@@ -74,4 +74,81 @@ describe('ApiService', () => {
     chatRequest.flush({ id: 'chat-1' });
     await expect(chatPromise).resolves.toMatchObject({ id: 'chat-1' });
   });
+
+  it('preserves the agent management contract', async () => {
+    const detailPromise = api.fetchAgentDetail('my/custom');
+    const detail = http.expectOne('/api/agents/my%2Fcustom');
+    expect(detail.request.method).toBe('GET');
+    detail.flush({ id: 'my/custom', command: 'agent', args: [], env: {} });
+    await expect(detailPromise).resolves.toMatchObject({ command: 'agent' });
+
+    const validatePromise = api.validateCustomAgent({ id: 'a', command: 'b', args: [], env: {} });
+    const validate = http.expectOne('/api/agents/validate');
+    expect(validate.request.method).toBe('POST');
+    validate.flush({ valid: true, issues: [] });
+    await expect(validatePromise).resolves.toMatchObject({ valid: true });
+
+    const registryPromise = api.fetchRegistry('native', true);
+    const registry = http.expectOne('/api/agents/registry?q=native&refresh=true');
+    registry.flush({ status: 'fresh', source_url: 's', host: 'h', rejected: [], agents: [] });
+    await expect(registryPromise).resolves.toMatchObject({ status: 'fresh' });
+
+    const installPromise = api.installRegistryAgent({ registry_id: 'native-agent', distribution: 'binary' });
+    const install = http.expectOne('/api/agents/registry/install');
+    expect(install.request.body).toEqual({ registry_id: 'native-agent', distribution: 'binary' });
+    install.flush({ id: 'native-agent' });
+    await expect(installPromise).resolves.toMatchObject({ id: 'native-agent' });
+
+    const updatePromise = api.updateRegistryAgent('native-agent');
+    const update = http.expectOne('/api/agents/native-agent/update');
+    expect(update.request.method).toBe('POST');
+    update.flush({ updated: false, from_version: '1', to_version: '1', agent: { id: 'native-agent' } });
+    await expect(updatePromise).resolves.toMatchObject({ updated: false });
+
+    const removePromise = api.removeAgent('native-agent');
+    const remove = http.expectOne('/api/agents/native-agent');
+    expect(remove.request.method).toBe('DELETE');
+    remove.flush({ id: 'native-agent', deleted: true, retained_chats: 0 });
+    await expect(removePromise).resolves.toMatchObject({ deleted: true });
+  });
+
+  it('preserves the T111 authentication contract', async () => {
+    const statePromise = api.fetchAgentAuth('codex');
+    const stateRequest = http.expectOne('/api/agents/codex/auth');
+    expect(stateRequest.request.method).toBe('GET');
+    stateRequest.flush({ agent_id: 'codex', authenticated: false, methods: [] });
+    await expect(statePromise).resolves.toMatchObject({ authenticated: false });
+
+    const loginPromise = api.authenticateAgent('codex', 'openai');
+    const login = http.expectOne('/api/agents/codex/auth/openai');
+    expect(login.request.method).toBe('POST');
+    login.flush({ agent_id: 'codex', authenticated: true, methods: [] });
+    await expect(loginPromise).resolves.toMatchObject({ authenticated: true });
+
+    const logoutPromise = api.logoutAgent('codex');
+    const logout = http.expectOne('/api/agents/codex/logout');
+    expect(logout.request.method).toBe('POST');
+    logout.flush({ agent_id: 'codex', authenticated: false, methods: [] });
+    await expect(logoutPromise).resolves.toMatchObject({ authenticated: false });
+
+    const flowPromise = api.startTerminalAuth('codex', 'api-key');
+    const flow = http.expectOne('/api/agents/codex/auth/terminal/api-key');
+    expect(flow.request.method).toBe('POST');
+    flow.flush({ flow_id: 'flow-1', agent_id: 'codex', method_id: 'api-key', method_name: 'API key', state: 'running' });
+    await expect(flowPromise).resolves.toMatchObject({ flow_id: 'flow-1' });
+
+    const getFlowPromise = api.fetchAgentAuthFlow('flow-1');
+    const getFlow = http.expectOne('/api/agent-auth/flow-1');
+    expect(getFlow.request.method).toBe('GET');
+    getFlow.flush({ flow_id: 'flow-1', state: 'succeeded' });
+    await expect(getFlowPromise).resolves.toMatchObject({ state: 'succeeded' });
+
+    const cancelPromise = api.cancelAgentAuthFlow('flow-1');
+    const cancel = http.expectOne('/api/agent-auth/flow-1/cancel');
+    expect(cancel.request.method).toBe('POST');
+    cancel.flush(null);
+    await expect(cancelPromise).resolves.toBeUndefined();
+
+    expect(api.agentAuthSocketUrl('flow-1')).toContain('/api/agent-auth/flow-1/ws');
+  });
 });

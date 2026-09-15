@@ -106,6 +106,12 @@ describe('NavigationComponent DOM check', () => {
     }
   });
 
+  it('offers a first-class agents management entry', () => {
+    const link = fixture.nativeElement.querySelector('a[href="/agents"]') as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.getAttribute('aria-label')).toBe('Manage agents');
+  });
+
   it('capitalizes agent names for display only', () => {
     expect(fixture.componentInstance.agentLabel('claude')).toBe('Claude');
     expect(fixture.componentInstance.agentLabel('codex')).toBe('Codex');

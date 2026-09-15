@@ -16,7 +16,11 @@ describe('fake backend seed history', () => {
     for (const agent of AGENTS) {
       assert.ok(['editable', 'registry_managed', 'read_only'].includes(agent.mutability));
       assert.equal(typeof agent.display, 'object');
-      assert.equal('unavailable_reason' in agent, false);
+      if (agent.availability === 'unavailable') {
+        assert.equal(typeof agent.unavailable_reason, 'string');
+      } else {
+        assert.equal('unavailable_reason' in agent, false);
+      }
     }
   });
 
@@ -247,5 +251,132 @@ describe('fake backend seed history', () => {
     assert.equal(state.isEnvironmentBlocked(chat.id), true);
     state.authorizeEnvironment(chat.id);
     assert.equal(state.isEnvironmentBlocked(chat.id), false);
+  });
+
+  it('derives registry installed state from the one agent catalog', () => {
+    const state = new FakeState();
+    const view = state.registryView();
+    const installed = view.agents.find((entry) => entry.id === 'example-acp');
+    assert.equal(installed.installed_as, 'example-acp');
+    assert.equal(installed.installed_version, '1.0.0');
+    assert.equal(installed.update_available, true);
+
+    const unsupported = view.agents.find((entry) => entry.id === 'windows-only');
+    assert.equal(typeof unsupported.unsupported_reason, 'string');
+    assert.equal('installed_as' in unsupported, false);
+
+    assert.deepEqual(state.registryView('native').agents.map((entry) => entry.id), ['native-agent']);
+  });
+
+  it('installs, updates, and uninstalls registry agents', () => {
+    const state = new FakeState();
+    const installed = state.installRegistryAgent({ registry_id: 'native-agent' });
+    assert.equal(installed.source, 'registry');
+    assert.equal(installed.display.version, '2.0.0');
+
+    const outcome = state.updateRegistryAgent('example-acp');
+    assert.equal(outcome.updated, true);
+    assert.equal(outcome.to_version, '1.2.0');
+
+    const removal = state.removeAgent('example-acp');
+    assert.equal(removal.deleted, true);
+    assert.equal(state.agent('example-acp'), undefined);
+
+    state.removeAgent(installed.id);
+    assert.equal(state.agent(installed.id), undefined);
+  });
+
+  it('exposes authenticated custom detail and edits a Pueblo-managed agent', () => {
+    const state = new FakeState();
+    const detail = state.agentDetail('my-custom');
+    assert.equal(detail.command, 'my-agent');
+    assert.deepEqual(detail.args, ['--acp']);
+    assert.equal(detail.env.MY_AGENT_TOKEN, 'fake-token');
+
+    const edited = state.editCustomAgent('my-custom', {
+      id: 'my-custom', command: 'my-agent', args: [], env: {}, display_name: 'Renamed',
+    });
+    assert.equal(edited.display_name, 'Renamed');
+    assert.equal(state.agentDetail('my-custom').display_name, 'Renamed');
+
+    assert.throws(() => state.agentDetail('codex'), /not an editable/);
+    assert.throws(() => state.removeAgent('codex'), /read-only/);
+  });
+
+  it('reports provider-neutral authentication state', () => {
+    const state = new FakeState();
+    assert.equal(state.agentAuth('codex').authenticated, false);
+    assert.equal(state.agentAuth('codex').methods.length, 2);
+    assert.equal(state.agentAuth('claude').authenticated, true);
+
+    const afterLogin = state.authenticateAgent('codex', 'openai-oauth');
+    assert.equal(afterLogin.authenticated, true);
+
+    const afterLogout = state.logoutAgent('codex');
+    assert.equal(afterLogout.authenticated, false);
+    assert.equal(afterLogout.account, null);
+
+    assert.throws(() => state.authenticateAgent('codex', 'missing'), /Unknown authentication method/);
+    assert.throws(() => state.authenticateAgent('opencode', 'device-code'), /Unsupported/);
+    assert.throws(() => state.authenticateAgent('codex', 'api-key'), /Terminal methods/);
+  });
+
+  function attach(state, flowId) {
+    const sent = [];
+    const socket = {
+      open: true,
+      send: (text) => sent.push(JSON.parse(text)),
+      close() { this.open = false; },
+      onMessage: () => {},
+      onClose: () => {},
+    };
+    state.attachFlowSocket(flowId, socket);
+    return sent;
+  }
+
+  it('runs a terminal authentication flow over the flow socket', () => {
+    const state = new FakeState();
+    const flow = state.startTerminalFlow('codex', 'api-key');
+    assert.equal(flow.state, 'running');
+    assert.equal(state.flowView(flow.flow_id).method_name, 'API key');
+
+    const sent = attach(state, flow.flow_id);
+    assert.equal(sent[0].type, 'state');
+    assert.equal(sent[0].state, 'running');
+    assert.equal(sent[1].type, 'output');
+
+    state.flowResize(flow.flow_id, 120, 40);
+    state.flowInput(flow.flow_id, 'secret-token');
+    assert.ok(sent.some((message) => message.type === 'output' && message.data.includes('secret-token')));
+
+    state.flowInput(flow.flow_id, '\r');
+    const terminal = sent.at(-1);
+    assert.equal(terminal.type, 'state');
+    assert.equal(terminal.state, 'succeeded');
+    assert.equal(terminal.exit_code, 0);
+    assert.equal(state.flowView(flow.flow_id).state, 'succeeded');
+    assert.equal(state.agentAuth('codex').authenticated, true);
+  });
+
+  it('supports failure and cancellation terminal flows', () => {
+    const state = new FakeState();
+    const failing = state.startTerminalFlow('codex', 'api-key');
+    const sent = attach(state, failing.flow_id);
+    state.flowInput(failing.flow_id, 'fail\r');
+    assert.equal(state.flowView(failing.flow_id).state, 'failed');
+    assert.equal(state.agentAuth('codex').authenticated, false);
+    assert.equal(sent.at(-1).state, 'failed');
+
+    const cancelled = state.startTerminalFlow('codex', 'api-key');
+    attach(state, cancelled.flow_id);
+    const view = state.cancelFlow(cancelled.flow_id);
+    assert.equal(view.state, 'cancelled');
+    assert.throws(() => state.cancelFlow('missing-flow'), /not found/);
+  });
+
+  it('rejects terminal flows for non-terminal methods', () => {
+    const state = new FakeState();
+    assert.throws(() => state.startTerminalFlow('codex', 'openai-oauth'), /Only terminal methods/);
+    assert.throws(() => state.startTerminalFlow('codex', 'missing'), /Unknown authentication method/);
   });
 });

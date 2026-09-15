@@ -1,0 +1,42 @@
+<h2 mat-dialog-title>{{ flow.method_name }}</h2>
+<mat-dialog-content>
+  <p class="hint">
+    Authenticate <strong>{{ flow.agent_id }}</strong> in the terminal below. Your input is sent only
+    to the running flow and is never saved.
+  </p>
+
+  @if (error()) { <div class="error" role="alert">{{ error() }}</div> }
+
+  <div class="terminal-shell" [class.disconnected]="!connected()">
+    <pre
+      #terminal
+      class="terminal"
+      tabindex="0"
+      role="log"
+      aria-label="Authentication terminal"
+      (keydown)="onKeydown($event)"
+      (paste)="onPaste($event)"
+    >{{ output() }}</pre>
+  </div>
+
+  <div class="status" role="status" aria-live="polite">
+    @switch (flowState()) {
+      @case ('starting') { <mat-spinner diameter="16" /> <span>Starting the authentication flow…</span> }
+      @case ('running') { <mat-spinner diameter="16" /> <span>Running. Focus the terminal and type.</span> }
+      @case ('succeeded') { <mat-icon>check_circle</mat-icon> <span>Authentication completed.</span> }
+      @case ('failed') {
+        <mat-icon>error</mat-icon>
+        <span>Authentication failed{{ exitCode() !== null ? ' (exit code ' + exitCode() + ')' : '' }}.</span>
+      }
+      @case ('cancelled') { <mat-icon>cancel</mat-icon> <span>Authentication was cancelled.</span> }
+    }
+  </div>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  @if (running) {
+    <button mat-button type="button" (click)="cancel()">Cancel</button>
+  } @else {
+    <button mat-flat-button type="button" (click)="dialogRef.close()">Close</button>
+  }
+</mat-dialog-actions>

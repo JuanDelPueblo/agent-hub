@@ -3,6 +3,20 @@ export type TurnState = 'IDLE' | 'PROMPTING' | 'CANCELLING';
 export type PermissionPolicy = 'ask' | 'read-only' | 'auto-approve' | 'deny-all';
 export type AgentSource = 'builtin' | 'file' | 'pueblo_managed' | 'registry' | 'declarative';
 export type AgentAvailability = 'available' | 'unavailable';
+/** Who may change the definition. Registry entries use their own lifecycle. */
+export type AgentMutability = 'editable' | 'registry_managed' | 'read_only';
+
+/** Provider-neutral presentation metadata. Never used to start a process. */
+export interface AgentDisplay {
+  description?: string | null;
+  version?: string | null;
+  icon?: string | null;
+  repository?: string | null;
+  website?: string | null;
+  license?: string | null;
+  license_url?: string | null;
+  authors?: string[];
+}
 
 export interface AgentSummary {
   id: string;
@@ -11,6 +25,180 @@ export interface AgentSummary {
   availability: AgentAvailability;
   usage_provider?: string | null;
   metadata: unknown;
+  mutability?: AgentMutability;
+  display?: AgentDisplay;
+  unavailable_reason?: string | null;
+}
+
+/** Authenticated management data for an editable Pueblo-managed definition. */
+export interface AgentManagementDetail {
+  id: string;
+  display_name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  idle_timeout: number;
+  usage_provider?: string | null;
+  metadata: unknown;
+  default_permission_policy: PermissionPolicy;
+  description?: string | null;
+}
+
+/** What a management surface sends to create or edit a custom definition. */
+export interface CustomAgentInput {
+  id: string;
+  display_name?: string | null;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  idle_timeout?: number | null;
+  usage_provider?: string | null;
+  metadata?: unknown;
+  default_permission_policy?: PermissionPolicy | null;
+  description?: string | null;
+}
+
+export interface ValidationIssue {
+  field: string;
+  message: string;
+}
+
+export interface ValidationReport {
+  valid: boolean;
+  issues: ValidationIssue[];
+}
+
+export type RegistryStatus = 'fresh' | 'cached' | 'unavailable';
+export type DistributionKind = 'binary' | 'npx' | 'uvx';
+export type PlatformTarget =
+  | 'darwin-aarch64'
+  | 'darwin-x86_64'
+  | 'linux-aarch64'
+  | 'linux-x86_64'
+  | 'windows-aarch64'
+  | 'windows-x86_64';
+
+export interface RegistryEntry {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  repository?: string | null;
+  website?: string | null;
+  authors?: string[];
+  license?: string | null;
+  license_url?: string | null;
+  icon?: string | null;
+  distributions: DistributionKind[];
+  platforms: PlatformTarget[];
+  selected_distribution?: DistributionKind | null;
+  unsupported_reason?: string | null;
+  installed_as?: string | null;
+  installed_version?: string | null;
+  update_available: boolean;
+}
+
+export interface RegistryCatalog {
+  status: RegistryStatus;
+  source_url: string;
+  registry_version?: string | null;
+  fetched_at?: string | null;
+  error?: string | null;
+  host_platform?: PlatformTarget | null;
+  host: string;
+  rejected: Array<{ id?: string; reason?: string } & Record<string, unknown>>;
+  agents: RegistryEntry[];
+}
+
+export interface InstallRegistryAgentInput {
+  registry_id: string;
+  agent_id?: string;
+  distribution?: DistributionKind;
+  display_name?: string;
+  usage_provider?: string;
+  idle_timeout?: number;
+  default_permission_policy?: PermissionPolicy;
+  metadata?: unknown;
+}
+
+export interface UpdateOutcome {
+  updated: boolean;
+  from_version: string;
+  to_version: string;
+  agent: AgentSummary;
+  previous_install_dir?: string | null;
+}
+
+export interface RemoveOutcome {
+  id: string;
+  deleted: boolean;
+  retained_chats: number;
+  agent?: AgentSummary | null;
+}
+
+/**
+ * Provider-neutral authentication method. The backend maps ACP's typed
+ * methods onto this contract: known kinds are `agent` and `terminal`, every
+ * other discriminator becomes `unsupported` with the raw `kind` preserved.
+ */
+export type AgentAuthMethodKind = 'agent' | 'terminal' | 'unsupported';
+
+export interface AgentAuthMethod {
+  id: string;
+  name: string;
+  type: AgentAuthMethodKind;
+  description?: string | null;
+  /** The raw ACP discriminator when `type` is `unsupported`. */
+  kind?: string | null;
+}
+
+export interface AgentAuthState {
+  agent_id: string;
+  authenticated: boolean;
+  methods: AgentAuthMethod[];
+  account?: string | null;
+  error?: string | null;
+}
+
+export type AgentAuthFlowState =
+  | 'starting'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface AgentAuthFlow {
+  flow_id: string;
+  agent_id: string;
+  method_id: string;
+  method_name: string;
+  state: AgentAuthFlowState;
+  exit_code?: number | null;
+  error?: string | null;
+}
+
+export type AgentAuthSocketIncoming =
+  | { type: 'output'; data: string }
+  | {
+      type: 'state';
+      state: AgentAuthFlowState;
+      exit_code?: number | null;
+      error?: string | null;
+    };
+
+export type AgentAuthSocketOutgoing =
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number };
+
+/**
+ * Structured chat failure that tells the user to authenticate. The backend
+ * reports it as an `auth_required` API error code with these details.
+ */
+export interface AuthRequiredInfo {
+  agent_id?: string;
+  agent_name?: string | null;
+  message?: string | null;
+  methods?: AgentAuthMethod[];
 }
 
 export interface Project {

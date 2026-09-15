@@ -1,0 +1,90 @@
+<h2 mat-dialog-title>{{ editing ? 'Edit custom agent' : 'New custom agent' }}</h2>
+<mat-dialog-content>
+  @if (error()) { <div class="error" role="alert">{{ error() }}</div> }
+
+  <div class="grid">
+    <mat-form-field appearance="outline">
+      <mat-label>Agent id</mat-label>
+      <input
+        matInput
+        [value]="id()"
+        [disabled]="editing"
+        (input)="id.set($any($event.target).value)"
+        aria-describedby="id-hint"
+      />
+      <mat-hint id="id-hint">Letters, digits, “-” and “_” only. It cannot change after creation.</mat-hint>
+      @if (issueFor('id')) { <mat-error>{{ issueFor('id') }}</mat-error> }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Display name</mat-label>
+      <input matInput [value]="displayName()" (input)="displayName.set($any($event.target).value)" />
+      @if (issueFor('display_name')) { <mat-error>{{ issueFor('display_name') }}</mat-error> }
+    </mat-form-field>
+  </div>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Command</mat-label>
+    <input matInput [value]="command()" (input)="command.set($any($event.target).value)" />
+    <mat-hint>The executable Pueblo Hub starts for this agent.</mat-hint>
+    @if (issueFor('command')) { <mat-error>{{ issueFor('command') }}</mat-error> }
+  </mat-form-field>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Arguments (one per line)</mat-label>
+    <textarea matInput rows="3" [value]="argsText()" (input)="argsText.set($any($event.target).value)"></textarea>
+    @if (issueFor('args')) { <mat-error>{{ issueFor('args') }}</mat-error> }
+  </mat-form-field>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Environment (KEY=value, one per line)</mat-label>
+    <textarea matInput rows="3" [value]="envText()" (input)="envText.set($any($event.target).value)"></textarea>
+    @if (issueFor('env')) { <mat-error>{{ issueFor('env') }}</mat-error> }
+  </mat-form-field>
+
+  <div class="grid">
+    <mat-form-field appearance="outline">
+      <mat-label>Idle timeout (seconds)</mat-label>
+      <input matInput type="number" [value]="idleTimeout()" (input)="idleTimeout.set($any($event.target).value)" />
+      @if (issueFor('idle_timeout')) { <mat-error>{{ issueFor('idle_timeout') }}</mat-error> }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Usage provider</mat-label>
+      <input matInput [value]="usageProvider()" (input)="usageProvider.set($any($event.target).value)" />
+      <mat-hint>Optional. Pueblo Hub never infers it from the id.</mat-hint>
+      @if (issueFor('usage_provider')) { <mat-error>{{ issueFor('usage_provider') }}</mat-error> }
+    </mat-form-field>
+  </div>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Default permission policy</mat-label>
+    <mat-select [value]="policy()" (selectionChange)="policy.set($event.value)">
+      <mat-option value="ask">Ask</mat-option>
+      <mat-option value="read-only">Read only</mat-option>
+      <mat-option value="auto-approve">Auto-approve</mat-option>
+      <mat-option value="deny-all">Deny all</mat-option>
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Description</mat-label>
+    <textarea matInput rows="2" [value]="description()" (input)="description.set($any($event.target).value)"></textarea>
+    @if (issueFor('description')) { <mat-error>{{ issueFor('description') }}</mat-error> }
+  </mat-form-field>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Metadata (JSON, optional)</mat-label>
+    <textarea matInput rows="2" [value]="metadataText()" (input)="metadataText.set($any($event.target).value)"></textarea>
+    @if (issueFor('metadata')) { <mat-error>{{ issueFor('metadata') }}</mat-error> }
+  </mat-form-field>
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-button type="button" (click)="validate()" [disabled]="validating() || saving()">
+    @if (validating()) { Validating… } @else { Validate }
+  </button>
+  <button mat-button type="button" (click)="dialogRef.close(false)" [disabled]="saving()">Cancel</button>
+  <button mat-flat-button type="button" (click)="save()" [disabled]="saving() || validating()">
+    @if (saving()) { Saving… } @else { Save }
+  </button>
+</mat-dialog-actions>

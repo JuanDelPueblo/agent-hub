@@ -1,0 +1,131 @@
+<article class="agent-card" [class.unavailable]="!available()">
+  <header class="card-head">
+    <div class="identity">
+      <h3 class="name">{{ agent().display_name }}</h3>
+      <span class="id">{{ agent().id }}</span>
+    </div>
+    <div class="badges">
+      <span class="badge source" [attr.data-source]="agent().source">{{ sourceLabel(agent().source) }}</span>
+      @switch (mutability()) {
+        @case ('editable') { <span class="badge editable">Editable</span> }
+        @case ('registry_managed') { <span class="badge registry">Registry-managed</span> }
+        @default { <span class="badge readonly">Read-only</span> }
+      }
+      @if (available()) {
+        <span class="badge available">Available</span>
+      } @else {
+        <span class="badge unavailable-badge">Unavailable</span>
+      }
+    </div>
+  </header>
+
+  @if (agent().display?.description) {
+    <p class="description">{{ agent().display?.description }}</p>
+  }
+
+  @if (!available() && agent().unavailable_reason) {
+    <p class="unavailable-reason" role="note">
+      <mat-icon inline>info</mat-icon> {{ agent().unavailable_reason }}
+    </p>
+  }
+
+  <dl class="meta">
+    @if (agent().display?.version; as version) {
+      <div><dt>Version</dt><dd>{{ version }}</dd></div>
+    }
+    @if (agent().usage_provider; as provider) {
+      <div><dt>Usage provider</dt><dd>{{ provider }}</dd></div>
+    }
+    @if (agent().display?.license; as license) {
+      <div><dt>License</dt><dd>{{ license }}</dd></div>
+    }
+    @if (agent().display?.repository; as repo) {
+      <div><dt>Repository</dt><dd><a [href]="repo" target="_blank" rel="noopener noreferrer">{{ repo }}</a></dd></div>
+    }
+    @if (agent().display?.website; as site) {
+      <div><dt>Website</dt><dd><a [href]="site" target="_blank" rel="noopener noreferrer">{{ site }}</a></dd></div>
+    }
+    @if (agent().display?.license_url; as licenseUrl) {
+      <div><dt>License text</dt><dd><a [href]="licenseUrl" target="_blank" rel="noopener noreferrer">{{ licenseUrl }}</a></dd></div>
+    }
+  </dl>
+
+  <section class="auth" aria-label="Authentication">
+    <h4>Authentication</h4>
+
+    @if (authLoading()) {
+      <div class="auth-row"><mat-spinner diameter="18" /> <span>Checking authentication…</span></div>
+    } @else if (authError()) {
+      <div class="auth-row error" role="alert">
+        <span>{{ authError() }}</span>
+        <button mat-button type="button" (click)="retryAuth.emit()">Retry</button>
+      </div>
+    } @else if (auth(); as state) {
+      @if (state.error) { <p class="auth-hint" role="alert">{{ state.error }}</p> }
+      @if (authenticated()) {
+        <div class="auth-row">
+          <mat-icon>verified_user</mat-icon>
+          <span>Authenticated{{ state.account ? ': ' + state.account : '' }}</span>
+          <span class="spacer"></span>
+          <button mat-stroked-button type="button" (click)="logout.emit()">Log out</button>
+        </div>
+      }
+
+      @for (method of state.methods; track method.id) {
+        <div class="auth-row method">
+          <div class="method-text">
+            <span class="method-name">{{ method.name }}</span>
+            <span class="method-type">{{ methodTypeLabel(method) }}</span>
+            @if (method.description) { <span class="method-description">{{ method.description }}</span> }
+          </div>
+          <span class="spacer"></span>
+          @switch (method.type) {
+            @case ('agent') {
+              <button mat-flat-button type="button" (click)="authenticate.emit(method.id)">Sign in</button>
+            }
+            @case ('terminal') {
+              <button mat-stroked-button type="button" (click)="terminal.emit(method.id)">Open terminal</button>
+            }
+            @default {
+              <button
+                mat-stroked-button
+                type="button"
+                disabled
+                matTooltip="This client cannot handle this authentication method"
+              >
+                Unsupported
+              </button>
+            }
+          }
+        </div>
+      } @empty {
+        <p class="auth-hint">This agent reports no authentication methods.</p>
+      }
+    } @else {
+      <div class="auth-row">
+        <span class="auth-hint">Authentication state is not loaded.</span>
+        <button mat-button type="button" (click)="retryAuth.emit()">Check</button>
+      </div>
+    }
+  </section>
+
+  <footer class="card-actions">
+    @switch (mutability()) {
+      @case ('editable') {
+        <button mat-button type="button" (click)="edit.emit()"><mat-icon>edit</mat-icon> Edit</button>
+        <button mat-button type="button" class="destructive-text" (click)="remove.emit()">
+          <mat-icon>delete</mat-icon> Remove
+        </button>
+      }
+      @case ('registry_managed') {
+        <button mat-button type="button" (click)="update.emit()"><mat-icon>update</mat-icon> Update</button>
+        <button mat-button type="button" class="destructive-text" (click)="uninstall.emit()">
+          <mat-icon>delete</mat-icon> Uninstall
+        </button>
+      }
+      @default {
+        <span class="readonly-note"><mat-icon inline>lock</mat-icon> Defined outside Pueblo Hub. Change the source to edit it.</span>
+      }
+    }
+  </footer>
+</article>

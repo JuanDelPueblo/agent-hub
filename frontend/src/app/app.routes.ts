@@ -19,5 +19,11 @@ export const routes: Routes = [
       import('./pages/chat-page/chat-page').then((module) => module.ChatPageComponent),
     title: 'Chat | Pueblo Hub',
   },
+  {
+    path: 'agents',
+    loadComponent: () =>
+      import('./pages/agents-page/agents-page').then((module) => module.AgentsPageComponent),
+    title: 'Agents | Pueblo Hub',
+  },
   { path: '**', redirectTo: '' },
 ];

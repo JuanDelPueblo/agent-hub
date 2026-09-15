@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { signal } from '@angular/core';
+import { provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Chat } from '../../core/api/types';
@@ -39,11 +40,13 @@ describe('ChatWorkspaceComponent', () => {
     historyHasOlderByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     historyErrors: ReturnType<typeof signal<Record<string, string>>>;
     blockedEnvrcByChat: ReturnType<typeof signal<Record<string, { path: string; message: string }>>>;
+    authRequiredByChat: ReturnType<typeof signal<Record<string, { agent_id?: string; message?: string }>>>;
     authorizeChatEnvironment: ReturnType<typeof vi.fn>;
     retryConnection: ReturnType<typeof vi.fn>;
     resetRejectedConfig: ReturnType<typeof vi.fn>;
     loadOlderHistory: ReturnType<typeof vi.fn>;
     retryHistory: ReturnType<typeof vi.fn>;
+    clearAuthRequired: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -61,11 +64,13 @@ describe('ChatWorkspaceComponent', () => {
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),
       blockedEnvrcByChat: signal<Record<string, { path: string; message: string }>>({}),
+      authRequiredByChat: signal<Record<string, { agent_id?: string; message?: string }>>({}),
       authorizeChatEnvironment: vi.fn(async () => undefined),
       retryConnection: vi.fn(async () => undefined),
       resetRejectedConfig: vi.fn(async () => undefined),
       loadOlderHistory: vi.fn(async () => undefined),
       retryHistory: vi.fn(async () => undefined),
+      clearAuthRequired: vi.fn(),
     };
 
     const stateValue = {
@@ -90,6 +95,7 @@ describe('ChatWorkspaceComponent', () => {
       providers: [
         { provide: AppStateService, useValue: stateValue },
         { provide: BreakpointObserver, useValue: { observe: () => of({ matches: false }) } },
+        provideRouter([]),
       ],
     }).compileComponents();
 
@@ -160,6 +166,28 @@ describe('ChatWorkspaceComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Agent process exited unexpectedly');
     expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
   });
+
+  it('explains an auth_required failure and links to the agent authentication surface', async () => {
+    state.authRequiredByChat.set({
+      'chat-1': { agent_id: 'codex', message: 'Sign in to Codex to continue.' },
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Authentication required');
+    expect(text).toContain('Sign in to Codex to continue.');
+
+    const link = fixture.nativeElement.querySelector('a[href^="/agents"]') as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.textContent).toContain('Open agent authentication');
+
+    const dismiss = Array.from(fixture.nativeElement.querySelectorAll('button'))
+      .find((button: unknown) => (button as Element).textContent?.includes('Dismiss')) as HTMLButtonElement;
+    dismiss.click();
+    expect(state.clearAuthRequired).toHaveBeenCalledWith('chat-1');
+  });
 });
 
 describe('ChatWorkspaceComponent live stream', () => {
@@ -191,6 +219,8 @@ describe('ChatWorkspaceComponent live stream', () => {
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),
       blockedEnvrcByChat: signal<Record<string, { path: string; message: string }>>({}),
+      authRequiredByChat: signal<Record<string, { agent_id?: string; message?: string }>>({}),
+      clearAuthRequired: vi.fn(),
       authorizeChatEnvironment: vi.fn(async () => undefined),
       findChat: (id: string) => (id === chat.id ? chat : null),
       chatActivity: () => 'idle',
@@ -216,6 +246,7 @@ describe('ChatWorkspaceComponent live stream', () => {
       providers: [
         { provide: AppStateService, useValue: stateValue },
         { provide: BreakpointObserver, useValue: { observe: () => of({ matches: false }) } },
+        provideRouter([]),
       ],
     }).compileComponents();
 

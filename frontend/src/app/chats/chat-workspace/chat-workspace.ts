@@ -6,6 +6,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatDrawer, MatSidenavModule } from '@angular/material/sidenav';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { RouterLink } from '@angular/router';
 import { Chat } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 import { ChatConfigComponent } from '../chat-config/chat-config';
@@ -15,7 +16,7 @@ import { EventStreamComponent } from '../event-stream/event-stream';
 
 @Component({
   selector: 'hub-chat-workspace',
-  imports: [ChatConfigComponent, ChatComposerComponent, ChatHeaderComponent, EventStreamComponent, MatButtonModule, MatCardModule, MatIconModule, MatProgressSpinnerModule, MatSidenavModule],
+  imports: [ChatConfigComponent, ChatComposerComponent, ChatHeaderComponent, EventStreamComponent, MatButtonModule, MatCardModule, MatIconModule, MatProgressSpinnerModule, MatSidenavModule, RouterLink],
   templateUrl: './chat-workspace.html',
   styleUrl: './chat-workspace.scss',
 })
@@ -40,6 +41,7 @@ export class ChatWorkspaceComponent {
   readonly historyError = computed(() => this.chatId() ? this.state.historyErrors()[this.chatId()] ?? '' : '');
   readonly hasOlderHistory = computed(() => this.chatId() ? this.state.historyHasOlderByChat()[this.chatId()] === true : false);
   readonly blockedEnvrc = computed(() => this.chatId() ? this.state.blockedEnvrcByChat()[this.chatId()] ?? null : null);
+  readonly authRequired = computed(() => this.chatId() ? this.state.authRequiredByChat()[this.chatId()] ?? null : null);
   readonly authorizingEnv = signal(false);
 
   constructor() {
@@ -51,6 +53,7 @@ export class ChatWorkspaceComponent {
   resetConfig(): void { if (this.chatId()) void this.state.resetRejectedConfig(this.chatId()); }
   loadOlderHistory(): void { if (this.chatId()) void this.state.loadOlderHistory(this.chatId()); }
   retryHistory(): void { if (this.chatId()) void this.state.retryHistory(this.chatId()); }
+  dismissAuthRequired(): void { if (this.chatId()) this.state.clearAuthRequired(this.chatId()); }
   async authorizeEnvironment(): Promise<void> {
     const id = this.chatId();
     if (!id) return;

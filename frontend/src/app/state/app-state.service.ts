@@ -5,6 +5,7 @@ import { EventSocketService } from '../core/event-socket.service';
 import type { ChatWorkspaceSelection, CloneProjectInput, PermissionPolicy, SessionEvent } from '../core/api/types';
 import { EventReducer } from './event-reducer';
 import type { ChatActivity } from './chat-activity';
+import { AgentStore } from './agent.store';
 import { ChatSessionStore } from './chat-session.store';
 import { ProjectStore } from './project.store';
 import { UiStateStore } from './ui-state.store';
@@ -18,10 +19,19 @@ import { UiStateStore } from './ui-state.store';
 export class AppStateService {
   readonly projectStore = inject(ProjectStore);
   readonly chatStore = inject(ChatSessionStore);
+  readonly agentStore = inject(AgentStore);
   readonly uiStore = inject(UiStateStore);
 
   readonly projects = this.projectStore.projects;
-  readonly agents = this.projectStore.agents;
+  readonly agents = this.agentStore.installed;
+  readonly agentError = this.agentStore.error;
+  readonly agentsLoading = this.agentStore.loading;
+  readonly registry = this.agentStore.registry;
+  readonly registryLoading = this.agentStore.registryLoading;
+  readonly registryError = this.agentStore.registryError;
+  readonly authByAgent = this.agentStore.authByAgent;
+  readonly authLoading = this.agentStore.authLoading;
+  readonly authErrors = this.agentStore.authErrors;
   readonly loadingProjects = this.projectStore.loading;
   readonly projectsError = this.projectStore.error;
   readonly chatsByProject = this.chatStore.chatsByProject;
@@ -37,6 +47,7 @@ export class AppStateService {
   readonly connectErrors = this.chatStore.connectErrors;
   readonly rejectedConfigByChat = this.chatStore.rejectedConfigByChat;
   readonly blockedEnvrcByChat = this.chatStore.blockedEnvrcByChat;
+  readonly authRequiredByChat = this.chatStore.authRequiredByChat;
   readonly historyLoadingByChat = this.chatStore.historyLoadingByChat;
   readonly historyHasOlderByChat = this.chatStore.historyHasOlderByChat;
   readonly historyErrors = this.chatStore.historyErrors;
@@ -80,7 +91,21 @@ export class AppStateService {
   setMobileDrawerOpen(open: boolean): void { this.uiStore.setMobileDrawerOpen(open); }
   setShowArchived(show: boolean): void { this.uiStore.setShowArchived(show); }
   loadProjects(): Promise<void> { return this.projectStore.loadProjects(); }
-  loadAgents(): Promise<void> { return this.projectStore.loadAgents(); }
+  loadAgents(): Promise<void> { return this.agentStore.loadInstalled(); }
+  loadRegistry(query?: string, refresh = false): Promise<void> { return this.agentStore.loadRegistry(query, refresh); }
+  refreshRegistry(): Promise<void> { return this.agentStore.refreshRegistry(); }
+  installRegistryAgent(input: import('../core/api/types').InstallRegistryAgentInput) { return this.agentStore.installRegistryAgent(input); }
+  updateAgent(id: string) { return this.agentStore.updateAgent(id); }
+  removeAgent(id: string) { return this.agentStore.removeAgent(id); }
+  fetchAgentDetail(id: string) { return this.agentStore.fetchDetail(id); }
+  validateCustomAgent(input: import('../core/api/types').CustomAgentInput) { return this.agentStore.validateCustomAgent(input); }
+  createCustomAgent(input: import('../core/api/types').CustomAgentInput) { return this.agentStore.createCustomAgent(input); }
+  editCustomAgent(id: string, input: import('../core/api/types').CustomAgentInput) { return this.agentStore.editCustomAgent(id, input); }
+  loadAgentAuth(id: string) { return this.agentStore.loadAuth(id); }
+  authenticateAgent(id: string, methodId: string) { return this.agentStore.authenticate(id, methodId); }
+  logoutAgent(id: string) { return this.agentStore.logout(id); }
+  startTerminalAgentAuth(id: string, methodId: string) { return this.agentStore.startTerminalAuth(id, methodId); }
+  clearAuthRequired(chatId: string): void { this.chatStore.clearAuthRequired(chatId); }
   loadChats(projectId: string): Promise<void> { return this.chatStore.loadChats(projectId); }
   findChat(chatId: string) { return this.chatStore.findChat(chatId); }
   chatActivity(chatId: string): ChatActivity { return this.chatStore.chatActivity(chatId); }

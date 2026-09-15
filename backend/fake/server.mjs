@@ -63,6 +63,15 @@ const routes = [
   ['POST', /^\/api\/agents\/registry\/refresh$/, refreshRegistry],
   ['POST', /^\/api\/agents\/registry\/install$/, installRegistryAgent],
   ['POST', /^\/api\/agents\/([^/]+)\/update$/, updateRegistryAgent],
+  // T111 authentication routes. The dedicated agent-auth surface is separate
+  // from the per-agent routes, and the flow id stays opaque to the browser.
+  ['GET', /^\/api\/agents\/([^/]+)\/auth$/, getAgentAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/terminal\/([^/]+)$/, startTerminalAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/([^/]+)$/, authenticateAgentRoute],
+  ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgentRoute],
+  ['GET', /^\/api\/agent-auth\/([^/]+)$/, getAgentAuthFlow],
+  ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelAgentAuthFlow],
+  ['GET', /^\/api\/agents\/([^/]+)$/, getAgentDetail],
   ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
   ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
   ['GET', /^\/api\/status$/, getStatus],
@@ -105,6 +114,11 @@ const server = createServer(async (request, response) => {
 
 server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, 'http://localhost');
+  const flowMatch = /^\/api\/agent-auth\/([^/]+)\/ws$/.exec(url.pathname);
+  if (flowMatch) {
+    handleAuthFlowSocket(request, socket, head, decodeURIComponent(flowMatch[1]));
+    return;
+  }
   if (url.pathname !== '/ws') {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
     return;
@@ -163,6 +177,17 @@ function handleWebSocket(request, rawSocket, head) {
   };
 
   socket.onClose = () => unsubscribe?.();
+}
+
+/** Opens the simulated PTY WebSocket for one opaque authentication flow. */
+function handleAuthFlowSocket(request, rawSocket, head, flowId) {
+  if (!state.flowView(flowId)) {
+    rawSocket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+    return;
+  }
+  const socket = upgrade(request, rawSocket, head);
+  if (!socket) return;
+  state.attachFlowSocket(flowId, socket);
 }
 
 // --------------------------------------------------------------- handlers
@@ -287,32 +312,40 @@ function editAgent({ params, body }) {
 
 function removeAgent({ params }) { return json(state.removeAgent(params[0])); }
 
+function getAgentDetail({ params }) { return json(state.agentDetail(params[0])); }
+
 function registryAgents({ url }) {
-  const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
-  const agents = [{
-    id: 'example-acp', name: 'Example ACP', version: '1.0.0',
-    description: 'A representative ACP Registry entry for frontend development.',
-    distributions: ['npx'], platforms: [], selected_distribution: 'npx', update_available: false,
-  }].filter((agent) => !query || `${agent.id} ${agent.name} ${agent.description}`.toLowerCase().includes(query));
-  return json({ status: 'cached', source_url: 'https://registry.example.invalid/registry.json', registry_version: '1.0.0', fetched_at: '2026-01-01T00:00:00Z', host: 'fake-host', rejected: [], agents });
+  return json(state.registryView(url.searchParams.get('q') ?? ''));
 }
 
 function refreshRegistry({ url }) { return registryAgents({ url }); }
 
-function installRegistryAgent({ body }) {
-  if (body.registry_id !== 'example-acp') throw httpError(404, 'Registry agent not found');
-  const id = body.agent_id?.trim() || body.registry_id;
-  if (state.agent(id)) throw httpError(409, 'An agent already uses that id');
-  const agent = { id, display_name: body.display_name?.trim() || 'Example ACP', source: 'registry', availability: 'available', usage_provider: body.usage_provider ?? null, metadata: body.metadata ?? null, mutability: 'registry_managed', display: { description: 'A representative ACP Registry entry for frontend development.', version: '1.0.0' } };
-  AGENTS.push(agent); state.metadataChanged(); return json(agent);
+function installRegistryAgent({ body }) { return json(state.installRegistryAgent(body)); }
+
+function updateRegistryAgent({ params }) { return json(state.updateRegistryAgent(params[0])); }
+
+// ------------------------------------------------------- authentication
+
+function getAgentAuth({ params }) { return json(state.agentAuth(params[0])); }
+
+function authenticateAgentRoute({ params }) {
+  return json(state.authenticateAgent(params[0], params[1]));
 }
 
-function updateRegistryAgent({ params }) {
-  const agent = state.agent(params[0]);
-  if (!agent) throw httpError(404, 'Agent not found');
-  if (agent.source !== 'registry') throw httpError(409, 'Only registry agents can update');
-  return json({ updated: false, from_version: agent.display.version ?? '1.0.0', to_version: agent.display.version ?? '1.0.0', agent });
+function logoutAgentRoute({ params }) { return json(state.logoutAgent(params[0])); }
+
+function startTerminalAuth({ params }) {
+  const flow = state.startTerminalFlow(params[0], params[1]);
+  return json(state.flowView(flow.flow_id), 201);
 }
+
+function getAgentAuthFlow({ params }) {
+  const flow = state.flowView(params[0]);
+  if (!flow) throw httpError(404, 'Authentication flow not found');
+  return json(flow);
+}
+
+function cancelAgentAuthFlow({ params }) { return json(state.cancelFlow(params[0])); }
 
 function getChat({ params }) {
   return json(state.chatView(requireChat(params[0])));
