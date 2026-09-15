@@ -4,6 +4,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { PROJECT_ROOT, RICH_HISTORY_CONTENT } from './state.mjs';
+
 /** Turns that are running now, by chat id. */
 const active = new Map();
 
@@ -25,6 +27,8 @@ export function scenarioFor(text) {
   if (lower.includes('usage')) return 'usage';
   if (lower.includes('message-id')) return 'message-id';
   if (lower.includes('plan')) return 'plan';
+  if (lower.includes('rich')) return 'rich';
+  if (lower.includes('terminal') || lower.includes('task')) return 'terminal';
   if (lower.includes('tool')) return 'tools';
   if (lower.includes('long')) return 'long';
   if (lower.includes('quiet')) return 'quiet';
@@ -45,6 +49,7 @@ export function cancel(chatId) {
   // not a user denial.
   turn.resolvePermission?.(null);
   turn.resolveElicitation?.({ action: 'cancel' });
+  turn.resolveHold?.();
   return true;
 }
 
@@ -86,7 +91,12 @@ export function cancelElicitations(chatId) {
  * exactly like the `tokio::spawn` of `hub::prompt`.
  */
 export function startTurn(state, chat, text, latency, content = undefined) {
-  const turn = { cancelled: false, permissionId: null, resolvePermission: null };
+  const turn = {
+    cancelled: false,
+    permissionId: null,
+    resolvePermission: null,
+    resolveHold: null,
+  };
   active.set(chat.id, turn);
 
   runTurn(state, chat, text, latency, turn, content)
@@ -97,6 +107,86 @@ export function startTurn(state, chat, text, latency, content = undefined) {
       active.delete(chat.id);
       state.setRuntime(chat.id, 'RUNNING', 'IDLE');
     });
+}
+
+/**
+ * Rehydrates an intentionally open fixture turn. The state layer has already
+ * persisted the user message, partial output, and (for waiting) permission
+ * request; this only supplies the live resolver that makes the normal
+ * permission/cancel endpoints behave like a running ACP session.
+ */
+export function seedActiveTurn(state, chat, seed) {
+  if (active.has(chat.id)) return active.get(chat.id);
+
+  const turn = {
+    cancelled: false,
+    permissionId: seed.kind === 'waiting' ? seed.permission_id : null,
+    resolvePermission: null,
+    resolveElicitation: null,
+    resolveHold: null,
+  };
+  active.set(chat.id, turn);
+
+  if (seed.kind === 'waiting') {
+    const answered = new Promise((resolve) => {
+      turn.resolvePermission = resolve;
+    });
+    void answered
+      .then((granted) => finishSeededPermission(state, chat, turn, granted))
+      .catch((error) => {
+        state.emit(chat.id, chat.agent, { type: 'error', message: String(error) });
+        state.emit(chat.id, chat.agent, { type: 'turn_complete', stop_reason: 'error' });
+      })
+      .finally(() => finishSeededTurn(state, chat, turn));
+  } else {
+    const held = new Promise((resolve) => {
+      turn.resolveHold = resolve;
+    });
+    void held.finally(() => {
+      finishCancelled((payload) => state.emit(chat.id, chat.agent, payload));
+      finishSeededTurn(state, chat, turn);
+    });
+  }
+
+  return turn;
+}
+
+async function finishSeededPermission(state, chat, turn, granted) {
+  const emit = (payload) => state.emit(chat.id, chat.agent, payload);
+  const requestId = turn.permissionId;
+  turn.permissionId = null;
+  turn.resolvePermission = null;
+
+  if (granted === null || turn.cancelled) {
+    finishCancelled(emit);
+    return;
+  }
+
+  emit({ type: 'permission_response', id: requestId, granted });
+  await sleep(150);
+  if (turn.cancelled) {
+    finishCancelled(emit);
+    return;
+  }
+  if (!granted) {
+    emit({ type: 'message_chunk', text: 'I stopped because the WebSocket edit was denied.' });
+    emit({ type: 'turn_complete', stop_reason: 'refusal' });
+    return;
+  }
+
+  const toolId = 'seed-waiting-tool';
+  emit({ type: 'tool_call_update', id: toolId, status: 'completed', output: '+12 -4' });
+  emit({
+    type: 'message_chunk',
+    text: 'Permission granted. I preserved the sender high-water mark and the reconnect test now passes.',
+  });
+  emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+}
+
+function finishSeededTurn(state, chat, turn) {
+  if (active.get(chat.id) !== turn) return;
+  active.delete(chat.id);
+  state.setRuntime(chat.id, 'RUNNING', 'IDLE');
 }
 
 async function runTurn(state, chat, text, latency, turn, richContent = undefined) {
@@ -133,6 +223,70 @@ async function runTurn(state, chat, text, latency, turn, richContent = undefined
 
   if (scenario === 'quiet') {
     await stream('message_chunk', 'Done.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'rich') {
+    emit({
+      type: 'thought_chunk',
+      text: 'I will compare the attached screenshot with the retained render trace metadata.',
+    });
+    await pause(150);
+    const content = RICH_HISTORY_CONTENT.map((block) => ({ ...block }));
+    const toolId = randomUUID();
+    emit({
+      type: 'tool_call',
+      id: toolId,
+      title: 'Inspect the attached render trace',
+      kind: 'read',
+      status: 'in_progress',
+      content: [{ type: 'content', content: content[0] }],
+    });
+    await pause(250);
+    emit({
+      type: 'tool_call_update',
+      id: toolId,
+      status: 'completed',
+      output: 'firstPaintMs=184; layoutShift=0.01',
+      content: [{ type: 'content', content: content[3] }],
+    });
+    emit({
+      type: 'message_chunk',
+      text: 'The screenshot matches the route. The small shift is caused by the deferred status badge.',
+      content: content.slice(1),
+    });
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'terminal') {
+    const task = state.createTask(
+      chat.id,
+      'npm test -- --watch=false',
+      `${PROJECT_ROOT}/pueblo-hub/frontend`,
+      'starting frontend tests…',
+    );
+    const toolId = randomUUID();
+    emit({
+      type: 'tool_call',
+      id: toolId,
+      title: 'Run frontend test suite',
+      kind: 'execute',
+      status: 'in_progress',
+    });
+    await pause(350);
+    if (turn.cancelled) return finishCancelled(emit);
+    emit({
+      type: 'tool_call_update',
+      id: toolId,
+      status: 'in_progress',
+      output: `task ${task.id.slice(0, 8)} is still running; follow it in Terminal tasks`,
+    });
+    emit({
+      type: 'message_chunk',
+      text: 'The frontend test suite is running in the background. The task remains available from the chat header.',
+    });
     emit({ type: 'turn_complete', stop_reason: 'end_turn' });
     return;
   }

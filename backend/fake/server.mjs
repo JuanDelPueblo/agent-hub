@@ -13,10 +13,14 @@ import { randomUUID } from 'node:crypto';
 
 import { upgrade } from './websocket.mjs';
 import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions, validateCustomInput } from './state.mjs';
-import { answerElicitation, answerPermission, cancel, isRunning, listPendingElicitations, startTurn } from './turns.mjs';
+import { answerElicitation, answerPermission, cancel, isRunning, listPendingElicitations, seedActiveTurn, startTurn } from './turns.mjs';
 
 const options = parseArgs(process.argv.slice(2));
 const state = new FakeState();
+for (const [chatId, seed] of state.seededTurns) {
+  const chat = state.chats.get(chatId);
+  if (chat) seedActiveTurn(state, chat, seed);
+}
 
 // ---------------------------------------------------------------- routing
 
@@ -136,7 +140,7 @@ server.on('upgrade', (request, socket, head) => {
 server.listen(options.port, '127.0.0.1', () => {
   log(`fake Pueblo Hub backend on http://127.0.0.1:${options.port}`);
   log(`${state.projects.size} projects, ${state.chats.size} chats, latency x${options.latency}`);
-  log('prompt keywords: plan, tool, permission, error, long, quiet');
+  log('prompt keywords: plan, tool, permission, error, long, rich, terminal/task, quiet');
 });
 
 // ------------------------------------------------------------- websocket
@@ -782,6 +786,15 @@ function listDirectories({ url }) {
 // --------------------------------------------------------------- helpers
 
 function ensureRunning(chat) {
+  if (state.isEnvironmentBlocked(chat.id)) {
+    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
+      code: 'envrc_blocked',
+      details: {
+        path: `${PROJECT_ROOT}/.envrc`,
+        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
+      },
+    });
+  }
   const runtime = state.runtime.get(chat.id);
   if (runtime?.process !== 'RUNNING') {
     if (!chat.acp_session_id) chat.acp_session_id = `acp-${randomUUID()}`;

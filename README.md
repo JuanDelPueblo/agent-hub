@@ -129,7 +129,23 @@ The fake backend accepts two options:
 
 ### Seeded data
 
-The fake backend starts with three projects, four chats, and a finished conversation in each chat. The folder picker browses a synthetic directory tree under `/home/dev/projects`, so the picker never depends on the layout of your machine.
+The fake backend starts with three projects and ten deterministic coding-agent
+fixtures. `pueblo-hub` contains the idle WebSocket replay review, an actively
+working reconnect investigation, an unresolved permission request, a failed
+migration check, a running `nix run .#verify` terminal task, a blocked `.envrc`,
+and an archived read-only migration chat. `corolla-firmware` contains a
+read-only checksum review. `scratch` contains a rich screenshot/render-trace
+conversation and an empty new chat. The fixtures use Claude, Codex, OpenCode,
+Antigravity, and Example ACP, and include both isolated worktrees and project
+checkouts. Their histories, runtime states, task record, and activity times
+reset to this baseline whenever the fake backend restarts.
+
+The waiting, working, and failed fixtures are normal ACP event histories: the
+first two have an open `PROMPTING` turn (the waiting one also has an unresolved
+permission request), while the failed one has an error and `stop_reason: error`.
+Open the blocked fixture to see the existing workspace-environment banner, then
+use **Authorize environment** to exercise the normal direnv retry path. Enable
+**Show archived** to reveal the stopped archived chat.
 
 ### Prompt scenarios
 
@@ -141,6 +157,9 @@ A keyword in the prompt selects the turn that the fake agent streams. This makes
 | `tool` | Tool calls only, without a thought block. |
 | `permission` | A permission request that waits for your answer. |
 | `error` | An error event and a failed turn. |
+| `rich` | Text, image, resource-link, resource, and rich tool content. |
+| `terminal` or `task` | Starts a real fake terminal-task record that remains running after the turn. |
+| `elicit` / `elicit-url` | A form or URL elicitation that waits for your answer. |
 | `long` | A long answer, for scrolling and layout checks. |
 | `quiet` | One short message. |
 | (anything else) | A full turn: thought, plan, tool calls, permission request, and answer. |

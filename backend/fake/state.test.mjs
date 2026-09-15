@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AGENTS, FakeState, validateCustomInput } from './state.mjs';
+import { AGENTS, FakeState, RICH_HISTORY_CONTENT, validateCustomInput } from './state.mjs';
+import { cancel, isRunning, seedActiveTurn } from './turns.mjs';
 
 function historyFor(state, chatId) {
   return state.events.filter((event) => event.session_id === chatId);
@@ -29,37 +30,76 @@ describe('fake backend seed history', () => {
     assert.equal(report.valid, false);
     assert.deepEqual(report.issues.map((issue) => issue.field), ['id', 'command']);
   });
-  it('seeds four chats, each with a completed conversation', () => {
+  it('seeds realistic idle, active, waiting, failed, task, blocked, rich, archived, and empty chats', () => {
     const state = new FakeState();
     const chats = [...state.chats.values()];
 
-    assert.equal(chats.length, 4);
+    assert.equal(chats.length, 10);
 
-    const userTexts = new Set();
     for (const chat of chats) {
       const history = historyFor(state, chat.id);
-      const types = payloadTypes(history);
-
-      assert.ok(types.includes('user_message'), `chat "${chat.title}" has no user_message`);
-      assert.ok(types.includes('message_chunk'), `chat "${chat.title}" has no message_chunk`);
-      assert.ok(types.includes('turn_complete'), `chat "${chat.title}" has no turn_complete`);
-
-      const userIndex = types.indexOf('user_message');
-      const messageIndex = types.indexOf('message_chunk');
-      const turnIndex = types.lastIndexOf('turn_complete');
-      assert.ok(userIndex < messageIndex, `chat "${chat.title}" orders user_message before message_chunk`);
-      assert.ok(messageIndex < turnIndex, `chat "${chat.title}" orders message_chunk before turn_complete`);
 
       for (const event of history) {
         assert.equal(event.session_id, chat.id);
         assert.equal(event.agent, chat.agent);
       }
-
-      const firstUser = history.find((event) => event.payload.type === 'user_message');
-      userTexts.add(firstUser.payload.text);
     }
 
-    assert.equal(userTexts.size, chats.length, 'each seeded chat shows its own history');
+    const byTitle = (title) => chats.find((chat) => chat.title === title);
+    const completed = [
+      'Review the WebSocket replay path',
+      'Run the workspace verification suite',
+      'Authorize the project .envrc before running tests',
+      'Port the store to versioned migrations',
+      'Inspect the Corolla calibration checksum',
+      'Compare the dashboard render trace and screenshot',
+    ];
+    for (const title of completed) {
+      const history = historyFor(state, byTitle(title).id);
+      assert.ok(payloadTypes(history).includes('turn_complete'), `${title} should be complete`);
+    }
+
+    const working = byTitle('Trace the reconnect race in EventLog');
+    assert.equal(state.chatView(working).turn_state, 'PROMPTING');
+    assert.equal(state.chatView(working).process_state, 'RUNNING');
+    assert.equal(payloadTypes(historyFor(state, working.id)).includes('turn_complete'), false);
+
+    const waiting = byTitle('Approve the WebSocket backpressure fix');
+    const waitingHistory = historyFor(state, waiting.id);
+    assert.equal(state.chatView(waiting).turn_state, 'PROMPTING');
+    assert.ok(waitingHistory.some((event) => event.payload.type === 'permission_request'));
+    assert.equal(waitingHistory.some((event) => event.payload.type === 'permission_response'), false);
+    assert.equal(waitingHistory.some((event) => event.payload.type === 'turn_complete'), false);
+
+    const failed = byTitle('Recover the failed schema migration check');
+    const failedHistory = historyFor(state, failed.id);
+    assert.equal(state.chatView(failed).process_state, 'DEAD');
+    assert.ok(failedHistory.some((event) => event.payload.type === 'error'));
+    assert.equal(failedHistory.at(-2).payload.stop_reason, 'error');
+
+    const terminal = byTitle('Run the workspace verification suite');
+    assert.equal(state.chatView(terminal).active_tasks, 1);
+    assert.equal(state.listTasks(terminal.id)[0].state, 'running');
+
+    const blocked = byTitle('Authorize the project .envrc before running tests');
+    assert.equal(state.isEnvironmentBlocked(blocked.id), true);
+
+    const archived = byTitle('Port the store to versioned migrations');
+    assert.equal(archived.archived, true);
+    assert.equal(state.chatView(archived).process_state, 'STOPPED');
+    assert.equal(archived.permission_policy, 'read-only');
+
+    const rich = byTitle('Compare the dashboard render trace and screenshot');
+    const richEvents = historyFor(state, rich.id);
+    const richBlocks = richEvents.flatMap((event) => event.payload.content ?? []);
+    assert.ok(richBlocks.some((block) => block.type === 'image'));
+    assert.ok(richBlocks.some((block) => block.type === 'resource_link'));
+    assert.ok(richBlocks.some((block) => block.type === 'resource'));
+    assert.equal(richBlocks.length >= RICH_HISTORY_CONTENT.length, true);
+
+    const empty = byTitle('Draft a release checklist');
+    assert.equal(historyFor(state, empty.id).length, 0);
+    assert.equal(empty.acp_session_id, null);
   });
 
   it('replays the seeded history from seq 0 for a fresh page', () => {
@@ -70,10 +110,69 @@ describe('fake backend seed history', () => {
       const history = replayed.filter((event) => event.session_id === chat.id);
       const types = history.map((event) => event.payload.type);
 
-      assert.ok(types.includes('user_message'), `replay misses user_message for "${chat.title}"`);
-      assert.ok(types.includes('message_chunk'), `replay misses message_chunk for "${chat.title}"`);
-      assert.ok(types.includes('turn_complete'), `replay misses turn_complete for "${chat.title}"`);
+      if (chat.title === 'Draft a release checklist') {
+        assert.equal(history.length, 0);
+      } else {
+        assert.ok(types.includes('user_message'), `replay misses user_message for "${chat.title}"`);
+        if (!['Approve the WebSocket backpressure fix', 'Recover the failed schema migration check'].includes(chat.title)) {
+          assert.ok(types.includes('message_chunk'), `replay misses message_chunk for "${chat.title}"`);
+        }
+      }
     }
+  });
+
+  it('keeps seeded open turns live instead of completing them at startup', async () => {
+    const state = new FakeState();
+    const working = [...state.chats.values()].find((chat) => chat.title === 'Trace the reconnect race in EventLog');
+    const waiting = [...state.chats.values()].find((chat) => chat.title === 'Approve the WebSocket backpressure fix');
+
+    seedActiveTurn(state, working, state.seededTurns.get(working.id));
+    seedActiveTurn(state, waiting, state.seededTurns.get(waiting.id));
+    assert.equal(isRunning(working.id), true);
+    assert.equal(isRunning(waiting.id), true);
+    assert.equal(state.chatView(working).turn_state, 'PROMPTING');
+    assert.equal(state.chatView(waiting).turn_state, 'PROMPTING');
+
+    cancel(working.id);
+    cancel(waiting.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(isRunning(working.id), false);
+    assert.equal(isRunning(waiting.id), false);
+  });
+
+  it('maps seeded event/runtime/task contracts to the four frontend activities', () => {
+    const state = new FakeState();
+    const activityFromContract = (chat) => {
+      const history = historyFor(state, chat.id);
+      const request = [...history].reverse().find((event) => event.payload.type === 'permission_request');
+      const answered = request && history.some((event) => event.payload.type === 'permission_response' && event.payload.id === request.payload.id);
+      if (request && !answered && !history.some((event) => event.payload.type === 'turn_complete' && event.seq > request.seq)) return 'waiting';
+      if (history.some((event) => event.payload.type === 'error') || history.some((event) => event.payload.type === 'turn_complete' && event.payload.stop_reason === 'error')) return 'error';
+      const view = state.chatView(chat);
+      if (view.turn_state === 'PROMPTING' || view.turn_state === 'CANCELLING' || view.active_tasks > 0) return 'working';
+      return 'idle';
+    };
+
+    const activity = (title) => activityFromContract([...state.chats.values()].find((chat) => chat.title === title));
+    assert.equal(activity('Review the WebSocket replay path'), 'idle');
+    assert.equal(activity('Trace the reconnect race in EventLog'), 'working');
+    assert.equal(activity('Approve the WebSocket backpressure fix'), 'waiting');
+    assert.equal(activity('Recover the failed schema migration check'), 'error');
+  });
+
+  it('exposes seeded runtime metadata through the project chat-list contract', () => {
+    const state = new FakeState();
+    const listed = [...state.projects.values()].flatMap((project) => state.listChats(project.id));
+    assert.equal(listed.length, 10);
+    assert.ok(listed.some((chat) => chat.turn_state === 'PROMPTING' && chat.process_state === 'RUNNING'));
+    assert.ok(listed.some((chat) => chat.process_state === 'DEAD' && chat.turn_state === 'IDLE'));
+    assert.ok(listed.some((chat) => chat.active_tasks === 1));
+    assert.ok(listed.every((chat) => typeof chat.created_at === 'string' && typeof chat.updated_at === 'string'));
+    assert.ok(listed.every((chat) => !('workspace_path' in chat) && !('repository_root' in chat)));
+    assert.deepEqual(
+      listed.filter((chat) => chat.title === 'Trace the reconnect race in EventLog').map((chat) => chat.config_values),
+      [{ model: 'gpt-5' }],
+    );
   });
 
   it('returns bounded, chat-scoped pages with stable older cursors', () => {
