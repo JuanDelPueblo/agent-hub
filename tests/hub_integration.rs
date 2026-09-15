@@ -247,9 +247,9 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
         pueblo_hub::events::ReplayResult::Complete(e)
         | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
     };
-    assert!(!history
-        .iter()
-        .any(|e| matches!(&e.payload, EventPayload::MessageChunk {text} if text == "REPLAY")));
+    assert!(!history.iter().any(
+        |e| matches!(&e.payload, EventPayload::MessageChunk { text, .. } if text == "REPLAY")
+    ));
     mgr.shutdown_all().await;
 }
 
@@ -422,6 +422,7 @@ async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
             },
             agent: "codex".into(),
             payload: EventPayload::MessageChunk {
+                message_id: None,
                 text: index.to_string(),
             },
         };
@@ -499,7 +500,10 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
         .append(
             &chat.id,
             "codex",
-            EventPayload::MessageChunk { text: "old".into() },
+            EventPayload::MessageChunk {
+                message_id: None,
+                text: "old".into(),
+            },
         )
         .unwrap();
 
@@ -510,6 +514,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             &chat.id,
             "codex",
             EventPayload::MessageChunk {
+                message_id: None,
                 text: "between startup and baseline".into(),
             },
         )
@@ -577,6 +582,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             &chat.id,
             "codex",
             EventPayload::MessageChunk {
+                message_id: None,
                 text: "live".into(),
             },
         )
@@ -595,6 +601,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             &chat.id,
             "codex",
             EventPayload::MessageChunk {
+                message_id: None,
                 text: "missed while disconnected".into(),
             },
         )

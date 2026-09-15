@@ -230,11 +230,9 @@ impl AcpClient {
         // filesystem read/write, terminal, boolean session config, and form
         // plus URL elicitation. Never advertise partial capabilities.
         let caps = agent_client_protocol_schema::ClientCapabilities::new()
-            .fs(
-                agent_client_protocol_schema::FileSystemCapabilities::new()
-                    .read_text_file(true)
-                    .write_text_file(true),
-            )
+            .fs(agent_client_protocol_schema::FileSystemCapabilities::new()
+                .read_text_file(true)
+                .write_text_file(true))
             .terminal(true)
             .session(
                 agent_client_protocol_schema::ClientSessionCapabilities::new().config_options(
@@ -269,7 +267,10 @@ impl AcpClient {
             .unwrap_or(serde_json::json!({}));
         // Preserve generic agent identity and auth metadata for later use.
         // T107 owns login/logout; this layer only stores what initialize saw.
-        *self.agent_info.write().await = result.get("agentInfo").cloned().unwrap_or(serde_json::Value::Null);
+        *self.agent_info.write().await = result
+            .get("agentInfo")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         *self.auth_methods.write().await = result
             .get("authMethods")
             .cloned()
@@ -314,7 +315,10 @@ impl AcpClient {
             .unwrap_or(serde_json::json!([]));
         // Preserve advertised modes/current mode generically. Absent means
         // the agent has no legacy mode support.
-        *self.session_modes.write().await = result.get("modes").cloned().unwrap_or(serde_json::Value::Null);
+        *self.session_modes.write().await = result
+            .get("modes")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         // Reset commands and usage on (re)open; live updates repopulate them.
         *self.available_commands.write().await = serde_json::json!([]);
         *self.last_usage.write().await = serde_json::Value::Null;
@@ -359,7 +363,10 @@ impl AcpClient {
             .read()
             .await
             .as_array()
-            .and_then(|a| a.iter().find(|o| o.get("id").and_then(|v| v.as_str()) == Some(id)))
+            .and_then(|a| {
+                a.iter()
+                    .find(|o| o.get("id").and_then(|v| v.as_str()) == Some(id))
+            })
             .and_then(|o| o.get("type").and_then(|v| v.as_str()))
             == Some("boolean");
         let params = if is_boolean {
@@ -417,17 +424,19 @@ impl AcpClient {
 
     /// Capability-gated legacy `session/set_mode`. Fails explicitly when the
     /// agent never advertised modes instead of sending speculatively.
-    pub async fn set_mode(
-        &self,
-        session_id: &SessionId,
-        mode_id: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn set_mode(&self, session_id: &SessionId, mode_id: &str) -> anyhow::Result<()> {
         let has_modes = {
             let modes = self.session_modes.read().await;
             match &*modes {
                 serde_json::Value::Null => false,
-                v => v.get("available_modes").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty())
-                    || v.get("availableModes").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty()),
+                v => {
+                    v.get("available_modes")
+                        .and_then(|a| a.as_array())
+                        .is_some_and(|a| !a.is_empty())
+                        || v.get("availableModes")
+                            .and_then(|a| a.as_array())
+                            .is_some_and(|a| !a.is_empty())
+                }
             }
         };
         anyhow::ensure!(has_modes, "Agent does not advertise session modes");
@@ -779,7 +788,8 @@ async fn reader_task(
                                 if let Ok(notif) =
                                     serde_json::from_value::<SessionNotification>(params.clone())
                                 {
-                                    if let SessionUpdate::AvailableCommandsUpdate(u) = &notif.update {
+                                    if let SessionUpdate::AvailableCommandsUpdate(u) = &notif.update
+                                    {
                                         let cmds = serde_json::to_value(&u.available_commands)
                                             .unwrap_or(serde_json::json!([]));
                                         *available_commands.write().await = cmds.clone();
@@ -1029,7 +1039,8 @@ async fn handle_agent_request(
                 serde_json::from_value(params).map_err(|e| e.to_string())?;
             let rpc_id = match id {
                 agent_client_protocol_schema::RequestId::Number(n) => n.to_string(),
-                agent_client_protocol_schema::RequestId::String(s) => s.to_string(),
+                agent_client_protocol_schema::RequestId::Str(s) => s.to_string(),
+                agent_client_protocol_schema::RequestId::Null => "null".to_string(),
             };
             let resp = handler.handle_elicitation(rpc_id, req).await;
             serde_json::to_value(resp).map_err(|e| e.to_string())
@@ -1094,6 +1105,7 @@ async fn handle_agent_request(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_session_update(
     event_log: &EventLog,
     store: &Option<Arc<crate::store::Store>>,
@@ -1267,8 +1279,7 @@ async fn handle_session_update(
             EventPayload::Plan { entries }
         }
         SessionUpdate::AvailableCommandsUpdate(u) => {
-            let cmds =
-                serde_json::to_value(&u.available_commands).unwrap_or(serde_json::json!([]));
+            let cmds = serde_json::to_value(&u.available_commands).unwrap_or(serde_json::json!([]));
             *available_commands.write().await = cmds.clone();
             EventPayload::AvailableCommands { commands: cmds }
         }
@@ -1299,8 +1310,7 @@ async fn handle_session_update(
             // Authoritative snapshot; reader_task already emitted for live
             // updates. This path covers direct handling (tests) and keeps
             // ordering/descriptions/values/groups/categories generically.
-            let options =
-                serde_json::to_value(&u.config_options).unwrap_or(serde_json::json!([]));
+            let options = serde_json::to_value(&u.config_options).unwrap_or(serde_json::json!([]));
             EventPayload::ConfigOptions { options }
         }
         SessionUpdate::UsageUpdate(u) => {
@@ -1565,11 +1575,10 @@ mod tests {
         Arc::new(EventLog::new(100))
     }
 
-    fn test_arcs() -> (
-        Arc<tokio::sync::RwLock<serde_json::Value>>,
-        Arc<tokio::sync::RwLock<serde_json::Value>>,
-        Arc<tokio::sync::RwLock<serde_json::Value>>,
-    ) {
+    type SharedJson = Arc<tokio::sync::RwLock<serde_json::Value>>;
+
+    #[allow(clippy::type_complexity)]
+    fn test_arcs() -> (SharedJson, SharedJson, SharedJson) {
         (
             Arc::new(tokio::sync::RwLock::new(serde_json::json!([]))),
             Arc::new(tokio::sync::RwLock::new(serde_json::Value::Null)),
@@ -1642,22 +1651,30 @@ mod tests {
         let log = test_log();
         let (cmds, modes, usage) = test_arcs();
         let with_id = SessionUpdate::AgentMessageChunk(
-            agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(
-                TextContent::new("hi"),
-            ))
+            agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(TextContent::new(
+                "hi",
+            )))
             .message_id("msg-1"),
         );
         handle_session_update(&log, &None, "s1", "codex", &with_id, &cmds, &modes, &usage)
             .await
             .unwrap();
-        let without_id = SessionUpdate::AgentMessageChunk(
-            agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(TextContent::new(
-                "old",
-            ))),
-        );
-        handle_session_update(&log, &None, "s1", "codex", &without_id, &cmds, &modes, &usage)
-            .await
-            .unwrap();
+        let without_id =
+            SessionUpdate::AgentMessageChunk(agent_client_protocol_schema::ContentChunk::new(
+                ContentBlock::Text(TextContent::new("old")),
+            ));
+        handle_session_update(
+            &log,
+            &None,
+            "s1",
+            "codex",
+            &without_id,
+            &cmds,
+            &modes,
+            &usage,
+        )
+        .await
+        .unwrap();
         let events = match log.replay_from(1) {
             crate::events::ReplayResult::Complete(e) => e,
             _ => panic!("expected complete"),
@@ -1669,7 +1686,10 @@ mod tests {
         ));
         assert!(matches!(
             &events[1].payload,
-            crate::events::EventPayload::MessageChunk { message_id: None, .. }
+            crate::events::EventPayload::MessageChunk {
+                message_id: None,
+                ..
+            }
         ));
     }
 
@@ -1691,7 +1711,13 @@ mod tests {
         };
         assert!(matches!(
             &events[0].payload,
-            crate::events::EventPayload::UsageUpdate { used: 100, size: 2000, cost_amount: Some(_), cost_currency: Some(_), .. }
+            crate::events::EventPayload::UsageUpdate {
+                used: 100,
+                size: 2000,
+                cost_amount: Some(_),
+                cost_currency: Some(_),
+                ..
+            }
         ));
     }
 
@@ -1699,8 +1725,9 @@ mod tests {
     async fn test_tool_locations_preserved() {
         let log = test_log();
         let (cmds, modes, usage) = test_arcs();
-        let tc = agent_client_protocol_schema::ToolCall::new("t1", "Edit")
-            .locations(vec![agent_client_protocol_schema::ToolCallLocation::new("/a/b.rs").line(3_u32)]);
+        let tc = agent_client_protocol_schema::ToolCall::new("t1", "Edit").locations(vec![
+            agent_client_protocol_schema::ToolCallLocation::new("/a/b.rs").line(3_u32),
+        ]);
         let update = SessionUpdate::ToolCall(tc);
         handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
             .await
@@ -1711,7 +1738,10 @@ mod tests {
         };
         assert!(matches!(
             &events[0].payload,
-            crate::events::EventPayload::ToolCall { locations: Some(_), .. }
+            crate::events::EventPayload::ToolCall {
+                locations: Some(_),
+                ..
+            }
         ));
     }
 

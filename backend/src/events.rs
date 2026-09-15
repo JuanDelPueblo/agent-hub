@@ -208,7 +208,8 @@ impl EventLog {
                     pending.remove(id);
                 }
                 EventPayload::ElicitationRequest { id, .. } => {
-                    pending_elicitations.insert(id.clone(), (e.session_id.clone(), e.agent.clone()));
+                    pending_elicitations
+                        .insert(id.clone(), (e.session_id.clone(), e.agent.clone()));
                 }
                 EventPayload::ElicitationResponse { id, .. } => {
                     pending_elicitations.remove(id);
@@ -431,7 +432,10 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { message_id: None, text: "a".into() },
+            EventPayload::MessageChunk {
+                message_id: None,
+                text: "a".into(),
+            },
         )
         .unwrap();
         assert_eq!(log.next_seq(), 2);
@@ -444,7 +448,10 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { message_id: None, text: "hi".into() },
+            EventPayload::MessageChunk {
+                message_id: None,
+                text: "hi".into(),
+            },
         )
         .unwrap();
         let event = rx.recv().await.unwrap();
@@ -458,7 +465,10 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { message_id: None, text: "a".into() },
+            EventPayload::MessageChunk {
+                message_id: None,
+                text: "a".into(),
+            },
         )
         .unwrap();
         match log.replay_from(999) {

@@ -389,9 +389,8 @@ impl CallbackHandler {
                 })?;
                 // Honor stable `line` (1-based) and `limit` semantics,
                 // including boundary and error cases.
-                let sliced = apply_read_window(&content, req.line, req.limit).map_err(|message| {
-                    agent_client_protocol_schema::Error::new(-32002, message)
-                })?;
+                let sliced = apply_read_window(&content, req.line, req.limit)
+                    .map_err(|message| agent_client_protocol_schema::Error::new(-32002, message))?;
                 Ok(ReadTextFileResponse::new(sliced))
             }
         }
@@ -586,9 +585,8 @@ impl CallbackHandler {
                             let map: std::collections::BTreeMap<
                                 String,
                                 agent_client_protocol_schema::ElicitationContentValue,
-                            > = serde_json::from_value(v).map_err(|e| {
-                                anyhow::anyhow!("Invalid elicitation content: {e}")
-                            })?;
+                            > = serde_json::from_value(v)
+                                .map_err(|e| anyhow::anyhow!("Invalid elicitation content: {e}"))?;
                             Some(map)
                         }
                         None => None,
@@ -598,8 +596,7 @@ impl CallbackHandler {
                     None
                 };
                 agent_client_protocol_schema::ElicitationAction::Accept(
-                    agent_client_protocol_schema::ElicitationAcceptAction::new()
-                        .content(validated),
+                    agent_client_protocol_schema::ElicitationAcceptAction::new().content(validated),
                 )
             }
             "decline" => agent_client_protocol_schema::ElicitationAction::Decline,
@@ -627,7 +624,8 @@ impl CallbackHandler {
     pub async fn cancel_pending_elicitations(&self) {
         let mut pending = self.pending_elicitations.write().await;
         for (id, p) in pending.drain() {
-            let _ = p.tx.send(agent_client_protocol_schema::ElicitationAction::Cancel);
+            let _ =
+                p.tx.send(agent_client_protocol_schema::ElicitationAction::Cancel);
             let _ = self.event_log.append(
                 &self.session_id,
                 &self.agent_name,
@@ -713,6 +711,11 @@ impl CallbackHandler {
                     ElicitationAction::Cancel,
                 );
             }
+            _ => {
+                return agent_client_protocol_schema::CreateElicitationResponse::new(
+                    ElicitationAction::Cancel,
+                );
+            }
         };
         // Pending id is the stable elicitation_id for URL, else the RPC id.
         let pending_id = elicitation_id.clone().unwrap_or_else(|| rpc_id.clone());
@@ -726,10 +729,13 @@ impl CallbackHandler {
             tool_call_id: tool_call_id.clone(),
         };
         let (tx, rx) = oneshot::channel();
-        self.pending_elicitations
-            .write()
-            .await
-            .insert(pending_id.clone(), PendingElicitation { tx, info: info.clone() });
+        self.pending_elicitations.write().await.insert(
+            pending_id.clone(),
+            PendingElicitation {
+                tx,
+                info: info.clone(),
+            },
+        );
         if let Err(e) = self.event_log.append(
             &self.session_id,
             &self.agent_name,
@@ -801,7 +807,11 @@ fn apply_read_window(
     // Preserve trailing newline semantics of the original slice.
     if !out.is_empty() && end < lines.len() {
         // Middle slice: lines() stripped newlines, rejoin is exact.
-    } else if !content.is_empty() && end == lines.len() && content.ends_with('\n') && !out.is_empty() {
+    } else if !content.is_empty()
+        && end == lines.len()
+        && content.ends_with('\n')
+        && !out.is_empty()
+    {
         out.push('\n');
     }
     Ok(out)
@@ -1335,9 +1345,18 @@ mod tests {
     #[test]
     fn test_apply_read_window_honors_line_and_limit() {
         let content = "a\nb\nc\nd\n";
-        assert_eq!(apply_read_window(content, None, None).unwrap(), "a\nb\nc\nd\n");
-        assert_eq!(apply_read_window(content, Some(2), None).unwrap(), "b\nc\nd\n");
-        assert_eq!(apply_read_window(content, Some(2), Some(2)).unwrap(), "b\nc");
+        assert_eq!(
+            apply_read_window(content, None, None).unwrap(),
+            "a\nb\nc\nd\n"
+        );
+        assert_eq!(
+            apply_read_window(content, Some(2), None).unwrap(),
+            "b\nc\nd\n"
+        );
+        assert_eq!(
+            apply_read_window(content, Some(2), Some(2)).unwrap(),
+            "b\nc"
+        );
         assert_eq!(apply_read_window(content, Some(1), Some(0)).unwrap(), "");
         assert!(apply_read_window(content, Some(0), None).is_err());
         assert!(apply_read_window(content, Some(10), None).is_err());
@@ -1359,7 +1378,9 @@ mod tests {
             Arc::new(std::collections::HashMap::new()),
             tracker,
         );
-        let req = ReadTextFileRequest::new("s1", file.clone()).line(2_u32).limit(2_u32);
+        let req = ReadTextFileRequest::new("s1", file.clone())
+            .line(2_u32)
+            .limit(2_u32);
         let resp = handler.handle_read_file(req).await.unwrap();
         assert_eq!(resp.content, "two\nthree");
         let bad = ReadTextFileRequest::new("s1", file).line(10_u32);
@@ -1411,7 +1432,8 @@ mod tests {
     async fn test_elicitation_form_accept_decline_cancel() {
         let handler = Arc::new(make_handler(CallbackPolicy::Ask));
         for action in ["accept", "decline", "cancel"] {
-            let schema = agent_client_protocol_schema::ElicitationSchema::new().string("name", true);
+            let schema =
+                agent_client_protocol_schema::ElicitationSchema::new().string("name", true);
             let scope = agent_client_protocol_schema::ElicitationSessionScope::new("sess-1");
             let req = agent_client_protocol_schema::CreateElicitationRequest::new(
                 agent_client_protocol_schema::ElicitationFormMode::new(scope, schema),
@@ -1437,7 +1459,10 @@ mod tests {
             } else {
                 None
             };
-            assert!(handler.respond_elicitation(&pid, action, content).await.unwrap());
+            assert!(handler
+                .respond_elicitation(&pid, action, content)
+                .await
+                .unwrap());
             let resp = handle.await.unwrap();
             match action {
                 "accept" => assert!(matches!(

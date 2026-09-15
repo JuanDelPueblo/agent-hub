@@ -428,10 +428,7 @@ pub async fn chat_commands(
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.chat_commands(&id).await?))
 }
-pub async fn chat_modes(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
+pub async fn chat_modes(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.chat_modes(&id).await?))
 }
 #[derive(Deserialize)]
@@ -446,10 +443,7 @@ pub async fn set_chat_mode(
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.set_chat_mode(&id, &m.mode_id).await?))
 }
-pub async fn chat_usage(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
+pub async fn chat_usage(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.chat_usage(&id).await?))
 }
 pub async fn chat_session_info(

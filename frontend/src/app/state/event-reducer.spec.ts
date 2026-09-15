@@ -136,7 +136,11 @@ describe('EventReducer', () => {
     reducer.ingest(event(1, 'tool_call', { id: 't1', title: 'Edit', status: 'in_progress', locations: [{ path: '/a/b.rs', line: 3 }] }));
     reducer.ingest(event(2, 'elicitation_request', { id: 'e1', mode: 'form', message: 'Need input' }));
     reducer.ingest(event(3, 'elicitation_response', { id: 'e1', action: 'accept' }));
-    const entries = (reducer.items()[0] as { entries: Array<Record<string, unknown>> }).entries;
+    const entries = (
+      reducer.items()[0] as {
+        entries: Array<{ type: string; locations?: unknown; responded?: boolean; decision?: string }>;
+      }
+    ).entries;
     expect(entries[0]).toMatchObject({ type: 'tool_call', locations: [{ path: '/a/b.rs', line: 3 }] });
     expect(entries[1]).toMatchObject({ type: 'elicitation_request', responded: true, decision: 'Accepted' });
   });

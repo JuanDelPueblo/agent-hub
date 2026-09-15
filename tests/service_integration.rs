@@ -685,7 +685,7 @@ async fn concurrent_wait_admission_and_rejected_second_prompt() {
             .expect("did not receive prompt event in time")
             .unwrap();
         if event.session_id == chat.chat.id
-            && matches!(event.payload, EventPayload::UserMessage { ref text } if text == "wait")
+            && matches!(event.payload, EventPayload::UserMessage { ref text, .. } if text == "wait")
         {
             break;
         }
@@ -728,7 +728,7 @@ async fn concurrent_wait_admission_and_rejected_second_prompt() {
     let user_messages: Vec<_> = chat_events
         .iter()
         .filter_map(|e| match &e.payload {
-            EventPayload::UserMessage { text } => Some(text.as_str()),
+            EventPayload::UserMessage { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -843,7 +843,7 @@ async fn concurrent_config_load_and_prompt_share_one_startup() {
         .into_iter()
         .filter(|event| event.session_id == chat_id)
         .filter_map(|event| match event.payload {
-            EventPayload::MessageChunk { text } => Some(text),
+            EventPayload::MessageChunk { text, .. } => Some(text),
             _ => None,
         })
         .collect();

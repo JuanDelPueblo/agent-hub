@@ -633,11 +633,7 @@ impl HubService {
             .await?)
     }
 
-    pub async fn delete_remote_session(
-        &self,
-        chat_id: &str,
-        remote_id: &str,
-    ) -> ServiceResult<()> {
+    pub async fn delete_remote_session(&self, chat_id: &str, remote_id: &str) -> ServiceResult<()> {
         Ok(self
             .live(chat_id)
             .await?
@@ -659,11 +655,7 @@ impl HubService {
         Ok(live.session_modes().await)
     }
 
-    pub async fn set_chat_mode(
-        &self,
-        chat_id: &str,
-        mode_id: &str,
-    ) -> ServiceResult<Value> {
+    pub async fn set_chat_mode(&self, chat_id: &str, mode_id: &str) -> ServiceResult<Value> {
         Ok(self.live(chat_id).await?.set_mode(mode_id).await?)
     }
 

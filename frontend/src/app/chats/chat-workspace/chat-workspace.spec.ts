@@ -32,6 +32,9 @@ describe('ChatWorkspaceComponent', () => {
     configLoadedByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     reducersByChat: ReturnType<typeof signal<Record<string, never>>>;
     configOptionsByChat: ReturnType<typeof signal<Record<string, never>>>;
+    commandsByChat: ReturnType<typeof signal<Record<string, never>>>;
+    modesByChat: ReturnType<typeof signal<Record<string, null>>>;
+    usageByChat: ReturnType<typeof signal<Record<string, null>>>;
     historyLoadingByChat: ReturnType<typeof signal<Set<string>>>;
     historyHasOlderByChat: ReturnType<typeof signal<Record<string, boolean>>>;
     historyErrors: ReturnType<typeof signal<Record<string, string>>>;
@@ -51,6 +54,9 @@ describe('ChatWorkspaceComponent', () => {
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, never>>({}),
       configOptionsByChat: signal<Record<string, never>>({}),
+      commandsByChat: signal<Record<string, never>>({}),
+      modesByChat: signal<Record<string, null>>({}),
+      usageByChat: signal<Record<string, null>>({}),
       historyLoadingByChat: signal(new Set<string>()),
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),
@@ -178,6 +184,9 @@ describe('ChatWorkspaceComponent live stream', () => {
       configLoadedByChat: signal({ 'chat-1': true }),
       reducersByChat: signal<Record<string, EventReducer>>({ 'chat-1': reducer }),
       configOptionsByChat: signal<Record<string, never>>({}),
+      commandsByChat: signal<Record<string, never>>({}),
+      modesByChat: signal<Record<string, null>>({}),
+      usageByChat: signal<Record<string, null>>({}),
       historyLoadingByChat: signal(new Set<string>()),
       historyHasOlderByChat: signal<Record<string, boolean>>({}),
       historyErrors: signal<Record<string, string>>({}),

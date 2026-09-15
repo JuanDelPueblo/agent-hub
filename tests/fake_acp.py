@@ -40,8 +40,8 @@ def modes():
             "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "act", "name": "Act"}]}
 
 
-def update(kind, **fields):
-    send({"method": "session/update", "params": {"sessionId": current, "update": {"sessionUpdate": kind, **fields}}})
+def update(update_kind, **fields):
+    send({"method": "session/update", "params": {"sessionId": current, "update": {"sessionUpdate": update_kind, **fields}}})
 
 
 for line in sys.stdin:
@@ -91,7 +91,6 @@ for line in sys.stdin:
             pass
         reply(id, {})
     elif method == "session/set_mode":
-        global current_mode
         current_mode = p.get("modeId", current_mode)
         reply(id, {})
     elif method == "$/cancel_request":

@@ -367,10 +367,7 @@ impl AcpSession {
             );
         }
         let cmds_snapshot = client.available_commands_snapshot().await;
-        if cmds_snapshot
-            .as_array()
-            .is_some_and(|a| !a.is_empty())
-        {
+        if cmds_snapshot.as_array().is_some_and(|a| !a.is_empty()) {
             let _ = self.event_log.append(
                 &self.id,
                 &self.key.agent,
@@ -800,10 +797,7 @@ impl AcpSession {
         // A cancelled turn must answer pending permission with ACP
         // `cancelled`, never as denial, so the prompt can finish with the
         // correct outcome. Pending elicitations cancel the same way.
-        client
-            .callback_handler()
-            .cancel_pending_permissions()
-            .await;
+        client.callback_handler().cancel_pending_permissions().await;
         client
             .callback_handler()
             .cancel_pending_elicitations()
@@ -857,9 +851,7 @@ impl AcpSession {
         }
     }
 
-    pub async fn pending_elicitations(
-        &self,
-    ) -> Vec<crate::acp::callbacks::PendingElicitationInfo> {
+    pub async fn pending_elicitations(&self) -> Vec<crate::acp::callbacks::PendingElicitationInfo> {
         if let Some(client) = self.client.read().await.as_ref() {
             client.callback_handler().list_pending_elicitations().await
         } else {
@@ -879,16 +871,17 @@ impl AcpSession {
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
-        Ok(client
+        client
             .callback_handler()
             .respond_elicitation(id, action, content)
-            .await?)
+            .await
     }
 
     pub async fn set_mode(&self, mode_id: &str) -> anyhow::Result<serde_json::Value> {
-        let _guard = self.turn_guard.try_lock().map_err(|_| {
-            anyhow::anyhow!("Wait for the active turn before changing mode")
-        })?;
+        let _guard = self
+            .turn_guard
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("Wait for the active turn before changing mode"))?;
         self.ensure_running().await?;
         let client = self
             .client
@@ -903,15 +896,39 @@ impl AcpSession {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
         tokio::time::timeout(Duration::from_secs(30), client.set_mode(&sid, mode_id)).await??;
-        // Refresh the snapshot after the agent confirms. The live
-        // `current_mode_update` will also merge, but query immediately so
-        // reconnect sees the new mode without waiting for a notification.
+        // The `set_mode` response carries no state, so merge the confirmed
+        // id into the snapshot here. A later `current_mode_update` merges
+        // the same way. Update both casings; the wire uses camelCase.
+        {
+            let mut guard = client.session_modes.write().await;
+            let mut state = (*guard).clone();
+            if state.is_null() {
+                state = serde_json::json!({
+                    "currentModeId": mode_id,
+                    "current_mode_id": mode_id,
+                    "availableModes": [],
+                    "available_modes": [],
+                });
+            } else if let Some(obj) = state.as_object_mut() {
+                obj.insert(
+                    "currentModeId".to_string(),
+                    serde_json::Value::String(mode_id.to_string()),
+                );
+                obj.insert(
+                    "current_mode_id".to_string(),
+                    serde_json::Value::String(mode_id.to_string()),
+                );
+            }
+            *guard = state;
+        }
         let modes = client.session_modes_snapshot().await;
         // Emit the merged state so the frontend updates immediately.
         self.event_log.append(
             &self.id,
             &self.key.agent,
-            EventPayload::SessionModes { state: modes.clone() },
+            EventPayload::SessionModes {
+                state: modes.clone(),
+            },
         )?;
         Ok(modes)
     }
@@ -1439,10 +1456,16 @@ impl SessionManager {
         };
         if let Some(session) = existing {
             // A stopped materialized chat has no ACP process and may safely
-            // be rebuilt from the current catalog. This makes edits/updates
-            // apply to the next launch while a starting/running session keeps
-            // its stable runtime handle.
-            if session.process_state().await.can_start() {
+            // be rebuilt from the current catalog when the catalog changed.
+            // This makes edits/updates apply to the next launch while a
+            // starting/running session keeps its stable runtime handle.
+            // Rebuilding only on catalog change keeps one stable handle per
+            // chat, so concurrent callers share a single startup lock.
+            let stale = match self.agents.runtime(&session.key.agent) {
+                Some(current) => !Arc::ptr_eq(&current, &session.runtime),
+                None => true,
+            };
+            if stale && session.process_state().await.can_start() {
                 self.remove_session(session_id).await;
             } else {
                 return Some(session);

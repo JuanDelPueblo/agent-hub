@@ -54,6 +54,37 @@ async fn await_turn(log: &EventLog, chat_id: &str) {
     }
 }
 
+/// Starts a turn, retrying while the previous turn's guard is still held.
+/// `await_turn` returns on the `TurnComplete` event, which is published just
+/// before the turn guard is released, so an immediate follow-up prompt can
+/// race with `"Agent busy"`.
+async fn prompt_when_idle(hub: &HubService, chat_id: &str, text: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match hub.prompt_chat(chat_id, text.into()).await {
+            Ok(()) => return,
+            Err(e) if tokio::time::Instant::now() < deadline => {
+                assert!(
+                    e.to_string().contains("Agent busy"),
+                    "unexpected prompt error: {e}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(e) => panic!("prompt never admitted: {e}"),
+        }
+    }
+}
+
+/// Reads the current mode id from either wire casing. The backend preserves
+/// the agent's camelCase wire object; merged updates also carry snake_case.
+fn current_mode_id(modes: &serde_json::Value) -> &str {
+    modes
+        .get("current_mode_id")
+        .or_else(|| modes.get("currentModeId"))
+        .and_then(|v| v.as_str())
+        .expect("modes snapshot has no current mode id")
+}
+
 async fn collect_text(log: &EventLog, chat_id: &str, start_seq: u64) -> String {
     match log.replay_from(start_seq) {
         pueblo_hub::events::ReplayResult::Complete(events)
@@ -77,9 +108,12 @@ async fn slash_commands_appear_and_invoke_as_prompt_text() {
     let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = service.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
 
-    service.prompt_chat(&chat.chat.id, "commands".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "commands").await;
     await_turn(&log, &chat.chat.id).await;
 
     let commands = service.chat_commands(&chat.chat.id).await.unwrap();
@@ -89,10 +123,7 @@ async fn slash_commands_appear_and_invoke_as_prompt_text() {
     assert_eq!(arr[0]["input"]["hint"], "goal");
 
     // Invoking a command is ordinary prompt text, not a command RPC.
-    service
-        .prompt_chat(&chat.chat.id, "/plan draft the router".into())
-        .await
-        .unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "/plan draft the router").await;
     await_turn(&log, &chat.chat.id).await;
 
     sessions.shutdown_all().await;
@@ -106,11 +137,18 @@ async fn boolean_config_and_legacy_modes_fallback() {
     let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = service.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
 
     // Stable boolean option works and retains generic metadata.
     let options = service.chat_config(&chat.chat.id).await.unwrap();
-    assert!(options.as_array().unwrap().iter().any(|o| o["id"] == "web_search" && o["type"] == "boolean"));
+    assert!(options
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|o| o["id"] == "web_search" && o["type"] == "boolean"));
     service
         .set_chat_config(&chat.chat.id, "web_search", serde_json::json!(true))
         .await
@@ -118,16 +156,16 @@ async fn boolean_config_and_legacy_modes_fallback() {
 
     // Legacy modes work as fallback when no `mode` config category covers them.
     let modes = service.chat_modes(&chat.chat.id).await.unwrap();
-    assert_eq!(modes["current_mode_id"], "ask");
+    assert_eq!(current_mode_id(&modes), "ask");
     service.set_chat_mode(&chat.chat.id, "act").await.unwrap();
     let modes = service.chat_modes(&chat.chat.id).await.unwrap();
-    assert_eq!(modes["current_mode_id"], "act");
+    assert_eq!(current_mode_id(&modes), "act");
 
     // Dynamic mode update during a session is preserved.
-    service.prompt_chat(&chat.chat.id, "modes".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "modes").await;
     await_turn(&log, &chat.chat.id).await;
     let modes = service.chat_modes(&chat.chat.id).await.unwrap();
-    assert_eq!(modes["current_mode_id"], "act");
+    assert_eq!(current_mode_id(&modes), "act");
 
     sessions.shutdown_all().await;
 }
@@ -140,17 +178,20 @@ async fn usage_message_ids_and_user_chunk_no_duplication() {
     let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = service.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
 
     let start = log.next_seq();
-    service.prompt_chat(&chat.chat.id, "usage".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "usage").await;
     await_turn(&log, &chat.chat.id).await;
     let usage = service.chat_usage(&chat.chat.id).await.unwrap();
     assert_eq!(usage["used"], 100);
     assert_eq!(usage["size"], 2000);
 
     let start2 = log.next_seq();
-    service.prompt_chat(&chat.chat.id, "message-id".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "message-id").await;
     await_turn(&log, &chat.chat.id).await;
     let text = collect_text(&log, &chat.chat.id, start2).await;
     assert!(text.contains("part-1"));
@@ -176,17 +217,21 @@ async fn usage_message_ids_and_user_chunk_no_duplication() {
         _ => panic!("expected complete"),
     }
     .into_iter()
-    .filter(|e| e.session_id == chat.chat.id && matches!(e.payload, EventPayload::UserMessage { .. }))
+    .filter(|e| {
+        e.session_id == chat.chat.id && matches!(e.payload, EventPayload::UserMessage { .. })
+    })
     .collect();
     let user_count_before = before.len();
-    service.prompt_chat(&chat.chat.id, "user-chunk".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "user-chunk").await;
     await_turn(&log, &chat.chat.id).await;
     let after: Vec<_> = match log.replay_from(start) {
         pueblo_hub::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     }
     .into_iter()
-    .filter(|e| e.session_id == chat.chat.id && matches!(e.payload, EventPayload::UserMessage { .. }))
+    .filter(|e| {
+        e.session_id == chat.chat.id && matches!(e.payload, EventPayload::UserMessage { .. })
+    })
     .collect();
     // One new local user message, no duplicate from the reflected chunk.
     assert_eq!(after.len(), user_count_before + 1);
@@ -201,7 +246,10 @@ async fn remote_session_delete_is_capability_gated() {
     let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = service.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
 
     let listed = service.remote_sessions(&chat.chat.id, None).await.unwrap();
     let sessions_arr = listed["sessions"].as_array().unwrap().clone();
@@ -215,7 +263,10 @@ async fn remote_session_delete_is_capability_gated() {
         .and_then(|s| s["sessionId"].as_str())
         .unwrap_or(&remote_id)
         .to_string();
-    service.delete_remote_session(&chat.chat.id, &target).await.unwrap();
+    service
+        .delete_remote_session(&chat.chat.id, &target)
+        .await
+        .unwrap();
     let listed2 = service.remote_sessions(&chat.chat.id, None).await.unwrap();
     assert!(!listed2["sessions"]
         .as_array()
@@ -236,9 +287,12 @@ async fn tool_locations_and_session_info_preserved() {
     let project = service
         .create_project("demo".into(), tmp.path().display().to_string())
         .unwrap();
-    let chat = service.create_chat(&project.id, "codex", None).await.unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
 
-    service.prompt_chat(&chat.chat.id, "tool-loc".into()).await.unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "tool-loc").await;
     await_turn(&log, &chat.chat.id).await;
     let events = match log.replay_from(1) {
         pueblo_hub::events::ReplayResult::Complete(e) => e,
@@ -246,15 +300,18 @@ async fn tool_locations_and_session_info_preserved() {
     };
     assert!(events.iter().any(|e| matches!(
         &e.payload,
-        EventPayload::ToolCall { locations: Some(_), .. }
+        EventPayload::ToolCall {
+            locations: Some(_),
+            ..
+        }
     )));
 
-    service
-        .prompt_chat(&chat.chat.id, "title:Hello World".into())
-        .await
-        .unwrap();
+    prompt_when_idle(&service, &chat.chat.id, "title:Hello World").await;
     await_turn(&log, &chat.chat.id).await;
-    assert_eq!(service.get_chat(&chat.chat.id).await.unwrap().chat.title, "Hello World");
+    assert_eq!(
+        service.get_chat(&chat.chat.id).await.unwrap().chat.title,
+        "Hello World"
+    );
 
     sessions.shutdown_all().await;
 }
