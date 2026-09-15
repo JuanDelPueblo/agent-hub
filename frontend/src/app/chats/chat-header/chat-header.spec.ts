@@ -120,6 +120,8 @@ describe('ChatHeaderComponent', () => {
     const badge = fixture.nativeElement.querySelector('.workspace-badge') as HTMLElement;
     expect(badge).toBeTruthy();
     expect(badge.textContent).toContain(branch);
+    expect(badge.querySelector('mat-icon')?.textContent.trim()).toBe('account_tree');
+    expect(badge.getAttribute('aria-label')).toBe(`Copy branch name: ${branch}`);
     expect(fixture.componentInstance.workspaceTooltip({ mode: 'managed_worktree', branch, base_commit: null }))
       .toBe(`${branch} — Isolated worktree`);
     expect(fixture.componentInstance.workspaceTooltip({ mode: 'project_checkout', branch, base_commit: null }))

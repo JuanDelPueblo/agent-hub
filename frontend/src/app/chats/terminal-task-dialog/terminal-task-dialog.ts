@@ -6,7 +6,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../core/api/api.service';
 import type { Chat, TerminalTaskDetails, TerminalTaskSummary } from '../../core/api/types';
-import { formatElapsed } from '../../state/chat-activity';
+import { formatElapsed, formatLocalDateTime } from '../../state/chat-activity';
 
 @Component({
   selector: 'hub-terminal-task-dialog',
@@ -93,5 +93,9 @@ export class TerminalTaskDialogComponent implements OnInit {
     if (!Number.isFinite(start)) return '';
     const end = task.completed_at ? Date.parse(task.completed_at) : Date.now();
     return formatElapsed(Math.max(0, end - start));
+  }
+
+  formatDateTime(value: string): string {
+    return formatLocalDateTime(value);
   }
 }

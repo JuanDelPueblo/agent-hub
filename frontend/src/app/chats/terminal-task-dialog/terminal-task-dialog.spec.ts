@@ -86,15 +86,47 @@ describe('TerminalTaskDialogComponent', () => {
     const output = fixture.nativeElement.querySelector('.terminal-output');
     expect(output).toBeTruthy();
     expect(output.textContent).toContain('running 5 tests...');
+    expect(fixture.nativeElement.querySelector('.stop-task')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('.stop-task mat-icon')?.textContent.trim()).toBe('stop');
   });
 
-  it('stops running task when clicking Stop task', async () => {
-    const stopBtn = Array.from(fixture.nativeElement.querySelectorAll('button'))
-      .find((btn: unknown) => (btn as Element).textContent?.includes('Stop task')) as HTMLButtonElement;
+  it('keeps Stop task disabled and reports stopping while the request is in flight', async () => {
+    let resolveStop!: () => void;
+    mockApi.stopChatTask.mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveStop = () => resolve(undefined); }));
+    const stopPromise = fixture.componentInstance.stopTask('task-1');
+    fixture.detectChanges();
+
+    const stopBtn = fixture.nativeElement.querySelector('.stop-task') as HTMLButtonElement;
     expect(stopBtn).toBeTruthy();
-    stopBtn.click();
-    await fixture.whenStable();
+    expect(stopBtn.disabled).toBe(true);
+    expect(stopBtn.textContent).toContain('Stopping…');
+
+    resolveStop();
+    await stopPromise;
     fixture.detectChanges();
     expect(mockApi.stopChatTask).toHaveBeenCalledWith('chat-1', 'task-1');
+  });
+
+  it('does not show the destructive action for completed or stopped tasks', async () => {
+    const items = fixture.nativeElement.querySelectorAll('.task-item') as NodeListOf<HTMLButtonElement>;
+    items[1].click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.stop-task')).toBeNull();
+
+    fixture.componentInstance.selectedTaskDetails.set({ ...task1Details, state: 'stopped' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.stop-task')).toBeNull();
+  });
+
+  it('formats the selected task start time for local display', () => {
+    const time = fixture.nativeElement.querySelector('.detail-item time') as HTMLElement;
+    expect(time.textContent).not.toContain('T');
+    expect(time.textContent).not.toContain('.000Z');
+    expect(time.textContent).toBe(fixture.componentInstance.formatDateTime(task1Details.started_at));
+  });
+
+  it('keeps the dialog close affordance accessible', () => {
+    expect(fixture.nativeElement.querySelector('[aria-label="Close terminal tasks dialog"]')).toBeTruthy();
   });
 });

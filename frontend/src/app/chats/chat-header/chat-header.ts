@@ -74,5 +74,5 @@ export class ChatHeaderComponent {
   rename(): void { const chat = this.chat(); if (chat) this.dialog.open(RenameChatDialogComponent, { width: 'min(480px, calc(100vw - 32px))', data: chat }); }
   async archive(): Promise<void> { const chat = this.chat(); if (chat) await this.state.archiveChat(chat.id, !chat.archived).catch((error) => console.error('Failed to archive chat', error)); }
   remove(): void { const chat = this.chat(); if (chat) this.dialog.open(DeleteChatDialogComponent, { width: 'min(520px, calc(100vw - 32px))', data: chat }); }
-  openTasks(): void { const chat = this.chat(); if (chat) this.dialog.open(TerminalTaskDialogComponent, { width: 'min(840px, calc(100vw - 32px))', data: chat }); }
+  openTasks(): void { const chat = this.chat(); if (chat) this.dialog.open(TerminalTaskDialogComponent, { width: 'min(960px, calc(100vw - 32px))', data: chat }); }
 }
