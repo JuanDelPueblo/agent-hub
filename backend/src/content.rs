@@ -10,6 +10,10 @@ pub const MAX_MEDIA_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_EMBEDDED_RESOURCE_BYTES: usize = 512 * 1024;
 pub const MAX_RICH_PROMPT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_DURABLE_RICH_EVENT_BYTES: usize = 4 * 1024 * 1024;
+/// JSON/base64 transport allowance for a 4 MiB decoded prompt plus its
+/// stable ACP envelope. This is deliberately route-local rather than a
+/// global relaxation of Axum's JSON extractor limit.
+pub const MAX_RICH_PROMPT_HTTP_BYTES: usize = 6 * 1024 * 1024;
 
 pub fn text(text: impl Into<String>) -> ContentBlock {
     ContentBlock::Text(acp::TextContent::new(text))
@@ -205,5 +209,42 @@ mod tests {
     fn user_resource_links_need_safe_uris() {
         let link = acp::ResourceLink::new("bad", "javascript:alert(1)");
         assert!(validate_prompt(&[ContentBlock::ResourceLink(link)]).is_err());
+    }
+
+    #[test]
+    fn audio_mime_must_match_its_decoded_data() {
+        let valid = acp::AudioContent::new("SUQz", "audio/mpeg");
+        assert!(validate_prompt(&[ContentBlock::Audio(valid)]).is_ok());
+        let mislabeled = acp::AudioContent::new("SUQz", "audio/wav");
+        assert!(validate_prompt(&[ContentBlock::Audio(mislabeled)]).is_err());
+    }
+
+    #[test]
+    fn blob_resources_are_bounded_and_base64_validated() {
+        let blob = acp::BlobResourceContents::new("aGVsbG8=", "attachment://note.bin")
+            .mime_type("application/octet-stream");
+        assert!(
+            validate_prompt(&[ContentBlock::Resource(acp::EmbeddedResource::new(
+                EmbeddedResourceResource::BlobResourceContents(blob),
+            ))])
+            .is_ok()
+        );
+        let malformed = acp::BlobResourceContents::new("not base64", "attachment://note.bin");
+        assert!(
+            validate_prompt(&[ContentBlock::Resource(acp::EmbeddedResource::new(
+                EmbeddedResourceResource::BlobResourceContents(malformed),
+            ))])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mixed_blocks_cannot_exceed_the_total_prompt_budget() {
+        let half_plus_one = "x".repeat(MAX_RICH_PROMPT_BYTES / 2 + 1);
+        assert!(validate_prompt(&[
+            ContentBlock::Text(acp::TextContent::new(half_plus_one.clone())),
+            ContentBlock::Text(acp::TextContent::new(half_plus_one)),
+        ])
+        .is_err());
     }
 }

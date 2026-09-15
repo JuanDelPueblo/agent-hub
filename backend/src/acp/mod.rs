@@ -78,6 +78,7 @@ enum WriterMsg {
 pub struct AcpClient {
     replaying: Arc<AtomicBool>,
     pub capabilities: tokio::sync::RwLock<serde_json::Value>,
+    prompt_capabilities: tokio::sync::RwLock<agent_client_protocol_schema::PromptCapabilities>,
     pub config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
     pub available_commands: Arc<tokio::sync::RwLock<serde_json::Value>>,
     pub session_modes: Arc<tokio::sync::RwLock<serde_json::Value>>,
@@ -170,6 +171,9 @@ impl AcpClient {
         Ok(Self {
             replaying,
             capabilities: tokio::sync::RwLock::new(serde_json::json!({})),
+            prompt_capabilities: tokio::sync::RwLock::new(
+                agent_client_protocol_schema::PromptCapabilities::default(),
+            ),
             config_options,
             available_commands,
             session_modes,
@@ -312,10 +316,12 @@ impl AcpClient {
             "Agent negotiated unsupported protocol version {}",
             response.protocol_version.as_u16()
         );
-        *self.capabilities.write().await = result
-            .get("agentCapabilities")
-            .cloned()
-            .unwrap_or(serde_json::json!({}));
+        // Keep session lifecycle capabilities in their typed stable-v1 wire
+        // representation, and retain the prompt surface separately so prompt
+        // admission never has to guess at a JSON shape.
+        *self.capabilities.write().await = serde_json::to_value(&response.agent_capabilities)?;
+        *self.prompt_capabilities.write().await =
+            response.agent_capabilities.prompt_capabilities.clone();
         // Preserve generic agent identity and auth metadata for later use.
         // T107 owns login/logout; this layer only stores what initialize saw.
         *self.agent_info.write().await = result
@@ -609,35 +615,22 @@ impl AcpClient {
         // spec requires; agents that echo it let the turn correlate the
         // response with the durable user message.
         crate::content::validate_prompt(content)?;
-        let capabilities = self.capabilities.read().await;
-        for block in content {
-            match block {
-                ContentBlock::Image(_) => anyhow::ensure!(
-                    capabilities
-                        .pointer("/sessionCapabilities/prompt/image")
-                        .is_some_and(serde_json::Value::is_object),
-                    "Agent does not advertise image prompt capability"
-                ),
-                ContentBlock::Audio(_) => anyhow::ensure!(
-                    capabilities
-                        .pointer("/sessionCapabilities/prompt/audio")
-                        .is_some_and(serde_json::Value::is_object),
-                    "Agent does not advertise audio prompt capability"
-                ),
-                ContentBlock::Resource(_) => anyhow::ensure!(
-                    capabilities
-                        .pointer("/sessionCapabilities/prompt/embeddedContext")
-                        .is_some_and(serde_json::Value::is_object),
-                    "Agent does not advertise embedded context prompt capability"
-                ),
-                _ => {}
-            }
-        }
-        drop(capabilities);
+        self.validate_prompt_capabilities(content).await?;
         let req = PromptRequest::new(session_id.clone(), content.to_vec())
             .meta(user_message_meta(user_message_id));
         let result = self.send_request("session/prompt", req).await?;
         Ok(serde_json::from_value(result)?)
+    }
+
+    /// Reject non-text prompt blocks unless the initialized stable-v1 agent
+    /// capabilities explicitly permit them. Resource links are baseline ACP
+    /// content and do not need a prompt capability.
+    pub async fn validate_prompt_capabilities(
+        &self,
+        content: &[ContentBlock],
+    ) -> anyhow::Result<()> {
+        let capabilities = self.prompt_capabilities.read().await;
+        validate_prompt_capabilities(&capabilities, content)
     }
 
     pub async fn cancel(&self, session_id: &SessionId) -> anyhow::Result<()> {
@@ -699,6 +692,30 @@ impl AcpClient {
         }
         fail_pending_requests(&self.pending, "ACP client shutdown".to_string()).await;
     }
+}
+
+fn validate_prompt_capabilities(
+    capabilities: &agent_client_protocol_schema::PromptCapabilities,
+    content: &[ContentBlock],
+) -> anyhow::Result<()> {
+    for block in content {
+        match block {
+            ContentBlock::Image(_) => anyhow::ensure!(
+                capabilities.image,
+                "Agent does not advertise image prompt capability"
+            ),
+            ContentBlock::Audio(_) => anyhow::ensure!(
+                capabilities.audio,
+                "Agent does not advertise audio prompt capability"
+            ),
+            ContentBlock::Resource(_) => anyhow::ensure!(
+                capabilities.embedded_context,
+                "Agent does not advertise embedded context prompt capability"
+            ),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 impl Drop for AcpClient {
@@ -1355,6 +1372,7 @@ async fn handle_session_update(
             }
         }
         SessionUpdate::ToolCall(tc) => {
+            validate_tool_call_content(&tc.content)?;
             let title = extract_tool_call_title(Some(&tc.title), tc.raw_input.as_ref());
             let kind = serde_json::to_value(tc.kind)
                 .ok()
@@ -1373,16 +1391,14 @@ async fn handle_session_update(
                 kind,
                 parent_id,
                 locations,
-                content: None,
+                content: (!tc.content.is_empty())
+                    .then(|| serde_json::to_value(&tc.content))
+                    .transpose()?,
             }
         }
         SessionUpdate::ToolCallUpdate(tcu) => {
             if let Some(items) = &tcu.fields.content {
-                for item in items {
-                    if let ToolCallContent::Content(content) = item {
-                        crate::content::validate_durable(std::slice::from_ref(&content.content))?;
-                    }
-                }
+                validate_tool_call_content(items)?;
             }
             let title = tcu
                 .fields
@@ -1491,6 +1507,15 @@ async fn handle_session_update(
     };
 
     event_log.append(session_id, agent_name, payload)?;
+    Ok(())
+}
+
+fn validate_tool_call_content(items: &[ToolCallContent]) -> anyhow::Result<()> {
+    for item in items {
+        if let ToolCallContent::Content(content) = item {
+            crate::content::validate_durable(std::slice::from_ref(&content.content))?;
+        }
+    }
     Ok(())
 }
 
@@ -1637,7 +1662,10 @@ async fn kill_child(child: &SharedChild, root_pid: Option<u32>) {
 
 #[cfg(test)]
 mod tests {
-    use super::agent_client_protocol_schema::{TextContent, ToolCallContent, ToolCallUpdateFields};
+    use super::agent_client_protocol_schema::{
+        Content, ImageContent, ResourceLink, TextContent, ToolCall, ToolCallContent,
+        ToolCallUpdateFields,
+    };
     use super::*;
 
     #[tokio::test]
@@ -1683,6 +1711,74 @@ mod tests {
             format_tool_call_output(&fields),
             Some("tool output".to_string())
         );
+    }
+
+    #[test]
+    fn prompt_capabilities_use_typed_stable_initialize_shape() {
+        let image = [ContentBlock::Image(ImageContent::new(
+            "iVBORw0KGgo=",
+            "image/png",
+        ))];
+        for (label, prompt_capabilities, accepted) in [
+            ("absent", None, false),
+            ("null", Some(serde_json::Value::Null), false),
+            ("object", Some(serde_json::json!({"image": {}})), false),
+            ("true", Some(serde_json::json!({"image": true})), true),
+        ] {
+            let mut agent_capabilities = serde_json::json!({
+                "sessionCapabilities": {"prompt": {"image": {}}}
+            });
+            if let Some(value) = prompt_capabilities {
+                agent_capabilities["promptCapabilities"] = value;
+            }
+            let response: InitializeResponse = serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "agentCapabilities": agent_capabilities,
+                "agentInfo": {"name": "test", "version": "1"},
+                "authMethods": []
+            }))
+            .unwrap();
+            let result = validate_prompt_capabilities(
+                &response.agent_capabilities.prompt_capabilities,
+                &image,
+            );
+            assert_eq!(result.is_ok(), accepted, "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initial_tool_call_content_is_retained() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let update = SessionUpdate::ToolCall(ToolCall::new("rich-tool", "Inspect").content(vec![
+            ToolCallContent::Content(Content::new(ContentBlock::Text(TextContent::new(
+                "summary",
+            )))),
+            ToolCallContent::Content(Content::new(ContentBlock::ResourceLink(ResourceLink::new(
+                "Pueblo",
+                "https://example.test/tool",
+            )))),
+            ToolCallContent::Content(Content::new(ContentBlock::Image(ImageContent::new(
+                "iVBORw0KGgo=",
+                "image/png",
+            )))),
+        ]));
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(events) => events,
+            _ => panic!("expected complete replay"),
+        };
+        assert!(matches!(
+            &events[0].payload,
+            EventPayload::ToolCall { content: Some(content), .. }
+                if matches!(content.as_array().map(Vec::as_slice), Some([
+                    first, second, third
+                ]) if first["content"]["type"] == "text"
+                    && second["content"]["type"] == "resource_link"
+                    && third["content"]["type"] == "image")
+        ));
     }
 
     #[test]

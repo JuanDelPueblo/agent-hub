@@ -13,6 +13,10 @@ use pueblo_hub::{
 use std::{sync::Arc, time::Duration};
 
 fn hub(root: &std::path::Path) -> (Arc<HubService>, Arc<SessionManager>) {
+    hub_with_mode(root, "load")
+}
+
+fn hub_with_mode(root: &std::path::Path, mode: &str) -> (Arc<HubService>, Arc<SessionManager>) {
     let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
     let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
     let history = root.join("history");
@@ -22,7 +26,7 @@ fn hub(root: &std::path::Path) -> (Arc<HubService>, Arc<SessionManager>) {
         .with_args(vec![
             format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
             history.display().to_string(),
-            "load".into(),
+            mode.into(),
         ]);
     let agents = Arc::new(AgentRegistry::new([agent]));
     let sessions = SessionManager::with_store(agents.clone(), log, Some(store.clone()));
@@ -393,6 +397,75 @@ async fn rich_prompt_and_agent_chunks_preserve_order_and_identity() {
         matches!(chunks.as_slice(), [(first, Some(id)), (second, Some(id2))] if matches!(first.as_slice(), [ContentBlock::Text(_)]) && matches!(second.as_slice(), [ContentBlock::ResourceLink(_)]) && id == "rich-1" && id2 == "rich-1")
     );
     assert!(events.iter().any(|event| matches!(&event.payload, EventPayload::ThoughtChunk { content, message_id: Some(id), .. } if matches!(content.as_slice(), [ContentBlock::Resource(_)]) && id == "thought-1")));
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn unsupported_rich_prompt_capabilities_fail_before_user_persistence() {
+    for mode in ["no-rich", "null-rich", "object-rich"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (service, sessions) = hub_with_mode(tmp.path(), mode);
+        let log = sessions.event_log().clone();
+        let project = service
+            .create_project("demo".into(), tmp.path().display().to_string())
+            .unwrap();
+        let chat = service
+            .create_chat(&project.id, "codex", None)
+            .await
+            .unwrap();
+        let error = service
+            .prompt_chat_content(
+                &chat.chat.id,
+                vec![ContentBlock::Image(ImageContent::new(
+                    "iVBORw0KGgo=",
+                    "image/png",
+                ))],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("image prompt capability"),
+            "{mode}: {error}"
+        );
+        let events = match log.replay_from(1) {
+            pueblo_hub::events::ReplayResult::Complete(events) => events,
+            _ => panic!("expected complete replay"),
+        };
+        assert!(!events.iter().any(|event| {
+            event.session_id == chat.chat.id
+                && matches!(event.payload, EventPayload::UserMessage { .. })
+        }));
+        sessions.shutdown_all().await;
+    }
+}
+
+#[tokio::test]
+async fn initial_tool_call_rich_content_is_preserved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+
+    prompt_when_idle(&service, &chat.chat.id, "tool-rich").await;
+    await_turn(&log, &chat.chat.id).await;
+    let events = match log.replay_from(1) {
+        pueblo_hub::events::ReplayResult::Complete(events) => events,
+        _ => panic!("expected complete replay"),
+    };
+    assert!(events.iter().any(|event| matches!(
+        &event.payload,
+        EventPayload::ToolCall { content: Some(content), .. }
+            if matches!(content.as_array().map(Vec::as_slice), Some([first, second, third])
+                if first["content"]["type"] == "text"
+                    && second["content"]["type"] == "resource_link"
+                    && third["content"]["type"] == "image")
+    )));
     sessions.shutdown_all().await;
 }
 

@@ -453,6 +453,17 @@ impl AcpSession {
 
         self.touch().await;
         self.ensure_running().await?;
+        // ACP capability rejection is part of synchronous admission. Do this
+        // after initialize has populated the live client, but before a
+        // durable user event or prompting state can make an unsent attachment
+        // appear in history.
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("ACP agent did not start"))?;
+        client.validate_prompt_capabilities(&content).await?;
 
         let turn_started_at = chrono::Utc::now();
         if let Some(store) = &self.store {

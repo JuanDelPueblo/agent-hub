@@ -9,6 +9,7 @@ import uuid
 root = pathlib.Path(sys.argv[1])
 mode = sys.argv[2] if len(sys.argv) >= 3 else "load"
 can_load = mode != "no-load"
+rich_capabilities = mode not in ("no-rich", "null-rich", "object-rich")
 reject_config = mode == "reject-config"
 slow_startup = mode == "slow-startup"
 # Snapshot the received process environment beside the session file, so tests
@@ -54,9 +55,21 @@ for line in sys.stdin:
     if method == "initialize":
         if slow_startup:
             time.sleep(1.0)
-        reply(id, {"protocolVersion": 1, "agentCapabilities": {"loadSession": can_load,
-                   "sessionCapabilities": {"list": {}, "close": {}, "delete": {},
-                                           "prompt": {"image": {}, "audio": {}, "embeddedContext": {}}}},
+        agent_capabilities = {"loadSession": can_load,
+                              "sessionCapabilities": {"list": {}, "close": {}, "delete": {}}}
+        # Stable ACP v1 prompt capabilities are top-level boolean fields;
+        # sessionCapabilities is a separate lifecycle surface.
+        if rich_capabilities:
+            agent_capabilities["promptCapabilities"] = {
+                "image": True, "audio": True, "embeddedContext": True}
+        elif mode == "null-rich":
+            agent_capabilities["promptCapabilities"] = None
+        elif mode == "object-rich":
+            # Deliberately malformed for typed-deserialization regression
+            # coverage: objects must not be mistaken for true booleans.
+            agent_capabilities["promptCapabilities"] = {
+                "image": {}, "audio": {}, "embeddedContext": {}}
+        reply(id, {"protocolVersion": 1, "agentCapabilities": agent_capabilities,
                    "agentInfo": {"name": "fake-acp", "version": "1.0.0"}, "authMethods": []})
     elif method == "session/new":
         if slow_startup:
@@ -188,6 +201,14 @@ for line in sys.stdin:
             update("tool_call", toolCallId="t1", title="Edit", kind="edit",
                    locations=[{"path": "/tmp/a.rs", "line": 3}])
             update("agent_message_chunk", content={"type": "text", "text": "loc-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "tool-rich":
+            update("tool_call", toolCallId="rich-tool", title="Inspect", kind="read",
+                   content=[
+                       {"type": "content", "content": {"type": "text", "text": "summary"}},
+                       {"type": "content", "content": {"type": "resource_link", "name": "Pueblo", "uri": "https://example.test/tool"}},
+                       {"type": "content", "content": {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}},
+                   ])
             reply(id, {"stopReason": "end_turn"})
         else:
             update("agent_message_chunk", content={"type": "text", "text": f"{current}:{count}:{model}"})
