@@ -231,7 +231,50 @@ pub fn merge_terminal_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use tokio::io::AsyncBufReadExt;
+
+    fn fake_direnv(root: &Path) -> PathBuf {
+        let path = root.join("fake-direnv");
+        std::fs::write(
+            &path,
+            r##"#!/bin/sh
+set -eu
+
+if [ "$1" = "allow" ]; then
+    touch "$2.allowed"
+    exit 0
+fi
+
+dir="$PWD"
+while [ ! -f "$dir/.envrc" ]; do
+    parent=$(dirname "$dir")
+    [ "$parent" = "$dir" ] && exit 1
+    dir="$parent"
+done
+
+if [ ! -f "$dir/.envrc.allowed" ]; then
+    echo "direnv: error .envrc is blocked" >&2
+    exit 1
+fi
+
+json=""
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        export\ *=*) assignment=${line#export }; key=${assignment%%=*}; value=${assignment#*=}; item="\"$key\":\"$value\"" ;;
+        unset\ *) key=${line#unset }; item="\"$key\":null" ;;
+        *) continue ;;
+    esac
+    [ -z "$json" ] || json="$json,"
+    json="$json$item"
+done < "$dir/.envrc"
+printf '{%s}\n' "$json"
+"##,
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
 
     #[test]
     fn test_merge_precedence() {
@@ -293,13 +336,18 @@ mod tests {
     #[tokio::test]
     async fn test_blocked_envrc_and_direnv_allow_flow() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let direnv = fake_direnv(temp_dir.path());
         let envrc_path = temp_dir.path().join(".envrc");
         std::fs::write(&envrc_path, "export DIREnv_TEST_VAR=pueblo_test_123\n").unwrap();
 
         // 1. Unapproved .envrc must return EnvrcBlocked
-        let err = resolve_workspace_env(temp_dir.path(), temp_dir.path())
-            .await
-            .unwrap_err();
+        let err = resolve_workspace_env_internal(
+            direnv.to_str().unwrap(),
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .unwrap_err();
         match err {
             WorkspaceEnvError::EnvrcBlocked { path, message } => {
                 let expected_canonical = envrc_path
@@ -314,14 +362,18 @@ mod tests {
         }
 
         // 2. Authorize via direnv_allow
-        direnv_allow(temp_dir.path(), temp_dir.path())
+        direnv_allow_internal(direnv.to_str().unwrap(), temp_dir.path(), temp_dir.path())
             .await
             .expect("direnv allow should succeed");
 
         // 3. Now resolve_workspace_env must succeed and include exported variable
-        let resolved = resolve_workspace_env(temp_dir.path(), temp_dir.path())
-            .await
-            .expect("resolve should succeed after allow");
+        let resolved = resolve_workspace_env_internal(
+            direnv.to_str().unwrap(),
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .expect("resolve should succeed after allow");
         assert_eq!(
             resolved.get("DIREnv_TEST_VAR").map(|s| s.as_str()),
             Some("pueblo_test_123")
@@ -331,6 +383,7 @@ mod tests {
     #[tokio::test]
     async fn test_unset_variable_propagation_and_spawn() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let direnv = fake_direnv(temp_dir.path());
         let test_unset_key = "PUEBLO_TEST_INHERITED_UNSET_VAR";
         unsafe {
             std::env::set_var(test_unset_key, "should_be_removed_by_direnv");
@@ -345,13 +398,17 @@ mod tests {
         )
         .unwrap();
 
-        direnv_allow(temp_dir.path(), temp_dir.path())
+        direnv_allow_internal(direnv.to_str().unwrap(), temp_dir.path(), temp_dir.path())
             .await
             .unwrap();
 
-        let resolved = resolve_workspace_env(temp_dir.path(), temp_dir.path())
-            .await
-            .unwrap();
+        let resolved = resolve_workspace_env_internal(
+            direnv.to_str().unwrap(),
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         assert!(!resolved.contains_key(test_unset_key));
         assert_eq!(
             resolved.get("PUEBLO_RETAINED_TEST").map(|s| s.as_str()),
@@ -385,6 +442,7 @@ mod tests {
     #[tokio::test]
     async fn test_worktree_and_direct_checkout_nested_envrc() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let direnv = fake_direnv(temp_dir.path());
         let root = temp_dir.path();
         let envrc_path = root.join(".envrc");
         std::fs::write(&envrc_path, "export WORKTREE_TEST_VAR=nested_authorized\n").unwrap();
@@ -400,9 +458,14 @@ mod tests {
         let found_canonical = found.canonicalize().unwrap_or_else(|_| found.clone());
         assert_eq!(found_canonical, expected_canonical);
 
-        direnv_allow(root, root).await.unwrap();
+        direnv_allow_internal(direnv.to_str().unwrap(), root, root)
+            .await
+            .unwrap();
 
-        let resolved = resolve_workspace_env(&nested_worktree, root).await.unwrap();
+        let resolved =
+            resolve_workspace_env_internal(direnv.to_str().unwrap(), &nested_worktree, root)
+                .await
+                .unwrap();
         assert_eq!(
             resolved.get("WORKTREE_TEST_VAR").map(|s| s.as_str()),
             Some("nested_authorized")

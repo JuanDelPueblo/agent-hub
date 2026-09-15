@@ -2,6 +2,7 @@ use pueblo_hub::agents::{AgentDefinition, AgentRegistry};
 use pueblo_hub::events::EventLog;
 use pueblo_hub::session::SessionManager;
 use pueblo_hub::state::{ProcessState, TurnState};
+use pueblo_hub::store::Store;
 #[cfg(windows)]
 use serde_json::json;
 use std::sync::Arc;
@@ -140,6 +141,44 @@ async fn test_session_manager_get_by_id() {
     assert_eq!(found.unwrap().id, session.id);
 
     assert!(mgr.get_by_id("nonexistent-id").await.is_none());
+}
+
+#[tokio::test]
+async fn persistent_stopped_lookup_is_stable_until_explicit_invalidation() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&temp.path().join("hub.db")).unwrap());
+    let project = store
+        .create_project("project".into(), temp.path().display().to_string())
+        .unwrap();
+    let chat = store
+        .create_chat(project.id, "codex".into(), Some("chat".into()))
+        .unwrap();
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::codex_default()]));
+    let mgr = SessionManager::with_store(
+        agents,
+        Arc::new(EventLog::persistent(store.clone()).unwrap()),
+        Some(store),
+    );
+
+    let first = mgr.get_by_id(&chat.id).await.unwrap();
+    let second = mgr.get_by_id(&chat.id).await.unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+
+    let mut lookups = Vec::new();
+    for _ in 0..8 {
+        let mgr = mgr.clone();
+        let chat_id = chat.id.clone();
+        lookups.push(tokio::spawn(async move {
+            mgr.get_by_id(&chat_id).await.unwrap()
+        }));
+    }
+    for lookup in lookups {
+        assert!(Arc::ptr_eq(&first, &lookup.await.unwrap()));
+    }
+
+    mgr.invalidate_stopped_sessions_for_agent("codex").await;
+    let refreshed = mgr.get_by_id(&chat.id).await.unwrap();
+    assert!(!Arc::ptr_eq(&first, &refreshed));
 }
 
 #[tokio::test]
