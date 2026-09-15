@@ -3,6 +3,8 @@ frontend/node_modules/
 frontend/dist/
 result
 result-*
+.batey-docker/
+.env
 
 # Frontend test bundles
 frontend/.test-build/

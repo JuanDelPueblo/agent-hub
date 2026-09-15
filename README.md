@@ -442,6 +442,58 @@ should be stripped but injected nowhere belong in
 
 ### Containers
 
+#### Local OCI test
+
+Use the local Compose workflow to test the production OCI image. It does not
+install or activate `services.batey`, use Batey's normal host XDG state, or
+require `nixos-rebuild`.
+
+Run the helper from the repository root:
+
+```sh
+nix/load-local-image.sh
+```
+
+The helper builds `.#batey-oci`, loads its archive into Docker or Podman, finds
+the versioned image, tags it as `batey:local`, creates `.batey-docker`, and
+records the invoking UID and GID for Compose. Docker takes priority when both
+Docker and Podman exist.
+
+Start the local test instance:
+
+```sh
+docker compose up -d
+```
+
+Open `http://localhost:8765`. Inspect logs with `docker compose logs -f`.
+Stop the instance with `docker compose down`. Erase all local test state with
+`rm -rf .batey-docker`.
+
+The default project mount is `./.batey-docker/projects:/projects`. Add a
+disposable Git repository there for the first test. To mount a development
+project root, set `BATEY_PROJECT_ROOT` explicitly:
+
+```sh
+BATEY_PROJECT_ROOT="$PWD/my-projects" docker compose up -d
+```
+
+The override must name a host directory that the container can access. A real
+project mount gives containerized agents write access to that project. Use
+disposable projects for the safer first test.
+
+The Compose workflow uses only `.batey-docker/data` for Batey state. It does not
+touch host XDG data, config, or state directories. The helper creates a root
+`.env` file with only the numeric UID and GID that Compose needs; Git ignores
+that file. Removing `.batey-docker` resets the local Batey instance.
+
+Podman users can run the same commands with `podman compose` when their Podman
+installation provides Compose compatibility.
+
+This manual workflow does not replace the lower-level OCI smoke test. The
+automated test remains in `nix/oci-smoke.sh`.
+
+#### Generic container commands
+
 ```sh
 nix build .#batey-oci
 docker load -i result  # prints the tag, e.g. batey:0.4.0

@@ -1,0 +1,9 @@
+services:
+  batey:
+    image: batey:local
+    user: "${BATEY_UID:?Run nix/load-local-image.sh first}:${BATEY_GID:?Run nix/load-local-image.sh first}"
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - "./.batey-docker/data:/data"
+      - "${BATEY_PROJECT_ROOT:-./.batey-docker/projects}:/projects"
