@@ -54,12 +54,12 @@ export class ChatWorkspaceComponent {
   loadOlderHistory(): void { if (this.chatId()) void this.state.loadOlderHistory(this.chatId()); }
   retryHistory(): void { if (this.chatId()) void this.state.retryHistory(this.chatId()); }
   dismissAuthRequired(): void { if (this.chatId()) this.state.clearAuthRequired(this.chatId()); }
-  async authorizeEnvironment(): Promise<void> {
+  async authorizeEnvironment(remember: boolean): Promise<void> {
     const id = this.chatId();
     if (!id) return;
     this.authorizingEnv.set(true);
     try {
-      await this.state.authorizeChatEnvironment(id);
+      await this.state.authorizeChatEnvironment(id, remember);
     } catch (err) {
       console.error("Failed to authorize environment", err);
     } finally {

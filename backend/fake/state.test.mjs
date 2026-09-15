@@ -352,6 +352,52 @@ describe('fake backend seed history', () => {
     assert.equal(state.isEnvironmentBlocked(chat.id), false);
   });
 
+  it('remembers a project-level direnv grant only when asked', () => {
+    const state = new FakeState();
+    const project = state.createProject('grant-test', '/tmp/grant-test');
+    const chat = state.createChat(project.id, 'codex');
+
+    assert.equal(state.hasProjectEnvrcGrant(project.id), false);
+    assert.equal(state.projectView(project).envrc_remembered, false);
+
+    state.blockEnvironment(chat.id);
+    state.authorizeEnvironment(chat.id);
+    assert.equal(
+      state.hasProjectEnvrcGrant(project.id),
+      false,
+      'a plain "allow this workspace" must never remember the project',
+    );
+
+    state.blockEnvironment(chat.id);
+    state.authorizeEnvironment(chat.id, true);
+    assert.equal(state.hasProjectEnvrcGrant(project.id), true);
+    const view = state.projectView(project);
+    assert.equal(view.envrc_remembered, true);
+    assert.equal(view.envrc_relative_path, '.envrc');
+
+    state.forgetProjectEnvrc(project.id);
+    assert.equal(state.hasProjectEnvrcGrant(project.id), false);
+    assert.equal(state.projectView(project).envrc_remembered, false);
+  });
+
+  it('does not block a new chat under a project with a matching remembered grant', () => {
+    const state = new FakeState();
+    const project = state.createProject('remembered-project', '/tmp/remembered-project');
+    const first = state.createChat(project.id, 'codex');
+    state.blockEnvironment(first.id);
+    state.authorizeEnvironment(first.id, true);
+    assert.equal(state.hasProjectEnvrcGrant(project.id), true);
+
+    const second = state.createChat(project.id, 'codex');
+    state.blockEnvironmentUnlessRemembered(second.id, project.id);
+    assert.equal(state.isEnvironmentBlocked(second.id), false);
+
+    state.forgetProjectEnvrc(project.id);
+    const third = state.createChat(project.id, 'codex');
+    state.blockEnvironmentUnlessRemembered(third.id, project.id);
+    assert.equal(state.isEnvironmentBlocked(third.id), true);
+  });
+
   it('derives registry installed state from the one agent catalog', () => {
     const state = new FakeState();
     const view = state.registryView();

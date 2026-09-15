@@ -38,6 +38,8 @@ describe('AppStateService', () => {
       editChat: async (id: string, edit: Partial<Chat>) => ({ ...(chats.find((chat) => chat.id === id) ?? chats[0]), ...edit }),
       stopChat: async () => undefined, cancelChat: async () => undefined, promptChat: async () => undefined,
       respondPermission: async (chatId: string, requestId: string, granted: boolean) => { permissionCalls.push({ chatId, requestId, granted }); }, setChatConfig: async () => [], cloneProject: async () => projects[0],
+      authorizeChatEnvironment: async () => undefined,
+      forgetProjectEnvrcGrant: async () => undefined,
     } as unknown as ApiService;
     const socket = { status: signal<'disconnected'>('disconnected'), events, replayGaps, connect: vi.fn() };
     TestBed.configureTestingModule({ providers: [{ provide: ApiService, useValue: api }, { provide: EventSocketService, useValue: socket }, provideRouter([])] });
@@ -123,5 +125,25 @@ describe('AppStateService', () => {
     replayGaps.next();
 
     expect(state.reducersByChat()).toEqual({});
+  });
+
+  it('remembering a chat environment immediately marks its project as remembered', async () => {
+    await state.loadProjects();
+    await state.loadChats('project-1');
+
+    await state.authorizeChatEnvironment('chat-1', true);
+
+    expect(state.projects().find((project) => project.id === 'project-1')).toMatchObject({
+      envrc_remembered: true,
+    });
+  });
+
+  it('a plain workspace allow never marks the project as remembered', async () => {
+    await state.loadProjects();
+    await state.loadChats('project-1');
+
+    await state.authorizeChatEnvironment('chat-1', false);
+
+    expect(state.projects().find((project) => project.id === 'project-1')?.envrc_remembered).toBeFalsy();
   });
 });

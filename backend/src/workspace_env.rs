@@ -4,9 +4,18 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum WorkspaceEnvError {
     DirenvNotFound,
-    EnvrcBlocked { path: PathBuf, message: String },
-    EnvrcEscapeBoundary { cwd: PathBuf, boundary: PathBuf },
-    DirenvFailed { message: String },
+    EnvrcBlocked {
+        path: PathBuf,
+        relative_path: String,
+        message: String,
+    },
+    EnvrcEscapeBoundary {
+        cwd: PathBuf,
+        boundary: PathBuf,
+    },
+    DirenvFailed {
+        message: String,
+    },
     Io(std::io::Error),
 }
 
@@ -17,7 +26,11 @@ impl std::fmt::Display for WorkspaceEnvError {
                 write!(f, "direnv was not found on PATH but .envrc was detected")
             }
             Self::EnvrcBlocked { message, .. } => {
-                write!(f, "Workspace environment is blocked: {}", message)
+                write!(
+                    f,
+                    "This project's workspace environment needs approval: {}",
+                    message
+                )
             }
             Self::EnvrcEscapeBoundary { cwd, boundary } => {
                 write!(
@@ -78,6 +91,115 @@ pub fn has_envrc(cwd: &Path, boundary: &Path) -> bool {
     find_envrc_path(cwd, boundary).is_some()
 }
 
+/// The effective `.envrc` location relative to the workspace boundary, for
+/// display/detail purposes. Falls back to the bare file name if the path
+/// cannot be expressed relative to the boundary.
+fn relative_envrc_path(envrc_path: &Path, boundary: &Path) -> String {
+    let boundary_canon = boundary
+        .canonicalize()
+        .unwrap_or_else(|_| boundary.to_path_buf());
+    let envrc_canon = envrc_path
+        .canonicalize()
+        .unwrap_or_else(|_| envrc_path.to_path_buf());
+    envrc_canon
+        .strip_prefix(&boundary_canon)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| {
+            envrc_canon
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default()
+        })
+}
+
+/// Drops ANSI CSI/OSC escape sequences and raw control characters (other
+/// than `\n`/`\t`) from an external process diagnostic before it is stored
+/// on an error or ever reaches a user-facing surface.
+fn strip_terminal_noise(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    // CSI: ESC '[' ... final byte in 0x40-0x7E.
+                    chars.next();
+                    for d in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&d) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // OSC: ESC ']' ... terminated by BEL or the next ESC.
+                    chars.next();
+                    while let Some(&d) = chars.peek() {
+                        if d == '\u{07}' {
+                            chars.next();
+                            break;
+                        }
+                        if d == '\u{1b}' {
+                            break;
+                        }
+                        chars.next();
+                    }
+                }
+                _ => {
+                    // A lone/unsupported escape: drop just the ESC byte.
+                }
+            }
+            continue;
+        }
+        if c.is_control() && c != '\n' && c != '\t' {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// One project's `.envrc` content identity: its location relative to the
+/// workspace boundary and a cryptographic hash of its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvrcFingerprint {
+    pub relative_path: String,
+    pub content_hash: String,
+}
+
+/// Fingerprints the `.envrc` that governs `cwd` within `boundary`, or
+/// `Ok(None)` when there is none to trust: no `.envrc` is present, it
+/// vanished/became unreadable, or it is a symlink whose resolved target
+/// escapes the validated workspace boundary. Only a boundary-safe file is
+/// ever read and hashed, so a symlink-escaping `.envrc` can never be
+/// fingerprinted, remembered, or auto-authorized through this function.
+pub fn envrc_fingerprint(cwd: &Path, boundary: &Path) -> std::io::Result<Option<EnvrcFingerprint>> {
+    let Some(envrc_path) = find_envrc_path(cwd, boundary) else {
+        return Ok(None);
+    };
+    let boundary_canon = match boundary.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    let envrc_canon = match envrc_path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    if !envrc_canon.starts_with(&boundary_canon) {
+        return Ok(None);
+    }
+    let bytes = match std::fs::read(&envrc_canon) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let relative_path = relative_envrc_path(&envrc_canon, &boundary_canon);
+    let content_hash = crate::agents::registry::sha256_hex(&bytes);
+    Ok(Some(EnvrcFingerprint {
+        relative_path,
+        content_hash,
+    }))
+}
+
 pub async fn resolve_workspace_env(
     cwd: &Path,
     boundary: &Path,
@@ -108,24 +230,24 @@ pub(crate) async fn resolve_workspace_env_internal(
         Err(e) => return Err(WorkspaceEnvError::Io(e)),
     };
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_terminal_noise(String::from_utf8_lossy(&output.stderr).trim());
 
     if !output.status.success() {
         if is_blocked_message(&stderr) {
             return Err(WorkspaceEnvError::EnvrcBlocked {
+                relative_path: relative_envrc_path(&envrc_path, boundary),
                 path: envrc_path,
-                message: stderr.trim().to_string(),
+                message: stderr,
             });
         }
-        return Err(WorkspaceEnvError::DirenvFailed {
-            message: stderr.trim().to_string(),
-        });
+        return Err(WorkspaceEnvError::DirenvFailed { message: stderr });
     }
 
     if is_blocked_message(&stderr) {
         return Err(WorkspaceEnvError::EnvrcBlocked {
+            relative_path: relative_envrc_path(&envrc_path, boundary),
             path: envrc_path,
-            message: stderr.trim().to_string(),
+            message: stderr,
         });
     }
 
@@ -138,7 +260,10 @@ pub(crate) async fn resolve_workspace_env_internal(
         Ok(map) => map,
         Err(e) => {
             return Err(WorkspaceEnvError::DirenvFailed {
-                message: format!("Failed to parse direnv export json output: {}", e),
+                message: strip_terminal_noise(&format!(
+                    "Failed to parse direnv export json output: {}",
+                    e
+                )),
             });
         }
     };
@@ -189,10 +314,51 @@ pub(crate) async fn direnv_allow_internal(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(WorkspaceEnvError::DirenvFailed {
-            message: stderr.trim().to_string(),
+        let stderr = strip_terminal_noise(String::from_utf8_lossy(&output.stderr).trim());
+        return Err(WorkspaceEnvError::DirenvFailed { message: stderr });
+    }
+
+    Ok(())
+}
+
+/// Reverts a prior `direnv allow` for the `.envrc` governing `cwd` within
+/// `boundary`. Used to fail closed when a fingerprint taken after an
+/// automatic or remembered `allow` no longer matches the one taken before
+/// it (the content changed, vanished, or started escaping the boundary in
+/// that window).
+pub async fn direnv_deny(cwd: &Path, boundary: &Path) -> Result<(), WorkspaceEnvError> {
+    direnv_deny_internal("direnv", cwd, boundary).await
+}
+
+pub(crate) async fn direnv_deny_internal(
+    bin: &str,
+    cwd: &Path,
+    boundary: &Path,
+) -> Result<(), WorkspaceEnvError> {
+    let Some(envrc_path) = find_envrc_path(cwd, boundary) else {
+        return Err(WorkspaceEnvError::EnvrcEscapeBoundary {
+            cwd: cwd.to_path_buf(),
+            boundary: boundary.to_path_buf(),
         });
+    };
+
+    let output = match tokio::process::Command::new(bin)
+        .arg("deny")
+        .arg(&envrc_path)
+        .current_dir(cwd)
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(WorkspaceEnvError::DirenvNotFound);
+        }
+        Err(e) => return Err(WorkspaceEnvError::Io(e)),
+    };
+
+    if !output.status.success() {
+        let stderr = strip_terminal_noise(String::from_utf8_lossy(&output.stderr).trim());
+        return Err(WorkspaceEnvError::DirenvFailed { message: stderr });
     }
 
     Ok(())
@@ -300,6 +466,11 @@ set -eu
 
 if [ "$1" = "allow" ]; then
     touch "$2.allowed"
+    exit 0
+fi
+
+if [ "$1" = "deny" ]; then
+    rm -f "$2.allowed"
     exit 0
 fi
 
@@ -471,6 +642,16 @@ printf '{%s}\n' "$json"
             env.get("LEAKED_FROM_ADDITIONAL_ROOT"),
             Some(&"1".to_string())
         );
+
+        // The remember/auto-allow fingerprint is computed against the
+        // primary boundary only; an additional root's .envrc must never
+        // contribute to it, matching its exclusion from env resolution.
+        assert!(envrc_fingerprint(primary.path(), primary.path())
+            .unwrap()
+            .is_none());
+        assert!(envrc_fingerprint(additional.path(), additional.path())
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -514,12 +695,17 @@ printf '{%s}\n' "$json"
         .await
         .unwrap_err();
         match err {
-            WorkspaceEnvError::EnvrcBlocked { path, message } => {
+            WorkspaceEnvError::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            } => {
                 let expected_canonical = envrc_path
                     .canonicalize()
                     .unwrap_or_else(|_| envrc_path.clone());
                 let actual_canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 assert_eq!(actual_canonical, expected_canonical);
+                assert_eq!(relative_path, ".envrc");
                 let lower = message.to_lowercase();
                 assert!(lower.contains("blocked") || lower.contains("allow"));
             }
@@ -659,5 +845,88 @@ printf '{%s}\n' "$json"
         // 3. Attempting to direnv_allow above boundary is explicitly rejected
         let err = direnv_allow(&nested_cwd, &boundary).await.unwrap_err();
         assert!(matches!(err, WorkspaceEnvError::EnvrcEscapeBoundary { .. }));
+    }
+
+    #[test]
+    fn strip_terminal_noise_removes_ansi_and_control_bytes() {
+        let raw = "\x1b[31mdirenv: error .envrc is blocked\x1b[0m\r\nline two\t\x07";
+        let cleaned = strip_terminal_noise(raw);
+        assert_eq!(cleaned, "direnv: error .envrc is blocked\nline two\t");
+        assert!(!cleaned.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn strip_terminal_noise_drops_osc_sequences() {
+        let raw = "before\x1b]0;window title\x07after";
+        assert_eq!(strip_terminal_noise(raw), "beforeafter");
+    }
+
+    #[tokio::test]
+    async fn envrc_fingerprint_matches_identical_content_and_changes_on_edit() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        std::fs::write(root.join(".envrc"), "export FP_TEST=1\n").unwrap();
+
+        let first = envrc_fingerprint(root, root).unwrap().unwrap();
+        let again = envrc_fingerprint(root, root).unwrap().unwrap();
+        assert_eq!(first, again);
+        assert_eq!(first.relative_path, ".envrc");
+
+        std::fs::write(root.join(".envrc"), "export FP_TEST=2\n").unwrap();
+        let after_edit = envrc_fingerprint(root, root).unwrap().unwrap();
+        assert_ne!(first.content_hash, after_edit.content_hash);
+        assert_eq!(after_edit.relative_path, first.relative_path);
+    }
+
+    #[tokio::test]
+    async fn envrc_fingerprint_is_none_without_an_envrc() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(envrc_fingerprint(temp_dir.path(), temp_dir.path())
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn envrc_fingerprint_rejects_symlink_escaping_the_boundary() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let outside = temp_dir.path().join("outside_secret.envrc");
+        std::fs::write(&outside, "export SHOULD_NEVER_BE_FINGERPRINTED=1\n").unwrap();
+
+        let boundary = temp_dir.path().join("boundary");
+        std::fs::create_dir_all(&boundary).unwrap();
+        std::os::unix::fs::symlink(&outside, boundary.join(".envrc")).unwrap();
+
+        // The symlink itself lives inside the boundary, so it is discovered...
+        assert!(find_envrc_path(&boundary, &boundary).is_some());
+        // ...but its resolved target escapes the boundary, so it must never
+        // be hashed, remembered, or auto-authorized.
+        assert!(envrc_fingerprint(&boundary, &boundary).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn direnv_deny_reverts_a_prior_allow() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let direnv = fake_direnv(temp_dir.path());
+        std::fs::write(temp_dir.path().join(".envrc"), "export DENY_TEST_VAR=1\n").unwrap();
+
+        direnv_allow_internal(direnv.to_str().unwrap(), temp_dir.path(), temp_dir.path())
+            .await
+            .unwrap();
+        resolve_workspace_env_internal(direnv.to_str().unwrap(), temp_dir.path(), temp_dir.path())
+            .await
+            .expect("resolve should succeed once allowed");
+
+        direnv_deny_internal(direnv.to_str().unwrap(), temp_dir.path(), temp_dir.path())
+            .await
+            .expect("direnv deny should succeed");
+
+        let err = resolve_workspace_env_internal(
+            direnv.to_str().unwrap(),
+            temp_dir.path(),
+            temp_dir.path(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, WorkspaceEnvError::EnvrcBlocked { .. }));
     }
 }

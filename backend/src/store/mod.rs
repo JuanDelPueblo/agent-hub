@@ -6,6 +6,7 @@
 //! never take the lock themselves, because `std::sync::Mutex` is not reentrant.
 mod agents;
 mod chats;
+mod envrc_grants;
 mod events;
 pub mod migrations;
 mod projects;
@@ -14,6 +15,7 @@ mod validation;
 mod workspaces;
 
 pub use chats::Chat;
+pub use envrc_grants::ProjectEnvrcGrant;
 pub use projects::Project;
 pub use session_config::{
     AdditionalRoot, McpServerConfig, McpServerInput, McpServerView, McpTransport, SecretEdit,
@@ -155,6 +157,28 @@ impl Store {
 
     pub fn delete_project(&self, id: &str) -> StoreResult<()> {
         projects::delete(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn project_envrc_grant(&self, project_id: &str) -> StoreResult<Option<ProjectEnvrcGrant>> {
+        envrc_grants::get(&self.conn.lock().unwrap(), project_id)
+    }
+
+    pub fn remember_project_envrc_grant(
+        &self,
+        project_id: &str,
+        relative_path: String,
+        content_hash: String,
+    ) -> StoreResult<ProjectEnvrcGrant> {
+        envrc_grants::remember(
+            &self.conn.lock().unwrap(),
+            project_id,
+            relative_path,
+            content_hash,
+        )
+    }
+
+    pub fn forget_project_envrc_grant(&self, project_id: &str) -> StoreResult<()> {
+        envrc_grants::forget(&self.conn.lock().unwrap(), project_id)
     }
 
     pub fn chats(&self) -> StoreResult<Vec<Chat>> {

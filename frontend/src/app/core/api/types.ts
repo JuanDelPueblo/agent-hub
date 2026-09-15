@@ -207,6 +207,8 @@ export interface Project {
   created_at: string;
   updated_at: string;
   chat_count?: number;
+  envrc_remembered?: boolean;
+  envrc_relative_path?: string | null;
 }
 
 export type WorkspaceMode = 'managed_worktree' | 'project_checkout';
@@ -281,6 +283,7 @@ export interface TerminalTaskDetails extends TerminalTaskSummary {
 
 export interface BlockedEnvironmentError {
   path: string;
+  relative_path?: string;
   message: string;
 }
 

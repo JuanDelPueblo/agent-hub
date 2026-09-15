@@ -115,6 +115,10 @@ pub fn router(state: AppState) -> Router {
             get(hub::chats).post(hub::create_chat),
         )
         .route(
+            "/api/projects/:id/envrc-grant",
+            axum::routing::delete(hub::forget_project_envrc_grant),
+        )
+        .route(
             "/api/chats/:id",
             get(hub::chat)
                 .patch(hub::edit_chat)

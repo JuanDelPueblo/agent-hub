@@ -686,11 +686,15 @@ impl HubService {
                     message: rejected.message.clone(),
                 });
             }
-            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message }) =
-                error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
+            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            }) = error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
             {
                 return Err(ServiceError::EnvrcBlocked {
                     path: path.clone(),
+                    relative_path: relative_path.clone(),
                     message: message.clone(),
                 });
             }
@@ -700,7 +704,11 @@ impl HubService {
         Ok(self.view(chat).await)
     }
 
-    pub async fn authorize_chat_environment(&self, chat_id: &str) -> ServiceResult<ChatView> {
+    pub async fn authorize_chat_environment(
+        &self,
+        chat_id: &str,
+        remember: bool,
+    ) -> ServiceResult<ChatView> {
         let chat = self.store.chat(chat_id)?;
         if chat.archived {
             return Err(ServiceError::Invalid(
@@ -708,6 +716,9 @@ impl HubService {
             ));
         }
         let project = self.store.project(&chat.project_id)?;
+        // `project` is moved into the `spawn_blocking` closure below; the
+        // remember flow needs the id again afterward, so capture it first.
+        let project_id = project.id.clone();
         let workspace = self.store.workspace(&chat.id)?;
         let state_worktrees = self.store.worktrees_dir();
         let session = self.live(chat_id).await?;
@@ -726,11 +737,61 @@ impl HubService {
         .map_err(|e| ServiceError::Internal(e.into()))??;
 
         let boundary = session.workspace_boundary().to_path_buf();
-        crate::workspace_env::direnv_allow(session.cwd(), &boundary).await?;
+        let cwd = session.cwd().to_path_buf();
+
+        // Fingerprint before the allow so a remembered grant is only ever
+        // written for content the user actually saw approved, never for
+        // content a race (or a symlink escaping the boundary) substituted
+        // in the window around the `direnv allow` call.
+        let before_fp = if remember {
+            Some(
+                crate::workspace_env::envrc_fingerprint(&cwd, &boundary)
+                    .map_err(|e| ServiceError::Internal(e.into()))?,
+            )
+        } else {
+            None
+        };
+
+        crate::workspace_env::direnv_allow(&cwd, &boundary).await?;
+
+        if remember {
+            let after_fp = crate::workspace_env::envrc_fingerprint(&cwd, &boundary)
+                .map_err(|e| ServiceError::Internal(e.into()))?;
+            match (before_fp.flatten(), after_fp) {
+                (Some(before), Some(after)) if before == after => {
+                    self.store.remember_project_envrc_grant(
+                        &project_id,
+                        after.relative_path,
+                        after.content_hash,
+                    )?;
+                }
+                _ => {
+                    // Content changed during approval, vanished, or its
+                    // .envrc resolves outside the boundary via a symlink:
+                    // never persist a grant for content the user did not
+                    // actually see approved. Revert the allow and fail
+                    // closed rather than silently degrading to a
+                    // workspace-only allow the user did not ask for.
+                    let _ = crate::workspace_env::direnv_deny(&cwd, &boundary).await;
+                    return Err(ServiceError::Invalid(
+                        "The .envrc content changed while it was being approved. \
+                         Approve it again."
+                            .into(),
+                    ));
+                }
+            }
+        }
+
         session.invalidate_cached_env().await;
-        let new_env = crate::workspace_env::resolve_workspace_env(session.cwd(), &boundary).await?;
+        let new_env = crate::workspace_env::resolve_workspace_env(&cwd, &boundary).await?;
         session.set_cached_env(new_env).await;
         self.resume_chat(chat_id).await
+    }
+
+    pub async fn forget_project_envrc_grant(&self, project_id: &str) -> ServiceResult<()> {
+        self.store.project(project_id)?;
+        self.store.forget_project_envrc_grant(project_id)?;
+        Ok(())
     }
 
     pub async fn list_chat_tasks(
@@ -821,11 +882,15 @@ impl HubService {
                     message: rejected.message.clone(),
                 });
             }
-            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message }) =
-                error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
+            if let Some(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            }) = error.downcast_ref::<crate::workspace_env::WorkspaceEnvError>()
             {
                 return Err(ServiceError::EnvrcBlocked {
                     path: path.clone(),
+                    relative_path: relative_path.clone(),
                     message: message.clone(),
                 });
             }

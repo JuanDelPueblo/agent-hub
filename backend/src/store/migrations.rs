@@ -30,10 +30,11 @@ pub struct Migration {
     pub precondition: Option<&'static str>,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "baseline_v1",
-    sql: "
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "baseline_v1",
+        sql: "
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
             data TEXT NOT NULL
@@ -93,8 +94,21 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             data TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);",
-    precondition: None,
-}];
+        precondition: None,
+    },
+    Migration {
+        version: 2,
+        name: "project_envrc_grants",
+        sql: "
+        CREATE TABLE IF NOT EXISTS project_envrc_grants (
+            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            relative_path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );",
+        precondition: None,
+    },
+];
 
 pub fn latest_version() -> i64 {
     MIGRATIONS.last().map_or(0, |m| m.version)
@@ -239,6 +253,7 @@ mod tests {
             "chat_workspaces",
             "events",
             "installed_agents",
+            "project_envrc_grants",
             "projects",
         ] {
             assert!(tables.contains(&expected.to_string()), "missing {expected}");
@@ -360,6 +375,30 @@ mod tests {
             partial.contains("WHERE mode='managed_worktree'"),
             "managed-path uniqueness must be partial, got {partial}"
         );
+    }
+
+    #[test]
+    fn project_envrc_grants_schema_has_expected_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("batey.sqlite3");
+        Store::open(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_envrc_grants'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        for expected in [
+            "project_id TEXT PRIMARY KEY",
+            "REFERENCES projects(id) ON DELETE CASCADE",
+            "relative_path TEXT NOT NULL",
+            "content_hash TEXT NOT NULL",
+        ] {
+            assert!(sql.contains(expected), "missing {expected} in {sql}");
+        }
     }
 
     #[test]

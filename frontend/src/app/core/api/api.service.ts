@@ -165,9 +165,16 @@ export class ApiService {
     });
   }
 
-  async authorizeChatEnvironment(chatId: string): Promise<void> {
+  async authorizeChatEnvironment(chatId: string, remember = false): Promise<void> {
     await this.request(`/api/chats/${encodeURIComponent(chatId)}/environment/authorize`, {
       method: 'POST',
+      body: { remember },
+    });
+  }
+
+  async forgetProjectEnvrcGrant(projectId: string): Promise<void> {
+    await this.request(`/api/projects/${encodeURIComponent(projectId)}/envrc-grant`, {
+      method: 'DELETE',
     });
   }
 

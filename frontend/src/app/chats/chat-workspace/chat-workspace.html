@@ -38,9 +38,14 @@
             </div>
           </div>
           @if (blockedEnvrc()) {
-            <button mat-flat-button color="primary" type="button" [disabled]="authorizingEnv()" (click)="authorizeEnvironment()">
-              <span>{{ authorizingEnv() ? 'Authorizing…' : 'Authorize environment' }}</span>
-            </button>
+            <div class="banner-actions">
+              <button mat-button type="button" [disabled]="authorizingEnv()" (click)="authorizeEnvironment(false)">
+                <span>{{ authorizingEnv() ? 'Authorizing…' : 'Allow this workspace' }}</span>
+              </button>
+              <button mat-flat-button color="primary" type="button" [disabled]="authorizingEnv()" (click)="authorizeEnvironment(true)">
+                <span>{{ authorizingEnv() ? 'Authorizing…' : 'Remember for project' }}</span>
+              </button>
+            </div>
           } @else if (rejectedConfig()) {
             <button mat-flat-button type="button" (click)="resetConfig()">Reset {{ rejectedConfig() }} and retry</button>
           } @else {

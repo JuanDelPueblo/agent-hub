@@ -11,6 +11,17 @@
     <div class="path-note">Browsing: <code>{{ browsedPath() }}</code><br />Select the current folder to use it.</div>
   }
   @if (selectedPath()) { <div class="selected-path"><strong>Selected directory</strong><code>{{ selectedPath() }}</code></div> }
+  @if (envrcRemembered()) {
+    <div class="envrc-grant">
+      <p>
+        Batey remembers this project's environment file at <code>{{ envrcRelativePath() }}</code>.
+        New workspaces for this project skip the approval prompt while its content stays the same.
+      </p>
+      <button mat-button type="button" [disabled]="forgettingEnvrc()" (click)="forgetEnvrc()">
+        <span>{{ forgettingEnvrc() ? 'Forgetting…' : 'Forget remembered environment' }}</span>
+      </button>
+    </div>
+  }
 </mat-dialog-content>
 <mat-dialog-actions align="end">
   <button mat-button type="button" (click)="dialogRef.close()" [disabled]="saving()">Cancel</button>

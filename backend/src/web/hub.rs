@@ -51,10 +51,15 @@ impl From<ServiceError> for ApiError {
                 "code": "saved_config_rejected",
                 "details": { "option_id": option_id }
             })),
-            ServiceError::EnvrcBlocked { path, message } => Some(json!({
+            ServiceError::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            } => Some(json!({
                 "code": "envrc_blocked",
                 "details": {
                     "path": path.to_string_lossy(),
+                    "relative_path": relative_path,
                     "message": message,
                 }
             })),
@@ -557,11 +562,30 @@ pub async fn respond_elicitation(
         .await?;
     Ok(Json(serde_json::json!({"success": accepted})))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeEnvironmentRequest {
+    #[serde(default)]
+    remember: bool,
+}
 pub async fn authorize_environment(
     State(s): State<AppState>,
     Path(id): Path<String>,
+    Json(body): Json<AuthorizeEnvironmentRequest>,
 ) -> Result<Json<ChatView>> {
-    Ok(Json(hub(&s)?.authorize_chat_environment(&id).await?))
+    Ok(Json(
+        hub(&s)?
+            .authorize_chat_environment(&id, body.remember)
+            .await?,
+    ))
+}
+
+pub async fn forget_project_envrc_grant(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    hub(&s)?.forget_project_envrc_grant(&id).await?;
+    Ok(Json(json!({"success": true})))
 }
 
 pub async fn list_tasks(

@@ -662,3 +662,347 @@ async fn active_turn_prevents_chat_deletion() {
     session.cancel().await.unwrap();
     sessions.shutdown_all().await;
 }
+
+// ---------------------------------------------------------- T125: project-level direnv authorization
+
+/// Writes and commits a file inside `repo`, creating parent directories as
+/// needed. `rel_path` is relative to `repo`.
+fn write_and_commit(repo: &Path, rel_path: &str, content: &str) {
+    let path = repo.join(rel_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&path, content).unwrap();
+    git(repo, &["add", rel_path]);
+    git(repo, &["commit", "-m", &format!("add {rel_path}")]);
+}
+
+/// Writes and commits a real `.envrc` (or a nested one) for these tests.
+/// Real `direnv` recomputes `PATH` from scratch when it loads a boundary
+/// unrelated to this test binary's own dev-shell `.envrc`, which can drop
+/// this process's own `python3`/`cargo` from `PATH`. Pinning `PATH` to this
+/// process's current value keeps the fake ACP agent (`python3
+/// tests/fake_acp.py`) spawnable after the workspace environment resolves.
+fn write_and_commit_envrc(repo: &Path, rel_path: &str, extra: &str) {
+    let content = format!(
+        "export PATH=\"{}\"\n{extra}",
+        std::env::var("PATH").unwrap()
+    );
+    write_and_commit(repo, rel_path, &content);
+}
+
+#[tokio::test]
+async fn one_workspace_approval_stays_workspace_specific() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    write_and_commit_envrc(&repo, ".envrc", "export ENVRC_SHARED=1\n");
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, false)
+        .await
+        .unwrap();
+    assert!(
+        store.project_envrc_grant(&project.id).unwrap().is_none(),
+        "a plain workspace allow must never remember the project"
+    );
+
+    let chat_b = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let err = hub.resume_chat(&chat_b.chat.id).await.unwrap_err();
+    assert!(matches!(err, ServiceError::EnvrcBlocked { .. }));
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn remembered_project_authorization_applies_to_a_second_matching_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    write_and_commit_envrc(&repo, ".envrc", "export ENVRC_SHARED=1\n");
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, true)
+        .await
+        .unwrap();
+    let grant = store
+        .project_envrc_grant(&project.id)
+        .unwrap()
+        .expect("remember must record a grant");
+    assert_eq!(grant.relative_path, ".envrc");
+
+    let chat_b = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let resumed = hub
+        .resume_chat(&chat_b.chat.id)
+        .await
+        .expect("second worktree must auto-allow from the remembered grant");
+    assert_eq!(resumed.chat.id, chat_b.chat.id);
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn changed_envrc_requires_approval_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    write_and_commit_envrc(&repo, ".envrc", "export ENVRC_VALUE=original\n");
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, true)
+        .await
+        .unwrap();
+    assert!(store.project_envrc_grant(&project.id).unwrap().is_some());
+
+    write_and_commit_envrc(&repo, ".envrc", "export ENVRC_VALUE=changed\n");
+
+    let chat_c = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let err = hub.resume_chat(&chat_c.chat.id).await.unwrap_err();
+    assert!(matches!(err, ServiceError::EnvrcBlocked { .. }));
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn same_content_in_a_different_project_is_not_approved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo1 = git_repo(&tmp.path().join("a"));
+    let repo2 = git_repo(&tmp.path().join("b"));
+    write_and_commit_envrc(&repo1, ".envrc", "export SAME_CONTENT=1\n");
+    write_and_commit_envrc(&repo2, ".envrc", "export SAME_CONTENT=1\n");
+
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project1 = hub
+        .create_project("git1".into(), repo1.display().to_string())
+        .unwrap();
+    let project2 = hub
+        .create_project("git2".into(), repo2.display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project1.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, true)
+        .await
+        .unwrap();
+    assert!(store.project_envrc_grant(&project1.id).unwrap().is_some());
+    assert!(
+        store.project_envrc_grant(&project2.id).unwrap().is_none(),
+        "identical .envrc content must never authorize an unrelated project"
+    );
+
+    let chat_b = hub
+        .create_chat_with_workspace(
+            &project2.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let err = hub.resume_chat(&chat_b.chat.id).await.unwrap_err();
+    assert!(matches!(err, ServiceError::EnvrcBlocked { .. }));
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn relative_path_mismatch_is_not_approved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    git(&repo, &["checkout", "-b", "root-envrc"]);
+    write_and_commit_envrc(&repo, ".envrc", "export SAME_CONTENT=1\n");
+    git(&repo, &["checkout", "main"]);
+    git(&repo, &["checkout", "-b", "nested-envrc"]);
+    write_and_commit_envrc(&repo, "nested/.envrc", "export SAME_CONTENT=1\n");
+    git(&repo, &["checkout", "main"]);
+
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.join("nested").display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("root-envrc")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, true)
+        .await
+        .unwrap();
+    let grant = store
+        .project_envrc_grant(&project.id)
+        .unwrap()
+        .expect("remember must record a grant");
+    assert_eq!(grant.relative_path, ".envrc");
+
+    let chat_d = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("nested-envrc")),
+        )
+        .await
+        .unwrap();
+    let err = hub.resume_chat(&chat_d.chat.id).await.unwrap_err();
+    assert!(
+        matches!(err, ServiceError::EnvrcBlocked { .. }),
+        "identical bytes at a different relative .envrc location must not auto-allow"
+    );
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn remembering_a_symlink_escaping_envrc_fails_closed_without_a_grant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tmp.path().join("outside.envrc");
+    std::fs::write(&outside, "export SHOULD_NEVER_BE_REMEMBERED=1\n").unwrap();
+    let project_dir = tmp.path().join("plain_project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::os::unix::fs::symlink(&outside, project_dir.join(".envrc")).unwrap();
+
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("plain".into(), project_dir.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+
+    let err = hub
+        .authorize_chat_environment(&chat.chat.id, true)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ServiceError::Invalid(_)));
+    assert!(
+        store.project_envrc_grant(&project.id).unwrap().is_none(),
+        "a symlink escaping the boundary must never be remembered"
+    );
+
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn revoking_the_remembered_grant_causes_future_worktrees_to_prompt_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    write_and_commit_envrc(&repo, ".envrc", "export ENVRC_SHARED=1\n");
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+
+    let chat_a = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.authorize_chat_environment(&chat_a.chat.id, true)
+        .await
+        .unwrap();
+    assert!(store.project_envrc_grant(&project.id).unwrap().is_some());
+
+    let chat_b = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    hub.resume_chat(&chat_b.chat.id)
+        .await
+        .expect("second worktree auto-allowed while the grant matches");
+
+    hub.forget_project_envrc_grant(&project.id).await.unwrap();
+    assert!(store.project_envrc_grant(&project.id).unwrap().is_none());
+
+    let chat_c = hub
+        .create_chat_with_workspace(
+            &project.id,
+            "codex",
+            None,
+            selection(WorkspaceMode::ManagedWorktree, Some("main")),
+        )
+        .await
+        .unwrap();
+    let err = hub.resume_chat(&chat_c.chat.id).await.unwrap_err();
+    assert!(
+        matches!(err, ServiceError::EnvrcBlocked { .. }),
+        "revoking the grant must cause future worktrees to prompt again"
+    );
+
+    sessions.shutdown_all().await;
+}

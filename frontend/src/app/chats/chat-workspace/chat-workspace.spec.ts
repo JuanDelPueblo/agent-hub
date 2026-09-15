@@ -127,23 +127,31 @@ describe('ChatWorkspaceComponent', () => {
     expect(state.retryConnection).toHaveBeenCalledWith('chat-1');
   });
 
-  it('shows blocked direnv workspace environment banner and authorizes environment', async () => {
-    state.connectErrors.set({ 'chat-1': 'direnv: error .envrc is blocked' });
+  it('shows blocked direnv workspace environment banner with allow and remember actions', async () => {
+    state.connectErrors.set({ 'chat-1': "This project's workspace environment needs approval." });
     state.blockedEnvrcByChat.set({
-      'chat-1': { path: '/repo/.envrc', message: 'direnv: error .envrc is blocked' },
+      'chat-1': { path: '/repo/.envrc', message: "This project's workspace environment needs approval." },
     });
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('Workspace environment blocked');
-    expect(fixture.nativeElement.textContent).toContain('direnv: error .envrc is blocked');
+    expect(fixture.nativeElement.textContent).toContain("This project's workspace environment needs approval.");
 
-    const authButton = Array.from(fixture.nativeElement.querySelectorAll('button'))
-      .find((button: unknown) => (button as Element).textContent?.includes('Authorize environment')) as HTMLButtonElement;
-    expect(authButton).toBeTruthy();
-    authButton.click();
-    expect(state.authorizeChatEnvironment).toHaveBeenCalledWith('chat-1');
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button'));
+    const allowButton = buttons
+      .find((button: unknown) => (button as Element).textContent?.includes('Allow this workspace')) as HTMLButtonElement;
+    const rememberButton = buttons
+      .find((button: unknown) => (button as Element).textContent?.includes('Remember for project')) as HTMLButtonElement;
+    expect(allowButton).toBeTruthy();
+    expect(rememberButton).toBeTruthy();
+
+    allowButton.click();
+    expect(state.authorizeChatEnvironment).toHaveBeenCalledWith('chat-1', false);
+
+    rememberButton.click();
+    expect(state.authorizeChatEnvironment).toHaveBeenCalledWith('chat-1', true);
   });
 
   it('keeps persisted history visible when connection fails', async () => {

@@ -14,12 +14,34 @@ pub struct Project {
     pub updated_at: String,
     #[serde(default)]
     pub chat_count: usize,
+    /// Whether this project has a durable "remember for project" `.envrc`
+    /// authorization grant. Derived at read time, like `chat_count`; never
+    /// part of the stored JSON document.
+    #[serde(default)]
+    pub envrc_remembered: bool,
+    #[serde(default)]
+    pub envrc_relative_path: Option<String>,
 }
 
-/// `chat_count` is derived, so every read recomputes it instead of storing it.
+/// `chat_count` and `envrc_relative_path` are derived, so every read
+/// recomputes them instead of storing them.
 const SELECT_WITH_COUNT: &str = "SELECT p.data, \
-    (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_count \
-    FROM projects p";
+    (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_count, \
+    g.relative_path AS envrc_relative_path \
+    FROM projects p \
+    LEFT JOIN project_envrc_grants g ON g.project_id = p.id";
+
+fn row_to_project(
+    data: String,
+    count: i64,
+    envrc_relative_path: Option<String>,
+) -> StoreResult<Project> {
+    let mut p: Project = serde_json::from_str(&data)?;
+    p.chat_count = count as usize;
+    p.envrc_remembered = envrc_relative_path.is_some();
+    p.envrc_relative_path = envrc_relative_path;
+    Ok(p)
+}
 
 pub(crate) fn new(name: String, path: String) -> StoreResult<Project> {
     validate_name(&name)?;
@@ -31,6 +53,8 @@ pub(crate) fn new(name: String, path: String) -> StoreResult<Project> {
         created_at: now.clone(),
         updated_at: now,
         chat_count: 0,
+        envrc_remembered: false,
+        envrc_relative_path: None,
     })
 }
 
@@ -39,14 +63,13 @@ pub(crate) fn list(conn: &Connection) -> StoreResult<Vec<Project>> {
     let rows = stmt.query_map([], |r| {
         let data: String = r.get(0)?;
         let count: i64 = r.get(1)?;
-        Ok((data, count as usize))
+        let envrc_relative_path: Option<String> = r.get(2)?;
+        Ok((data, count, envrc_relative_path))
     })?;
     let mut projects = Vec::new();
     for r in rows {
-        let (data, count) = r?;
-        let mut p: Project = serde_json::from_str(&data)?;
-        p.chat_count = count;
-        projects.push(p);
+        let (data, count, envrc_relative_path) = r?;
+        projects.push(row_to_project(data, count, envrc_relative_path)?);
     }
     Ok(projects)
 }
@@ -57,14 +80,13 @@ pub(crate) fn get(conn: &Connection, id: &str) -> StoreResult<Project> {
         .query_row(params![id], |r| {
             let data: String = r.get(0)?;
             let count: i64 = r.get(1)?;
-            Ok((data, count as usize))
+            let envrc_relative_path: Option<String> = r.get(2)?;
+            Ok((data, count, envrc_relative_path))
         })
         .optional()?;
     match row {
-        Some((data, count)) => {
-            let mut p: Project = serde_json::from_str(&data)?;
-            p.chat_count = count;
-            Ok(p)
+        Some((data, count, envrc_relative_path)) => {
+            row_to_project(data, count, envrc_relative_path)
         }
         None => Err(StoreError::NotFound("Project not found".into())),
     }

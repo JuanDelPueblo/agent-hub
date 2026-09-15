@@ -69,4 +69,21 @@ export class ProjectStore {
       ),
     );
   }
+
+  /** Reflects a remember/forget result immediately, without waiting on the
+   * next `loadProjects()`. */
+  patchEnvrcState(projectId: string, remembered: boolean, relativePath: string | null): void {
+    this.projects.update((projects) =>
+      projects.map((project) =>
+        project.id === projectId
+          ? { ...project, envrc_remembered: remembered, envrc_relative_path: relativePath }
+          : project,
+      ),
+    );
+  }
+
+  async forgetProjectEnvrcGrant(projectId: string): Promise<void> {
+    await this.api.forgetProjectEnvrcGrant(projectId);
+    this.patchEnvrcState(projectId, false, null);
+  }
 }

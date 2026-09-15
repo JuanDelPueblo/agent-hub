@@ -28,6 +28,24 @@ export class EditProjectDialogComponent {
   readonly canSave = computed(
     () => !!this.name().trim() && !!this.selectedPath() && !this.saving(),
   );
+  readonly envrcRemembered = signal(this.project.envrc_remembered ?? false);
+  readonly envrcRelativePath = signal(this.project.envrc_relative_path ?? null);
+  readonly forgettingEnvrc = signal(false);
+
+  async forgetEnvrc(): Promise<void> {
+    this.forgettingEnvrc.set(true);
+    try {
+      await this.state.forgetProjectEnvrcGrant(this.project.id);
+      this.envrcRemembered.set(false);
+      this.envrcRelativePath.set(null);
+    } catch (error: unknown) {
+      this.errorMessage.set(
+        error instanceof Error ? error.message : 'Failed to forget the remembered environment',
+      );
+    } finally {
+      this.forgettingEnvrc.set(false);
+    }
+  }
 
   async save(): Promise<void> {
     if (!this.name().trim() || !this.selectedPath()) {

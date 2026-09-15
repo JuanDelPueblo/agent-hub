@@ -1093,7 +1093,7 @@ async fn authorize_chat_environment_security_and_path_validation() {
 
     // 1. Unknown chat returns ChatNotFound
     let err_unknown = hub
-        .authorize_chat_environment("nonexistent-chat-id")
+        .authorize_chat_environment("nonexistent-chat-id", false)
         .await
         .unwrap_err();
     assert!(matches!(err_unknown, ServiceError::NotFound(_)));
@@ -1110,7 +1110,7 @@ async fn authorize_chat_environment_security_and_path_validation() {
     .await
     .unwrap();
     let err_archived = hub
-        .authorize_chat_environment(&chat.chat.id)
+        .authorize_chat_environment(&chat.chat.id, false)
         .await
         .unwrap_err();
     assert!(matches!(err_archived, ServiceError::Invalid(_)));
@@ -1127,7 +1127,7 @@ async fn authorize_chat_environment_security_and_path_validation() {
     let chat2 = hub.create_chat(&project2.id, "codex", None).await.unwrap();
 
     let err_boundary = hub
-        .authorize_chat_environment(&chat2.chat.id)
+        .authorize_chat_environment(&chat2.chat.id, false)
         .await
         .unwrap_err();
     match err_boundary {

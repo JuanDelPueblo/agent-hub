@@ -264,6 +264,10 @@ export class FakeState {
     this.runtime = new Map();
     this.tasksByChat = new Map();
     this.blockedChats = new Set();
+    // Project-level "remember for project" direnv grants (T125): project id
+    // -> { relativePath, contentHash }. Mirrors the real backend's
+    // `project_envrc_grants` table.
+    this.projectEnvrcGrants = new Map();
     // Internal startup instructions consumed by the fake turn runner. These
     // are not part of any HTTP response; they keep seeded open turns alive
     // after their durable event history has been written.
@@ -371,7 +375,13 @@ export class FakeState {
     const chatCount = [...this.chats.values()].filter(
       (chat) => chat.project_id === project.id,
     ).length;
-    return { ...project, chat_count: chatCount };
+    const grant = this.projectEnvrcGrants.get(project.id) ?? null;
+    return {
+      ...project,
+      chat_count: chatCount,
+      envrc_remembered: grant != null,
+      envrc_relative_path: grant?.relativePath ?? null,
+    };
   }
 
   listProjects() {
@@ -449,8 +459,36 @@ export class FakeState {
     this.blockedChats.add(chatId);
   }
 
-  authorizeEnvironment(chatId) {
+  /** Blocks a newly created chat's environment, unless its project already
+   * has a matching remembered grant (T125) — mirrors the real backend
+   * auto-allowing a new managed worktree whose .envrc matches. */
+  blockEnvironmentUnlessRemembered(chatId, projectId) {
+    if (!this.hasProjectEnvrcGrant(projectId)) this.blockEnvironment(chatId);
+  }
+
+  authorizeEnvironment(chatId, remember = false) {
     this.blockedChats.delete(chatId);
+    if (remember) {
+      const chat = this.chats.get(chatId);
+      if (chat) {
+        this.rememberProjectEnvrc(chat.project_id, {
+          relativePath: '.envrc',
+          contentHash: 'fixture-hash',
+        });
+      }
+    }
+  }
+
+  hasProjectEnvrcGrant(projectId) {
+    return this.projectEnvrcGrants.has(projectId);
+  }
+
+  rememberProjectEnvrc(projectId, { relativePath, contentHash }) {
+    this.projectEnvrcGrants.set(projectId, { relativePath, contentHash });
+  }
+
+  forgetProjectEnvrc(projectId) {
+    this.projectEnvrcGrants.delete(projectId);
   }
 
   listTasks(chatId) {

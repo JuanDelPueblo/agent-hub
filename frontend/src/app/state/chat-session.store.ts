@@ -49,7 +49,9 @@ export class ChatSessionStore {
   readonly historyLoadingByChat = signal<ReadonlySet<string>>(new Set());
   readonly historyHasOlderByChat = signal<BooleanMap>({});
   readonly historyErrors = signal<ErrorMap>({});
-  readonly blockedEnvrcByChat = signal<Record<string, { path: string; message: string }>>({});
+  readonly blockedEnvrcByChat = signal<
+    Record<string, { path: string; relative_path?: string; message: string }>
+  >({});
   /** Chats that failed because the agent needs authentication first. */
   readonly authRequiredByChat = signal<Record<string, AuthRequiredInfo>>({});
 
@@ -144,8 +146,10 @@ export class ChatSessionStore {
         }
         if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
           const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+          const relative_path =
+            typeof error.details?.['relative_path'] === 'string' ? error.details['relative_path'] : undefined;
           const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
-          this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
+          this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, relative_path, message } }));
         }
         throw error;
       } finally {
@@ -163,10 +167,20 @@ export class ChatSessionStore {
     await this.connectChat(chatId);
   }
 
-  async authorizeChatEnvironment(chatId: string): Promise<void> {
-    await this.api.authorizeChatEnvironment(chatId);
+  async authorizeChatEnvironment(
+    chatId: string,
+    remember = false,
+  ): Promise<{ remembered: boolean; projectId: string | null; relativePath: string | null }> {
+    // Captured before `clearError` drops the blocked-env detail below.
+    const detail = this.blockedEnvrcByChat()[chatId];
+    await this.api.authorizeChatEnvironment(chatId, remember);
     this.clearError(chatId);
     await this.connectChat(chatId).catch(() => undefined);
+    return {
+      remembered: remember,
+      projectId: this.findChat(chatId)?.project_id ?? null,
+      relativePath: detail?.relative_path ?? null,
+    };
   }
 
   connectChat(chatId: string): Promise<Chat> {
@@ -193,8 +207,10 @@ export class ChatSessionStore {
             }
             if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
               const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+              const relative_path =
+                typeof error.details?.['relative_path'] === 'string' ? error.details['relative_path'] : undefined;
               const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
-              this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
+              this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, relative_path, message } }));
             }
           }
           throw error;
@@ -351,8 +367,10 @@ export class ChatSessionStore {
       }
       if (error instanceof ApiError && error.code?.toLowerCase() === 'envrc_blocked') {
         const path = typeof error.details?.['path'] === 'string' ? error.details['path'] : '';
+        const relative_path =
+          typeof error.details?.['relative_path'] === 'string' ? error.details['relative_path'] : undefined;
         const message = typeof error.details?.['message'] === 'string' ? error.details['message'] : error.message;
-        this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, message } }));
+        this.blockedEnvrcByChat.update((current) => ({ ...current, [chatId]: { path, relative_path, message } }));
       }
       this.setError(chatId, this.errorMessage(error, 'Failed to send prompt'));
       throw error;

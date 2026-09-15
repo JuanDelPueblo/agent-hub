@@ -273,21 +273,37 @@ impl AcpSession {
             let cached = self.cached_env.read().await.clone();
             match cached {
                 Some(env) => env,
-                None => match crate::workspace_env::resolve_workspace_env(
-                    &self.key.cwd,
-                    &self.workspace_boundary,
-                )
-                .await
-                {
-                    Ok(env) => {
-                        *self.cached_env.write().await = Some(env.clone());
-                        env
+                None => {
+                    let mut resolved = crate::workspace_env::resolve_workspace_env(
+                        &self.key.cwd,
+                        &self.workspace_boundary,
+                    )
+                    .await;
+                    if matches!(
+                        resolved,
+                        Err(crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { .. })
+                    ) && self
+                        .try_auto_allow_from_project_grant()
+                        .await
+                        .unwrap_or(false)
+                    {
+                        resolved = crate::workspace_env::resolve_workspace_env(
+                            &self.key.cwd,
+                            &self.workspace_boundary,
+                        )
+                        .await;
                     }
-                    Err(e) => {
-                        self.set_states(ProcessState::Dead, TurnState::Idle).await?;
-                        return Err(e.into());
+                    match resolved {
+                        Ok(env) => {
+                            *self.cached_env.write().await = Some(env.clone());
+                            env
+                        }
+                        Err(e) => {
+                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                            return Err(e.into());
+                        }
                     }
-                },
+                }
             }
         };
         // Scrub every stashed secret name first, then inject only this
@@ -518,6 +534,44 @@ impl AcpSession {
             .await?;
 
         Ok(())
+    }
+
+    /// Whether this session's `.envrc` can be auto-allowed from an existing
+    /// project-level "remember for project" grant. TOCTOU-safe and
+    /// symlink-safe: the fingerprint is recomputed from disk right before
+    /// and right after the `direnv allow` it performs, and any mismatch
+    /// (content changed, vanished, or now escapes the boundary) reverts the
+    /// allow and fails closed rather than trusting the earlier check.
+    async fn try_auto_allow_from_project_grant(&self) -> anyhow::Result<bool> {
+        let Some(store) = &self.store else {
+            return Ok(false);
+        };
+        let chat = store.chat(&self.id)?;
+        let Some(grant) = store.project_envrc_grant(&chat.project_id)? else {
+            return Ok(false);
+        };
+
+        let Some(before) =
+            crate::workspace_env::envrc_fingerprint(&self.key.cwd, &self.workspace_boundary)?
+        else {
+            return Ok(false);
+        };
+        if before.relative_path != grant.relative_path || before.content_hash != grant.content_hash
+        {
+            return Ok(false);
+        }
+
+        crate::workspace_env::direnv_allow(&self.key.cwd, &self.workspace_boundary).await?;
+
+        let after =
+            crate::workspace_env::envrc_fingerprint(&self.key.cwd, &self.workspace_boundary)?;
+        if after.as_ref() != Some(&before) {
+            let _ =
+                crate::workspace_env::direnv_deny(&self.key.cwd, &self.workspace_boundary).await;
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 
     async fn admit_turn(

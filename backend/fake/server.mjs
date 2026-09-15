@@ -35,6 +35,7 @@ const routes = [
   ['GET', /^\/api\/projects\/([^/]+)\/chats$/, listChats],
   ['GET', /^\/api\/projects\/([^/]+)\/workspace-options$/, workspaceOptions],
   ['POST', /^\/api\/projects\/([^/]+)\/chats$/, createChat],
+  ['DELETE', /^\/api\/projects\/([^/]+)\/envrc-grant$/, forgetProjectEnvrcGrant],
   ['GET', /^\/api\/chats\/([^/]+)$/, getChat],
   ['GET', /^\/api\/chats\/([^/]+)\/history$/, history],
   ['PATCH', /^\/api\/chats\/([^/]+)$/, editChat],
@@ -523,13 +524,7 @@ function deleteRemoteSession({ params }) {
 function promptChat({ params, body }) {
   const chat = requireChat(params[0]);
   if (state.isEnvironmentBlocked(chat.id)) {
-    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
-      code: 'envrc_blocked',
-      details: {
-        path: `${PROJECT_ROOT}/.envrc`,
-        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
-      },
-    });
+    throw envrcBlockedError();
   }
   const text = typeof body.text === 'string' ? body.text : '';
   const content = Array.isArray(body.content) ? body.content : null;
@@ -588,13 +583,7 @@ async function resumeChat({ params }) {
   const chat = requireChat(params[0]);
   if (chat.archived) throw httpError(409, 'Restore the chat before you connect it');
   if (state.isEnvironmentBlocked(chat.id)) {
-    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
-      code: 'envrc_blocked',
-      details: {
-        path: `${PROJECT_ROOT}/.envrc`,
-        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
-      },
-    });
+    throw envrcBlockedError();
   }
 
   state.setRuntime(chat.id, 'STARTING', 'IDLE');
@@ -787,13 +776,7 @@ function listDirectories({ url }) {
 
 function ensureRunning(chat) {
   if (state.isEnvironmentBlocked(chat.id)) {
-    throw httpError(409, "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content", {
-      code: 'envrc_blocked',
-      details: {
-        path: `${PROJECT_ROOT}/.envrc`,
-        message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
-      },
-    });
+    throw envrcBlockedError();
   }
   const runtime = state.runtime.get(chat.id);
   if (runtime?.process !== 'RUNNING') {
@@ -862,6 +845,20 @@ function httpError(status, message, extra = {}) {
   error.status = status;
   Object.assign(error, extra);
   return error;
+}
+
+/** Matches the real backend's structured, sanitized `envrc_blocked` shape
+ * (T125): a fixed friendly message, with the raw diagnostic kept only in
+ * `details.message` for debugging. */
+function envrcBlockedError() {
+  return httpError(409, "This project's workspace environment needs approval.", {
+    code: 'envrc_blocked',
+    details: {
+      path: `${PROJECT_ROOT}/.envrc`,
+      relative_path: '.envrc',
+      message: "direnv: error .envrc is blocked. Run \"direnv allow\" to approve its content",
+    },
+  });
 }
 
 function corsHeaders() {
@@ -934,9 +931,16 @@ function log(message) {
   console.log(`[fake-backend] ${message}`);
 }
 
-function authorizeEnvironment({ params }) {
+function authorizeEnvironment({ params, body }) {
   const chat = requireChat(params[0]);
-  state.authorizeEnvironment(chat.id);
+  state.authorizeEnvironment(chat.id, body?.remember === true);
+  return json({ success: true });
+}
+
+function forgetProjectEnvrcGrant({ params }) {
+  const project = state.projects.get(params[0]);
+  if (!project) throw httpError(404, 'Project not found');
+  state.forgetProjectEnvrc(project.id);
   return json({ success: true });
 }
 

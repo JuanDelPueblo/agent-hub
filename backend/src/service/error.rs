@@ -19,6 +19,7 @@ pub enum ServiceError {
     },
     EnvrcBlocked {
         path: PathBuf,
+        relative_path: String,
         message: String,
     },
     /// The agent needs authentication before it can serve the request. The
@@ -42,7 +43,9 @@ impl std::fmt::Display for ServiceError {
             | Self::Unavailable(m)
             | Self::Timeout(m) => f.write_str(m),
             Self::SavedConfigRejected { message, .. } => f.write_str(message),
-            Self::EnvrcBlocked { message, .. } => f.write_str(message),
+            Self::EnvrcBlocked { .. } => {
+                f.write_str("This project's workspace environment needs approval.")
+            }
             Self::AuthRequired { message, .. } => f.write_str(message),
             Self::Internal(e) => write!(f, "{e}"),
         }
@@ -79,9 +82,14 @@ impl From<anyhow::Error> for ServiceError {
         }
         if let Some(env_err) = e.downcast_ref::<crate::workspace_env::WorkspaceEnvError>() {
             match env_err {
-                crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message } => {
+                crate::workspace_env::WorkspaceEnvError::EnvrcBlocked {
+                    path,
+                    relative_path,
+                    message,
+                } => {
                     return Self::EnvrcBlocked {
                         path: path.clone(),
+                        relative_path: relative_path.clone(),
                         message: message.clone(),
                     };
                 }
@@ -95,9 +103,15 @@ impl From<anyhow::Error> for ServiceError {
 impl From<crate::workspace_env::WorkspaceEnvError> for ServiceError {
     fn from(e: crate::workspace_env::WorkspaceEnvError) -> Self {
         match e {
-            crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message } => {
-                Self::EnvrcBlocked { path, message }
-            }
+            crate::workspace_env::WorkspaceEnvError::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            } => Self::EnvrcBlocked {
+                path,
+                relative_path,
+                message,
+            },
             _ => Self::Invalid(e.to_string()),
         }
     }
@@ -128,16 +142,23 @@ mod tests {
             "rejected"
         );
         assert_eq!(
-            ServiceError::EnvrcBlocked {
-                path: PathBuf::from("/test/.envrc"),
-                message: "blocked".into()
-            }
-            .to_string(),
-            "blocked"
-        );
-        assert_eq!(
             ServiceError::Internal(anyhow::anyhow!("boom")).to_string(),
             "boom"
         );
+    }
+
+    #[test]
+    fn envrc_blocked_displays_a_fixed_friendly_message_never_the_raw_diagnostic() {
+        let err = ServiceError::EnvrcBlocked {
+            path: PathBuf::from("/home/user/.local/state/batey/worktrees/chat-abc123/.envrc"),
+            relative_path: ".envrc".into(),
+            message: "direnv: error /home/user/.../.envrc is blocked. Run `direnv allow`.".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "This project's workspace environment needs approval."
+        );
+        assert!(!err.to_string().contains("direnv"));
+        assert!(!err.to_string().contains("chat-abc123"));
     }
 }

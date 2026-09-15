@@ -116,7 +116,18 @@ export class AppStateService {
   retryHistory(chatId: string): Promise<void> { return this.chatStore.retryHistory(chatId); }
   loadChatConfig(chatId: string) { return this.chatStore.loadChatConfig(chatId); }
   retryConnection(chatId: string): Promise<void> { return this.chatStore.retryConnection(chatId); }
-  authorizeChatEnvironment(chatId: string): Promise<void> { return this.chatStore.authorizeChatEnvironment(chatId); }
+  async authorizeChatEnvironment(chatId: string, remember = false): Promise<void> {
+    const { remembered, projectId, relativePath } = await this.chatStore.authorizeChatEnvironment(
+      chatId,
+      remember,
+    );
+    if (remembered && projectId) {
+      this.projectStore.patchEnvrcState(projectId, true, relativePath);
+    }
+  }
+  forgetProjectEnvrcGrant(projectId: string): Promise<void> {
+    return this.projectStore.forgetProjectEnvrcGrant(projectId);
+  }
   resetRejectedConfig(chatId: string): Promise<void> { return this.chatStore.resetRejectedConfig(chatId); }
   connectChat(chatId: string) { return this.chatStore.connectChat(chatId); }
   fetchConfig(chatId: string) { return this.chatStore.fetchConfig(chatId); }
