@@ -8,3 +8,6 @@
 .workspace-details > div { display: grid; grid-template-columns: minmax(110px, 0.35fr) 1fr; gap: 12px; }
 .workspace-details dt { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
 .workspace-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font: var(--mat-sys-body-medium); }
+.root-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.root-row mat-form-field { flex: 1; }
+.mcp-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: center; }

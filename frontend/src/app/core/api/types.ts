@@ -68,6 +68,12 @@ export interface Chat {
   active_tasks?: number;
 }
 
+export type McpTransport = 'stdio' | 'http' | 'sse';
+export interface McpSecretPresence { name: string; present: boolean; }
+export interface McpServer { id: string; position: number; name: string; transport: McpTransport; url: string | null; command: string | null; args: string[]; secrets: McpSecretPresence[]; }
+export interface AdditionalRoot { project_id: string; position: number; }
+export interface McpServerInput { name: string; transport: McpTransport; url?: string; command?: string; args?: string[]; secrets?: Array<{ name: string; value?: string; action?: 'keep' | 'replace' | 'remove' }>; }
+
 export type TerminalTaskState = "running" | "completed" | "failed" | "stopped";
 
 export interface TerminalTaskSummary {

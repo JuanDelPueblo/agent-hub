@@ -50,6 +50,13 @@ const routes = [
   ['PATCH', /^\/api\/chats\/([^/]+)\/modes$/, setMode],
   ['GET', /^\/api\/chats\/([^/]+)\/usage$/, getUsage],
   ['GET', /^\/api\/chats\/([^/]+)\/session-info$/, getSessionInfo],
+  ['GET', /^\/api\/chats\/([^/]+)\/mcp-servers$/, getMcpServers],
+  ['POST', /^\/api\/chats\/([^/]+)\/mcp-servers$/, createMcpServer],
+  ['PUT', /^\/api\/chats\/([^/]+)\/mcp-servers\/order$/, orderMcpServers],
+  ['PATCH', /^\/api\/chats\/([^/]+)\/mcp-servers\/([^/]+)$/, editMcpServer],
+  ['DELETE', /^\/api\/chats\/([^/]+)\/mcp-servers\/([^/]+)$/, deleteMcpServer],
+  ['GET', /^\/api\/chats\/([^/]+)\/additional-roots$/, getAdditionalRoots],
+  ['PUT', /^\/api\/chats\/([^/]+)\/additional-roots$/, setAdditionalRoots],
   ['GET', /^\/api\/chats\/([^/]+)\/elicitations$/, listElicitations],
   ['POST', /^\/api\/chats\/([^/]+)\/elicitations\/([^/]+)\/respond$/, respondElicitation],
   ['POST', /^\/api\/chats\/([^/]+)\/environment\/authorize$/, authorizeEnvironment],
@@ -207,6 +214,9 @@ function deleteProject({ params }) {
   if (!project) throw httpError(404, 'Project not found');
   if ([...state.chats.values()].some((chat) => chat.project_id === project.id)) {
     throw httpError(409, "Delete the project's chats first (project files are never deleted)");
+  }
+  if ([...state.additionalRootsByChat.values()].some((roots) => roots.some((root) => root.project_id === project.id))) {
+    throw httpError(409, "Remove this project from every chat's additional workspace roots before deleting it");
   }
   state.projects.delete(project.id);
   state.metadataChanged();
@@ -600,6 +610,34 @@ function clearConfig({ params }) {
   chat.config_values = next;
   return { status: 204, value: null };
 }
+
+function mcpView(server) {
+  return { ...server, secrets: (server.secrets ?? []).map(({ name, value }) => ({ name, present: Boolean(value) })) };
+}
+function validateMcp(body) {
+  const transports = ['stdio', 'http', 'sse'];
+  if (!body || !transports.includes(body.transport) || typeof body.name !== 'string' || !body.name.trim()) throw httpError(400, 'Unsupported MCP transport or missing name');
+  if (['http', 'sse'].includes(body.transport)) {
+    if (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url) || /^https?:\/\/[^/]*@/.test(body.url) || body.command != null) throw httpError(400, 'MCP URL must be http(s) without userinfo');
+  } else if (typeof body.command !== 'string' || !body.command.startsWith('/') || body.url != null) throw httpError(400, 'Stdio MCP command must be absolute');
+}
+function requireIdleConnectionEdit(chat) { if (isRunning(chat.id)) throw httpError(409, 'Wait for the active turn before changing connection configuration'); state.setRuntime(chat.id, 'STOPPED', 'IDLE'); }
+function getMcpServers({ params }) { requireChat(params[0]); return json((state.mcpByChat.get(params[0]) ?? []).map(mcpView)); }
+function createMcpServer({ params, body }) {
+  const chat = requireChat(params[0]); validateMcp(body); requireIdleConnectionEdit(chat);
+  const secrets = (body.secrets ?? []).map((s) => ({ name: String(s.name ?? ''), value: s.value ?? '' }));
+  if (secrets.some((s) => !s.name)) throw httpError(400, 'MCP secret name is invalid');
+  const values = state.mcpByChat.get(chat.id) ?? []; values.push({ id: randomUUID(), position: values.length, name: body.name.trim(), transport: body.transport, url: body.url ?? null, command: body.command ?? null, args: body.args ?? [], secrets }); state.mcpByChat.set(chat.id, values); state.metadataChanged(); return json(values.map(mcpView));
+}
+function editMcpServer({ params, body }) {
+  const chat = requireChat(params[0]); validateMcp(body); requireIdleConnectionEdit(chat); const values = state.mcpByChat.get(chat.id) ?? []; const value = values.find((s) => s.id === params[1]); if (!value) throw httpError(404, 'MCP server not found');
+  const secrets = [...(value.secrets ?? [])]; for (const edit of body.secrets ?? []) { const action = edit.action ?? 'replace'; const index = secrets.findIndex((s) => s.name === edit.name); if (action === 'keep') { if (index < 0) throw httpError(400, 'Cannot keep an unknown MCP secret'); } else if (action === 'remove') { if (index >= 0) secrets.splice(index, 1); } else { if (typeof edit.value !== 'string' || !edit.value) throw httpError(400, 'A replacement MCP secret value is required'); if (index >= 0) secrets.splice(index, 1); secrets.push({ name: edit.name, value: edit.value }); } }
+  Object.assign(value, { name: body.name.trim(), transport: body.transport, url: body.url ?? null, command: body.command ?? null, args: body.args ?? [], secrets }); state.metadataChanged(); return json(values.map(mcpView));
+}
+function deleteMcpServer({ params }) { const chat = requireChat(params[0]); requireIdleConnectionEdit(chat); const values = state.mcpByChat.get(chat.id) ?? []; const index = values.findIndex((s) => s.id === params[1]); if (index < 0) throw httpError(404, 'MCP server not found'); values.splice(index, 1); values.forEach((s, position) => { s.position = position; }); state.metadataChanged(); return { status: 204, value: null }; }
+function orderMcpServers({ params, body }) { const chat = requireChat(params[0]); requireIdleConnectionEdit(chat); const values = state.mcpByChat.get(chat.id) ?? []; if (!Array.isArray(body.ids) || body.ids.length !== values.length || new Set(body.ids).size !== values.length) throw httpError(400, 'MCP order must contain every server exactly once'); const ordered = body.ids.map((id, position) => { const value = values.find((s) => s.id === id); if (!value) throw httpError(400, 'MCP order must contain every server exactly once'); return { ...value, position }; }); state.mcpByChat.set(chat.id, ordered); state.metadataChanged(); return json(ordered.map(mcpView)); }
+function getAdditionalRoots({ params }) { requireChat(params[0]); return json(state.additionalRootsByChat.get(params[0]) ?? []); }
+function setAdditionalRoots({ params, body }) { const chat = requireChat(params[0]); requireIdleConnectionEdit(chat); if (!Array.isArray(body.project_ids) || new Set(body.project_ids).size !== body.project_ids.length) throw httpError(400, 'Additional projects must be unique'); const roots = body.project_ids.map((projectId, position) => { if (!state.projects.has(projectId)) throw httpError(404, 'Project not found'); return { project_id: projectId, position }; }); state.additionalRootsByChat.set(chat.id, roots); state.metadataChanged(); return json(roots); }
 
 function remoteSessions({ params }) {
   const chat = requireChat(params[0]);

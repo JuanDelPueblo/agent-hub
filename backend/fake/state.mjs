@@ -111,6 +111,8 @@ export class FakeState {
     // make a default title available for reuse.
     this.nextChatNumber = 1;
     this.configByChat = new Map();
+    this.mcpByChat = new Map();
+    this.additionalRootsByChat = new Map();
     this.commandsByChat = new Map();
     this.modesByChat = new Map();
     this.usageByChat = new Map();
@@ -186,6 +188,8 @@ export class FakeState {
     this.elicitationsByChat.delete(chatId);
     this.remoteSessionsByChat.delete(chatId);
     this.configByChat.delete(chatId);
+    this.mcpByChat.delete(chatId);
+    this.additionalRootsByChat.delete(chatId);
   }
 
   // -------------------------------------------------------------- projects
@@ -249,6 +253,8 @@ export class FakeState {
     };
     this.chats.set(chat.id, chat);
     this.configByChat.set(chat.id, defaultConfigOptions(agent));
+    this.mcpByChat.set(chat.id, []);
+    this.additionalRootsByChat.set(chat.id, []);
     this.commandsByChat.set(chat.id, defaultCommands());
     this.modesByChat.set(chat.id, defaultModes());
     this.usageByChat.set(chat.id, defaultUsage());

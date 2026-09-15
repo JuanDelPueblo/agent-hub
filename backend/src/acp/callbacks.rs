@@ -59,6 +59,7 @@ pub struct CallbackHandler {
     agent_name: String,
     event_log: Arc<EventLog>,
     cwd: PathBuf,
+    roots: Vec<PathBuf>,
     base_env: Arc<HashMap<String, String>>,
     pub pending_permissions: Arc<RwLock<HashMap<String, PendingPermission>>>,
     pending_elicitations: Arc<RwLock<HashMap<String, PendingElicitation>>>,
@@ -82,12 +83,36 @@ impl CallbackHandler {
         base_env: Arc<HashMap<String, String>>,
         task_tracker: Arc<TerminalTaskTracker>,
     ) -> Self {
+        let roots = vec![cwd.canonicalize().unwrap_or_else(|_| cwd.clone())];
+        Self::new_with_roots(
+            policy,
+            session_id,
+            agent_name,
+            event_log,
+            cwd,
+            roots,
+            base_env,
+            task_tracker,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_roots(
+        policy: CallbackPolicy,
+        session_id: String,
+        agent_name: String,
+        event_log: Arc<EventLog>,
+        cwd: PathBuf,
+        roots: Vec<PathBuf>,
+        base_env: Arc<HashMap<String, String>>,
+        task_tracker: Arc<TerminalTaskTracker>,
+    ) -> Self {
         Self {
             policy: std::sync::RwLock::new(policy),
             session_id,
             agent_name,
             event_log,
             cwd,
+            roots,
             base_env,
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             pending_elicitations: Arc::new(RwLock::new(HashMap::new())),
@@ -139,13 +164,6 @@ impl CallbackHandler {
         path: &std::path::Path,
         allow_missing_leaf: bool,
     ) -> Result<(), agent_client_protocol_schema::Error> {
-        let canonical_cwd = self.cwd.canonicalize().map_err(|e| {
-            agent_client_protocol_schema::Error::new(
-                -32002,
-                format!("Failed to canonicalize cwd: {}", e),
-            )
-        })?;
-
         let canonical_target = if allow_missing_leaf && !path.exists() {
             let parent = path.parent().ok_or_else(|| {
                 agent_client_protocol_schema::Error::new(-32002, "Path has no parent")
@@ -169,14 +187,14 @@ impl CallbackHandler {
             })?
         };
 
-        if !canonical_target.starts_with(&canonical_cwd) {
+        if !self
+            .roots
+            .iter()
+            .any(|root| canonical_target.starts_with(root))
+        {
             return Err(agent_client_protocol_schema::Error::new(
                 -32003,
-                format!(
-                    "Path {} is outside allowed workspace {}",
-                    path.display(),
-                    self.cwd.display()
-                ),
+                "Path is outside the configured workspace roots",
             ));
         }
 

@@ -143,6 +143,28 @@ pub const MIGRATIONS: &[Migration] = &[
         // `CREATE TABLE/INDEX IF NOT EXISTS` is already idempotent.
         precondition: None,
     },
+    Migration {
+        version: 7,
+        name: "per_chat_acp_session_configuration",
+        sql: "CREATE TABLE IF NOT EXISTS chat_mcp_servers (
+            id TEXT PRIMARY KEY,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL CHECK(position >= 0),
+            data TEXT NOT NULL,
+            UNIQUE(chat_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_mcp_servers_chat_position ON chat_mcp_servers(chat_id, position);
+        CREATE TABLE IF NOT EXISTS chat_additional_roots (
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL CHECK(position >= 0),
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+            canonical_path TEXT NOT NULL,
+            PRIMARY KEY(chat_id, project_id),
+            UNIQUE(chat_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_additional_roots_project ON chat_additional_roots(project_id);",
+        precondition: None,
+    },
 ];
 
 pub fn latest_version() -> i64 {

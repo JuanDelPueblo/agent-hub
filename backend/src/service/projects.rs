@@ -54,6 +54,11 @@ impl HubService {
 
     pub fn delete_project(&self, id: &str) -> ServiceResult<()> {
         self.store.project(id)?;
+        if self.store.additional_root_references_project(id)? {
+            return Err(ServiceError::Conflict(
+                "Remove this project from every chat's additional workspace roots before deleting it".into(),
+            ));
+        }
         if self.store.chats()?.iter().any(|c| c.project_id == id) {
             return Err(ServiceError::Conflict(
                 "Delete the project's chats first (project files are never deleted)".into(),
