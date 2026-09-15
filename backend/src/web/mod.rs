@@ -1,3 +1,4 @@
+mod agent_auth;
 mod agents;
 mod auth;
 mod git;
@@ -6,6 +7,7 @@ mod hub;
 mod static_files;
 mod websocket;
 
+pub use agent_auth::*;
 pub use agents::*;
 pub use auth::*;
 pub use git::*;
@@ -178,6 +180,31 @@ pub fn router(state: AppState) -> Router {
                 .delete(agents::remove_agent),
         )
         .route("/api/agents/:id/update", post(agents::update_agent))
+        // Agent-level authentication. The static `terminal` segment comes
+        // before the method id, so a terminal start never matches the
+        // `authenticate` route.
+        .route("/api/agents/:id/auth", get(agent_auth::agent_auth))
+        .route(
+            "/api/agents/:id/auth/terminal/:method_id",
+            post(agent_auth::start_terminal_auth),
+        )
+        .route(
+            "/api/agents/:id/auth/:method_id",
+            post(agent_auth::authenticate_agent),
+        )
+        .route("/api/agents/:id/logout", post(agent_auth::logout_agent))
+        .route(
+            "/api/agent-auth/:flow_id",
+            get(agent_auth::terminal_auth_flow),
+        )
+        .route(
+            "/api/agent-auth/:flow_id/cancel",
+            post(agent_auth::cancel_terminal_auth),
+        )
+        .route(
+            "/api/agent-auth/:flow_id/ws",
+            get(agent_auth::terminal_auth_socket),
+        )
         .route("/api/status", get(api_get_status))
         .route("/ws", get(ws_handler))
         .fallback(static_handler)

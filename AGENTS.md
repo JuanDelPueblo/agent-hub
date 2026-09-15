@@ -32,6 +32,7 @@ Pueblo Hub is a single-owner persistent supervisor for local ACP coding agents.
 Important paths:
 
 - `backend/src/acp/` — ACP transport, callbacks, process protocol.
+- `backend/src/auth/` — agent-level authentication and its terminal PTY flows.
 - `backend/src/session/` — process/session lifecycle and turn coordination.
 - `backend/src/store/` — SQLite migrations and persistence domains.
 - `backend/src/service/` — `HubService`, the shared user-visible application operations.
@@ -157,6 +158,7 @@ pueblo-hub/
 │   │   ├── main.rs           # Binary entrypoint
 │   │   ├── lib.rs            # Library exports
 │   │   ├── acp/              # ACP protocol, callbacks, process supervision
+│   │   ├── auth/             # Agent authentication and terminal PTY flows
 │   │   ├── agents/           # Catalog, custom/installed records, Registry client and install logic
 │   │   ├── service/          # HubService: the operations every surface shares
 │   │   ├── session/          # Chat sessions, turn locks, idle reaping
@@ -231,8 +233,27 @@ pueblo-hub/
 - **`ServiceError`**: Names the kind of failure (not found, invalid, conflict,
   unavailable, timeout, internal). Each transport maps it to its own errors.
 
+### 5.5.1. Agent Authentication (`backend/src/auth/`)
+- **Scope**: Authentication belongs to an installed agent, not to a chat. The
+  coordinator starts its own short-lived ACP processes, so a login never
+  disturbs a chat that is running a turn.
+- **Inputs**: The invocation comes only from the installed `AgentRuntime` and
+  from the method the agent advertised at `initialize`. A request never
+  supplies an executable, an argument, a working directory, or an environment
+  value.
+- **Environment**: Every authentication process uses the sanitized per-agent
+  environment of T108 and a Pueblo-owned working directory. It never resolves
+  a project `.envrc`.
+- **Terminal methods**: They run in a real PTY, never through ACP
+  `terminal/create`. The client advertises the terminal-auth capability only
+  where that PTY is active. Exit status zero means success; anything else is a
+  failure.
+- **Secrecy**: Terminal input and output stay in the bounded in-memory
+  scrollback and on the flow socket. They never reach the store, a durable
+  event, or the tracing log.
+
 ### 5.6. Web API and Static Serving (`backend/src/web/`)
-- **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, permissions, and agent management. `GET/POST /api/agents`, `POST /api/agents/validate`, registry browse/refresh/install routes, and custom/registry lifecycle routes all adapt `HubService`.
+- **REST Endpoints**: Projects, directory browsing, git clone, chats, ACP prompts, configuration, permissions, agent management, and agent authentication. `GET/POST /api/agents`, `POST /api/agents/validate`, registry browse/refresh/install routes, custom/registry lifecycle routes, and the `/api/agents/:id/auth`, `/api/agents/:id/logout`, and `/api/agent-auth/:flowId` routes all adapt `HubService`.
 - **Adapters**: Handlers in `web/hub.rs` parse the request, call `HubService`,
   and map `ServiceError` to a status code. Business rules do not live here.
 - **Web-only work (`web/git.rs`)**: Repository cloning shells out to git with

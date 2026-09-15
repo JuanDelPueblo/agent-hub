@@ -1,5 +1,6 @@
 pub mod acp;
 pub mod agents;
+pub mod auth;
 pub mod config;
 pub mod events;
 pub mod service;

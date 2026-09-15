@@ -8,6 +8,7 @@
 //! This layer coordinates the store, the session manager, the event log, and
 //! the agent registry. It never speaks ACP itself; that stays in `acp/`.
 mod agents;
+mod auth;
 mod chats;
 mod error;
 mod projects;
@@ -20,6 +21,7 @@ pub use view::{ChatHistoryPage, ChatView, ChatWorkspaceSummary};
 pub use workspaces::{WorkspaceBranch, WorkspaceOptions};
 
 use crate::agents::{AgentCatalog, AgentManager, AgentSummary, HostRuntimeProbe};
+use crate::auth::AgentAuthService;
 use crate::config::Config;
 use crate::events::{EventLog, EventPayload};
 use crate::session::{AcpSession, SessionManager};
@@ -34,6 +36,8 @@ pub struct HubService {
     agents: Arc<AgentCatalog>,
     /// Installed-agent management over the same catalog the sessions use.
     agent_manager: Arc<AgentManager>,
+    /// Agent-level authentication over that same catalog.
+    agent_auth: Arc<AgentAuthService>,
     workspace_lock: tokio::sync::Mutex<()>,
     /// The boundary every project path is validated against.
     project_roots: Vec<String>,
@@ -67,12 +71,22 @@ impl HubService {
         agent_manager: Arc<AgentManager>,
         config: &Config,
     ) -> Arc<Self> {
+        // Startup builds one authentication service so a shutdown can reach
+        // its flows. A caller that supplies none gets a private one.
+        let agent_auth = config.agent_auth.clone().unwrap_or_else(|| {
+            AgentAuthService::new(
+                agents.clone(),
+                sessions.clone(),
+                Config::agent_auth_dir(&config.paths),
+            )
+        });
         Arc::new(Self {
             events: sessions.event_log().clone(),
             store,
             sessions,
             agents,
             agent_manager,
+            agent_auth,
             workspace_lock: tokio::sync::Mutex::new(()),
             project_roots: config.web.project_roots.clone(),
             prompt_timeout: config.timeouts.prompt.map(Duration::from_secs),

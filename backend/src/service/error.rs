@@ -13,8 +13,21 @@ pub enum ServiceError {
     Conflict(String),
     Unavailable(String),
     Timeout(String),
-    SavedConfigRejected { option_id: String, message: String },
-    EnvrcBlocked { path: PathBuf, message: String },
+    SavedConfigRejected {
+        option_id: String,
+        message: String,
+    },
+    EnvrcBlocked {
+        path: PathBuf,
+        message: String,
+    },
+    /// The agent needs authentication before it can serve the request. The
+    /// chat, its session row, and its history all stay intact, so the user
+    /// authenticates the agent and continues.
+    AuthRequired {
+        agent_id: String,
+        message: String,
+    },
     Internal(anyhow::Error),
 }
 
@@ -30,6 +43,7 @@ impl std::fmt::Display for ServiceError {
             | Self::Timeout(m) => f.write_str(m),
             Self::SavedConfigRejected { message, .. } => f.write_str(message),
             Self::EnvrcBlocked { message, .. } => f.write_str(message),
+            Self::AuthRequired { message, .. } => f.write_str(message),
             Self::Internal(e) => write!(f, "{e}"),
         }
     }
@@ -52,6 +66,17 @@ impl From<crate::store::StoreError> for ServiceError {
 /// and that contract is asserted by the integration tests.
 impl From<anyhow::Error> for ServiceError {
     fn from(e: anyhow::Error) -> Self {
+        // Recognized from the stable ACP error code, never from the wording
+        // of an agent's message.
+        if let Some(auth) = e.downcast_ref::<crate::acp::AuthRequired>() {
+            return Self::AuthRequired {
+                agent_id: auth.agent.clone(),
+                message: format!(
+                    "Agent '{}' requires authentication before it can continue",
+                    auth.agent
+                ),
+            };
+        }
         if let Some(env_err) = e.downcast_ref::<crate::workspace_env::WorkspaceEnvError>() {
             match env_err {
                 crate::workspace_env::WorkspaceEnvError::EnvrcBlocked { path, message } => {

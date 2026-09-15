@@ -226,6 +226,36 @@ summaries report source, availability, mutability, display metadata, and an
 unavailable reason when applicable; launch commands and environment values are
 never returned.
 
+Agent authentication is provider-neutral too, and it belongs to the agent
+rather than to a chat:
+
+- `GET /api/agents/:id/auth` reports the methods the agent advertised at
+  `initialize`, whether it supports logout, and whether this build runs
+  terminal authentication. A method type Pueblo Hub cannot run comes back as
+  unsupported; Pueblo Hub never guesses a fallback for it.
+- `POST /api/agents/:id/auth/:methodId` runs an `agent` method through the
+  stable `authenticate` request.
+- `POST /api/agents/:id/logout` runs the stable `logout` request. It goes out
+  only when the agent advertised that capability, and it never touches Pueblo
+  Hub chats, sessions, or history.
+- `POST /api/agents/:id/auth/terminal/:methodId` starts a `terminal` method in
+  a real PTY and returns a flow. `GET /api/agent-auth/:flowId`,
+  `POST /api/agent-auth/:flowId/cancel`, and `GET /api/agent-auth/:flowId/ws`
+  read, cancel, and drive that flow.
+
+A terminal flow reproduces the configured agent invocation: the same
+executable, the same arguments with the advertised ones appended, the same
+sanitized environment with the advertised values overriding it, and a
+Pueblo-owned working directory. No request supplies an executable, an
+argument, a working directory, or an environment value, so the API cannot
+become a remote shell. Terminal input and output stay in memory: they never
+reach the event log, the database, or the server log. Cancelling a flow, a
+flow nobody watches, and server shutdown all kill the whole process tree.
+
+An agent that answers `auth_required` produces a recoverable `409` with
+`"code": "auth_required"` and the agent id. The chat and its history stay
+exactly as they were.
+
 Deployments can also supply `--declarative-agents-file` (or
 `PUEBLO_HUB_DECLARATIVE_AGENTS_FILE`). It has the same shape as `agents.json`
 plus `pass_env`, `default_permission_policy`, and `description`, feeds the

@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod callbacks;
 pub mod process;
 pub mod protocol;
@@ -70,6 +71,71 @@ impl std::fmt::Display for RequestTimedOut {
 
 impl std::error::Error for RequestTimedOut {}
 
+/// A JSON-RPC error an agent returned.
+///
+/// The code stays on the error so a caller can recognize a stable protocol
+/// condition such as `auth_required`. A check against the user-facing message
+/// would break on every agent that words that message differently.
+#[derive(Debug, Clone)]
+pub struct AcpRpcError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+}
+
+impl AcpRpcError {
+    /// Whether the agent reported the stable `auth_required` error code.
+    pub fn is_auth_required(&self) -> bool {
+        i32::try_from(self.code).is_ok_and(|code| {
+            agent_client_protocol_schema::ErrorCode::from(code)
+                == agent_client_protocol_schema::ErrorCode::AuthRequired
+        })
+    }
+}
+
+impl std::fmt::Display for AcpRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RPC error {}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for AcpRpcError {}
+
+/// The agent needs authentication before it can serve a request.
+///
+/// The session layer attaches the agent id, so a Hub surface can offer the
+/// matching authentication flow. The chat keeps its durable history; only the
+/// agent process failed to start or to answer.
+#[derive(Debug, Clone)]
+pub struct AuthRequired {
+    pub agent: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for AuthRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Agent '{}' requires authentication: {}",
+            self.agent, self.message
+        )
+    }
+}
+
+impl std::error::Error for AuthRequired {}
+
+/// Rewrites an agent-reported `auth_required` failure as the typed recoverable
+/// error. Every other error passes through unchanged.
+pub fn map_auth_required(agent: &str, error: anyhow::Error) -> anyhow::Error {
+    match error.downcast_ref::<AcpRpcError>() {
+        Some(rpc) if rpc.is_auth_required() => anyhow::Error::new(AuthRequired {
+            agent: agent.to_owned(),
+            message: rpc.message.clone(),
+        }),
+        _ => error,
+    }
+}
+
 enum WriterMsg {
     Line(String),
     Shutdown,
@@ -84,6 +150,8 @@ pub struct AcpClient {
     pub last_usage: Arc<tokio::sync::RwLock<serde_json::Value>>,
     pub agent_info: tokio::sync::RwLock<serde_json::Value>,
     pub auth_methods: tokio::sync::RwLock<serde_json::Value>,
+    /// Typed provider-neutral authentication state read at `initialize`.
+    auth_state: tokio::sync::RwLock<self::auth::AgentAuthState>,
     writer_tx: mpsc::Sender<WriterMsg>,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<ResponseResult>>>>,
     next_id: AtomicI64,
@@ -176,6 +244,7 @@ impl AcpClient {
             last_usage,
             agent_info: tokio::sync::RwLock::new(serde_json::Value::Null),
             auth_methods: tokio::sync::RwLock::new(serde_json::json!([])),
+            auth_state: tokio::sync::RwLock::new(self::auth::AgentAuthState::default()),
             writer_tx,
             pending,
             next_id: AtomicI64::new(1),
@@ -294,6 +363,14 @@ impl AcpClient {
                 agent_client_protocol_schema::ElicitationCapabilities::new()
                     .form(agent_client_protocol_schema::ElicitationFormCapabilities::new())
                     .url(agent_client_protocol_schema::ElicitationUrlCapabilities::new()),
+            )
+            // Advertise terminal authentication only where the real PTY runs.
+            // An agent may offer a `terminal` auth method only after the
+            // client claims this capability, so a build without a usable PTY
+            // must never claim it.
+            .auth(
+                agent_client_protocol_schema::AuthCapabilities::new()
+                    .terminal(crate::auth::TERMINAL_AUTH_SUPPORTED),
             );
         let req = InitializeRequest::new(ProtocolVersion::LATEST)
             .client_info(agent_client_protocol_schema::Implementation::new(
@@ -317,16 +394,72 @@ impl AcpClient {
             .cloned()
             .unwrap_or(serde_json::json!({}));
         // Preserve generic agent identity and auth metadata for later use.
-        // T107 owns login/logout; this layer only stores what initialize saw.
         *self.agent_info.write().await = result
             .get("agentInfo")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        *self.auth_methods.write().await = result
+        let auth_methods = result
             .get("authMethods")
             .cloned()
             .unwrap_or(serde_json::json!([]));
+        // Keep the typed state beside the raw snapshot. The typed state is
+        // what the authentication surface reads; the raw value stays for
+        // diagnostics and for fields this build does not model.
+        *self.auth_state.write().await = self::auth::AgentAuthState::from_initialize(
+            &auth_methods,
+            &*self.capabilities.read().await,
+        );
+        *self.auth_methods.write().await = auth_methods;
         Ok(response)
+    }
+
+    /// The typed authentication state the last `initialize` returned.
+    pub async fn auth_state(&self) -> self::auth::AgentAuthState {
+        self.auth_state.read().await.clone()
+    }
+
+    /// Runs the stable `authenticate` method for one advertised `agent`
+    /// method.
+    ///
+    /// The method must come from the agent's own `authMethods`. A terminal
+    /// method never reaches `authenticate`: the stable schema requires the
+    /// client to run the configured program instead. An unsupported method
+    /// kind is reported, never guessed.
+    pub async fn authenticate(&self, method_id: &str) -> anyhow::Result<serde_json::Value> {
+        let state = self.auth_state.read().await.clone();
+        let method = state.method(method_id).ok_or_else(|| {
+            anyhow::anyhow!("Agent does not advertise the authentication method '{method_id}'")
+        })?;
+        match &method.kind {
+            self::auth::AuthMethodKind::Agent => {}
+            self::auth::AuthMethodKind::Terminal(_) => anyhow::bail!(
+                "Authentication method '{method_id}' is a terminal method; run it in a terminal instead"
+            ),
+            self::auth::AuthMethodKind::Unsupported(kind) => anyhow::bail!(
+                "Authentication method '{method_id}' uses the unsupported type '{kind}'"
+            ),
+        }
+        let request = agent_client_protocol_schema::AuthenticateRequest::new(method_id.to_owned());
+        self.send_request_with_timeout("authenticate", request, std::time::Duration::from_secs(120))
+            .await
+    }
+
+    /// Runs the capability-gated stable `logout` method.
+    ///
+    /// The request goes out only when the agent advertised
+    /// `agentCapabilities.auth.logout`. Pueblo Hub never sends it
+    /// speculatively.
+    pub async fn logout(&self) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(
+            self.auth_state.read().await.logout_supported,
+            "Agent does not support logout"
+        );
+        self.send_request_with_timeout(
+            "logout",
+            agent_client_protocol_schema::LogoutRequest::new(),
+            std::time::Duration::from_secs(60),
+        )
+        .await
     }
 
     pub async fn new_session(&self, cwd: &Path) -> anyhow::Result<NewSessionResponse> {
@@ -827,7 +960,13 @@ async fn reader_task(
                         pending.retain(|_, tx| !tx.is_closed());
                         if let Some(tx) = pending.remove(&numeric_id) {
                             let response = if let Some(err) = error {
-                                Err(anyhow::anyhow!("RPC error {}: {}", err.code, err.message))
+                                // Keep the code, so a caller can recognize a
+                                // stable condition such as `auth_required`.
+                                Err(anyhow::Error::new(AcpRpcError {
+                                    code: err.code,
+                                    message: err.message,
+                                    data: err.data,
+                                }))
                             } else {
                                 Ok(result.unwrap_or(serde_json::Value::Null))
                             };

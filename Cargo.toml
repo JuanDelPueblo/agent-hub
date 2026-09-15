@@ -76,6 +76,13 @@ process-wrap = { version = "6", default-features = false, features = ["tokio1", 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_JobObjects"] }
 
+[target.'cfg(unix)'.dependencies]
+# Terminal authentication needs a real PTY, and the whole process tree must
+# die on cancel. The Unix spawn path makes the child a session leader, so
+# `killpg` reaches every descendant.
+portable-pty = { version = "0.9", default-features = false }
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.14"
 # `oneshot` drives the axum router directly in the integration tests.

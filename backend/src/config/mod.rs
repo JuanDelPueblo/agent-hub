@@ -191,6 +191,9 @@ pub struct Config {
     /// The manager that owns the durable installed-agent rows. Startup builds
     /// one, loads the rows, and passes it here so every surface shares it.
     pub agent_manager: Option<Arc<AgentManager>>,
+    /// The service that owns agent-level authentication and its PTY flows.
+    /// Startup builds one so shutdown can end every flow it started.
+    pub agent_auth: Option<Arc<crate::auth::AgentAuthService>>,
     pub registry: RegistryConfig,
     pub timeouts: TimeoutConfig,
     pub web: WebConfig,
@@ -208,10 +211,20 @@ impl Default for Config {
                 AgentDefinition::claudecode_default(),
             ])),
             agent_manager: None,
+            agent_auth: None,
             registry: RegistryConfig::default(),
             timeouts: TimeoutConfig::default(),
             web: WebConfig::default(),
         }
+    }
+}
+
+impl Config {
+    /// The working directory every agent-level authentication process runs
+    /// in. It belongs to Pueblo Hub, so an authentication probe never runs in
+    /// a project workspace or in a path a browser chose.
+    pub fn agent_auth_dir(paths: &PuebloPaths) -> PathBuf {
+        paths.state_dir.join("agent-auth")
     }
 }
 

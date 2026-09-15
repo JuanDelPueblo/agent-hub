@@ -301,7 +301,10 @@ impl AcpSession {
             if error.is::<RequestTimedOut>() {
                 anyhow::anyhow!("ACP initialize timed out")
             } else {
-                error
+                // An agent that answers `auth_required` is recoverable: the
+                // user authenticates the agent and reconnects. Keep the typed
+                // identity so the Hub layer can say so.
+                crate::acp::map_auth_required(&self.key.agent, error)
             }
         }) {
             client.shutdown().await;
@@ -323,7 +326,7 @@ impl AcpSession {
                 if error.is::<RequestTimedOut>() {
                     anyhow::anyhow!("ACP session setup timed out")
                 } else {
-                    error
+                    crate::acp::map_auth_required(&self.key.agent, error)
                 }
             }) {
             Ok(s) => s,
@@ -609,7 +612,9 @@ impl AcpSession {
                         .await?;
                     self.touch().await;
                 }
-                Err(err)
+                // The chat and its history are intact. An `auth_required`
+                // answer only means the agent needs credentials first.
+                Err(crate::acp::map_auth_required(&self.key.agent, err))
             }
             PromptAttempt::TimedOut => {
                 self.mark_dead().await?;
@@ -1470,6 +1475,16 @@ impl SessionManager {
         if let Ok(mut guard) = self.secret_env.write() {
             *guard = secrets;
         }
+    }
+
+    /// The stashed secrets, for a caller that starts its own agent process.
+    /// Agent-level authentication uses this with `resolve_agent_env`, so an
+    /// authentication process obeys the same per-agent isolation a chat does.
+    pub fn secret_env(&self) -> HashMap<String, String> {
+        self.secret_env
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 
     pub async fn get_or_create(&self, agent: &str, cwd: &Path) -> anyhow::Result<Arc<AcpSession>> {

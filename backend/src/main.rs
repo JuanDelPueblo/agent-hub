@@ -1,6 +1,7 @@
 use clap::Parser;
 use pueblo_hub::{
     agents::{parse_agents, parse_declarative_agents, AgentManager, HostRuntimeProbe},
+    auth::AgentAuthService,
     config::{Config, PathOverrides, PuebloPaths},
     events::EventLog,
     session::SessionManager,
@@ -145,6 +146,14 @@ async fn main() -> anyhow::Result<()> {
 
     let manager = SessionManager::with_store(config.agents.clone(), events, Some(store));
     manager.set_secret_env(secrets);
+    // One authentication service for the whole process, so shutdown ends
+    // every terminal authentication flow and kills its process tree.
+    let agent_auth = AgentAuthService::new(
+        config.agents.clone(),
+        manager.clone(),
+        Config::agent_auth_dir(&config.paths),
+    );
+    config.agent_auth = Some(agent_auth.clone());
     let web = WebServer::new(manager.clone(), Arc::new(config));
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -155,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = tokio::signal::ctrl_c().await;
     };
     let result = tokio::select! { r = web.run() => r, _ = shutdown => Ok(()) };
+    agent_auth.shutdown();
     manager.shutdown_all().await;
     result
 }
