@@ -8,7 +8,27 @@
     @if (!chat()) {
       <section class="status-state"><mat-icon>chat</mat-icon><h1>No chat selected</h1><p>Choose a chat from the navigation.</p></section>
     } @else {
-      @if (connectError()) {
+      @if (authRequired(); as required) {
+        <div class="status-banner auth-banner" role="alert">
+          <div class="banner-content">
+            <mat-icon>lock</mat-icon>
+            <div class="banner-text">
+              <strong>Authentication required</strong>
+              <span>
+                {{ required.message || ('Sign in to ' + (required.agent_name || required.agent_id || 'this agent') +
+                ' to continue. This chat and its history are preserved, and you can send again after signing in.') }}
+              </span>
+            </div>
+          </div>
+          <div class="banner-actions">
+            <a mat-flat-button type="button" [routerLink]="['/agents']" [queryParams]="{ agent: required.agent_id }">
+              Open agent authentication
+            </a>
+            <button mat-button type="button" (click)="dismissAuthRequired()">Dismiss</button>
+          </div>
+        </div>
+      }
+      @if (connectError() && !authRequired()) {
         <div class="status-banner error-banner" role="alert">
           <div class="banner-content">
             <mat-icon>{{ blockedEnvrc() ? 'lock' : 'error_outline' }}</mat-icon>

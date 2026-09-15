@@ -1,6 +1,7 @@
 @use '@angular/material' as mat;
 @use '@fontsource-variable/roboto';
 @use 'material-symbols/outlined.css';
+@use '@xterm/xterm/css/xterm.css';
 
 // One family for both the plain and the brand type ramps. Roboto Variable comes
 // from the bundled @fontsource-variable package, so the build stays offline.

@@ -1,0 +1,48 @@
+<div class="agents-page">
+  <header class="page-head">
+    <div class="head-text">
+      <h1>Agents</h1>
+      <p>Manage installed ACP agents, browse the ACP Registry, and authenticate providers.</p>
+    </div>
+    <button mat-flat-button type="button" (click)="createCustom()">
+      <mat-icon>add</mat-icon> New custom agent
+    </button>
+  </header>
+
+  @if (actionError()) { <div class="banner error" role="alert">{{ actionError() }}</div> }
+  @if (notice()) { <div class="banner notice" role="status">{{ notice() }}</div> }
+  @if (state.agentError(); as catalogError) { <div class="banner error" role="alert">{{ catalogError }}</div> }
+
+  @if (state.agentsLoading() && state.agents().length === 0) {
+    <mat-progress-bar mode="indeterminate" aria-label="Loading agents" />
+  }
+
+  <section class="installed" aria-label="Installed agents">
+    <h2>Installed <span class="count">{{ state.agents().length }}</span></h2>
+    @if (state.agents().length === 0) {
+      <p class="empty">No agents are installed yet. Install one from the ACP Registry below.</p>
+    } @else {
+      <div class="cards">
+        @for (agent of state.agents(); track agent.id) {
+          <hub-agent-card
+            [agent]="agent"
+            [targeted]="targetAgentId() === agent.id"
+            [auth]="authFor(agent.id)"
+            [authLoading]="authLoadingFor(agent.id)"
+            [authError]="authErrorFor(agent.id)"
+            (authenticate)="authenticate(agent, $event)"
+            (terminal)="openTerminalAuth(agent, $event)"
+            (logout)="logout(agent)"
+            (edit)="editCustom(agent)"
+            (remove)="removeCustom(agent)"
+            (update)="update(agent)"
+            (uninstall)="uninstall(agent)"
+            (retryAuth)="reloadAuth(agent)"
+          />
+        }
+      </div>
+    }
+  </section>
+
+  <hub-registry-browser />
+</div>

@@ -2,6 +2,7 @@ import { inject, Service, signal, WritableSignal } from '@angular/core';
 import { ApiError, ApiService } from '../core/api/api.service';
 import { EventSocketService } from '../core/event-socket.service';
 import type {
+  AuthRequiredInfo,
   Chat,
   ConfigOption,
   PermissionPolicy,
@@ -49,6 +50,8 @@ export class ChatSessionStore {
   readonly historyHasOlderByChat = signal<BooleanMap>({});
   readonly historyErrors = signal<ErrorMap>({});
   readonly blockedEnvrcByChat = signal<Record<string, { path: string; message: string }>>({});
+  /** Chats that failed because the agent needs authentication first. */
+  readonly authRequiredByChat = signal<Record<string, AuthRequiredInfo>>({});
 
   private readonly inFlightConnections = new Map<string, Promise<Chat>>();
   private readonly inFlightConfigs = new Map<string, Promise<ConfigOption[]>>();
@@ -132,6 +135,7 @@ export class ChatSessionStore {
         return options;
       } catch (error) {
         this.setError(chatId, this.errorMessage(error, 'Failed to load agent configuration'));
+        this.captureAuthRequired(chatId, error);
         if (error instanceof ApiError && error.code?.toLowerCase() === 'saved_config_rejected') {
           const optionId = error.details?.['option_id'] ?? error.details?.['optionId'];
           if (typeof optionId === 'string') {
@@ -180,6 +184,7 @@ export class ChatSessionStore {
           const currentChat = this.findChat(chatId);
           if (!currentChat || currentChat.process_state !== 'RUNNING') {
             this.setError(chatId, this.errorMessage(error, 'Failed to connect to agent'));
+            this.captureAuthRequired(chatId, error);
             if (error instanceof ApiError && error.code === 'saved_config_rejected') {
               const optionId = error.details?.['option_id'];
               if (typeof optionId === 'string') {
@@ -197,6 +202,7 @@ export class ChatSessionStore {
 
         this.applyChatPatch(chatId, updated);
         this.clearError(chatId);
+        this.clearAuthRequired(chatId);
         try {
           await this.fetchConfig(chatId);
         } catch (error) {
@@ -333,8 +339,10 @@ export class ChatSessionStore {
     try {
       await this.api.promptChat(chatId, text);
       this.clearError(chatId);
+      this.clearAuthRequired(chatId);
       this.applyChatPatch(chatId, { turn_state: 'PROMPTING' });
     } catch (error) {
+      this.captureAuthRequired(chatId, error);
       if (error instanceof ApiError && error.code?.toLowerCase() === 'saved_config_rejected') {
         const optionId = error.details?.['option_id'] ?? error.details?.['optionId'];
         if (typeof optionId === 'string') {
@@ -562,6 +570,7 @@ export class ChatSessionStore {
       this.connectErrors,
       this.rejectedConfigByChat,
       this.blockedEnvrcByChat,
+      this.authRequiredByChat,
       this.historyHasOlderByChat,
       this.historyErrors,
       this.historyCursors,
@@ -625,6 +634,31 @@ export class ChatSessionStore {
 
   private setError(chatId: string, message: string): void {
     this.connectErrors.update((current) => ({ ...current, [chatId]: message }));
+  }
+
+  /**
+   * Records a structured `auth_required` failure. The chat stays intact, so
+   * the view can link to the agent's authentication surface and retry after.
+   */
+  private captureAuthRequired(chatId: string, error: unknown): void {
+    if (!(error instanceof ApiError) || error.code?.toLowerCase() !== 'auth_required') return;
+    const details = error.details ?? {};
+    const agentId = details['agent_id'] ?? details['agentId'];
+    const info: AuthRequiredInfo = {
+      agent_id: typeof agentId === 'string' ? agentId : this.findChat(chatId)?.agent,
+      agent_name: typeof details['agent_name'] === 'string' ? (details['agent_name'] as string) : null,
+      message: typeof details['message'] === 'string' ? (details['message'] as string) : error.message,
+    };
+    this.authRequiredByChat.update((current) => ({ ...current, [chatId]: info }));
+  }
+
+  clearAuthRequired(chatId: string): void {
+    this.authRequiredByChat.update((current) => {
+      if (!(chatId in current)) return current;
+      const next = { ...current };
+      delete next[chatId];
+      return next;
+    });
   }
 
   private clearError(chatId: string): void {

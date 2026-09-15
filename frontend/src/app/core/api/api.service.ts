@@ -2,16 +2,25 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Service } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type {
+  AgentAuthFlow,
+  AgentAuthState,
+  AgentManagementDetail,
+  AgentSummary,
   Chat,
   CloneProjectInput,
   ConfigOption,
+  CustomAgentInput,
   DirectoryListing,
+  InstallRegistryAgentInput,
   PermissionPolicy,
   Project,
   ChatWorkspaceSelection,
+  RegistryCatalog,
+  RemoveOutcome,
+  UpdateOutcome,
+  ValidationReport,
   WorkspaceOptions,
   ChatHistoryPage,
-  AgentSummary,
   TerminalTaskSummary,
   TerminalTaskDetails,
   RichContentBlock,
@@ -267,6 +276,100 @@ export class ApiService {
 
   fetchAgents(): Promise<AgentSummary[]> {
     return this.request<AgentSummary[]>('/api/agents');
+  }
+
+  fetchAgentDetail(id: string): Promise<AgentManagementDetail> {
+    return this.request<AgentManagementDetail>(`/api/agents/${encodeURIComponent(id)}`);
+  }
+
+  validateCustomAgent(input: CustomAgentInput): Promise<ValidationReport> {
+    return this.request<ValidationReport>('/api/agents/validate', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  createCustomAgent(input: CustomAgentInput): Promise<AgentSummary> {
+    return this.request<AgentSummary>('/api/agents', { method: 'POST', body: input });
+  }
+
+  editCustomAgent(id: string, input: CustomAgentInput): Promise<AgentSummary> {
+    return this.request<AgentSummary>(`/api/agents/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  }
+
+  fetchRegistry(query?: string, refresh = false): Promise<RegistryCatalog> {
+    const params = new URLSearchParams();
+    if (query && query.trim()) params.set('q', query.trim());
+    if (refresh) params.set('refresh', 'true');
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.request<RegistryCatalog>(`/api/agents/registry${suffix}`);
+  }
+
+  refreshRegistry(): Promise<RegistryCatalog> {
+    return this.request<RegistryCatalog>('/api/agents/registry/refresh', { method: 'POST' });
+  }
+
+  installRegistryAgent(input: InstallRegistryAgentInput): Promise<AgentSummary> {
+    return this.request<AgentSummary>('/api/agents/registry/install', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  updateRegistryAgent(id: string): Promise<UpdateOutcome> {
+    return this.request<UpdateOutcome>(`/api/agents/${encodeURIComponent(id)}/update`, {
+      method: 'POST',
+    });
+  }
+
+  async removeAgent(id: string): Promise<RemoveOutcome> {
+    return this.request<RemoveOutcome>(`/api/agents/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  fetchAgentAuth(id: string): Promise<AgentAuthState> {
+    return this.request<AgentAuthState>(`/api/agents/${encodeURIComponent(id)}/auth`);
+  }
+
+  authenticateAgent(id: string, methodId: string): Promise<AgentAuthState> {
+    return this.request<AgentAuthState>(
+      `/api/agents/${encodeURIComponent(id)}/auth/${encodeURIComponent(methodId)}`,
+      { method: 'POST' },
+    );
+  }
+
+  logoutAgent(id: string): Promise<AgentAuthState> {
+    return this.request<AgentAuthState>(`/api/agents/${encodeURIComponent(id)}/logout`, {
+      method: 'POST',
+    });
+  }
+
+  startTerminalAuth(id: string, methodId: string): Promise<AgentAuthFlow> {
+    return this.request<AgentAuthFlow>(
+      `/api/agents/${encodeURIComponent(id)}/auth/terminal/${encodeURIComponent(methodId)}`,
+      { method: 'POST' },
+    );
+  }
+
+  fetchAgentAuthFlow(flowId: string): Promise<AgentAuthFlow> {
+    return this.request<AgentAuthFlow>(`/api/agent-auth/${encodeURIComponent(flowId)}`);
+  }
+
+  async cancelAgentAuthFlow(flowId: string): Promise<void> {
+    await this.request(`/api/agent-auth/${encodeURIComponent(flowId)}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  /** The opaque flow id is the only value the browser sends to open the PTY. */
+  agentAuthSocketUrl(flowId: string): string {
+    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = typeof window !== 'undefined' ? window.location.host : 'localhost';
+    return `${protocol}://${host}/api/agent-auth/${encodeURIComponent(flowId)}/ws`;
   }
 
   fetchStatus(): Promise<StatusResponse> {

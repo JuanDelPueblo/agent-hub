@@ -11,14 +11,12 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-import { FakeAgentAuth } from './agent-auth.mjs';
 import { upgrade } from './websocket.mjs';
 import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions, validateCustomInput } from './state.mjs';
 import { answerElicitation, answerPermission, cancel, isRunning, listPendingElicitations, startTurn } from './turns.mjs';
 
 const options = parseArgs(process.argv.slice(2));
 const state = new FakeState();
-const agentAuthState = new FakeAgentAuth();
 
 // ---------------------------------------------------------------- routing
 
@@ -72,12 +70,15 @@ const routes = [
   ['POST', /^\/api\/agents\/registry\/refresh$/, refreshRegistry],
   ['POST', /^\/api\/agents\/registry\/install$/, installRegistryAgent],
   ['POST', /^\/api\/agents\/([^/]+)\/update$/, updateRegistryAgent],
-  ['GET', /^\/api\/agents\/([^/]+)\/auth$/, agentAuth],
+  // T111 authentication routes. The dedicated agent-auth surface is separate
+  // from the per-agent routes, and the flow id stays opaque to the browser.
+  ['GET', /^\/api\/agents\/([^/]+)\/auth$/, getAgentAuth],
   ['POST', /^\/api\/agents\/([^/]+)\/auth\/terminal\/([^/]+)$/, startTerminalAuth],
-  ['POST', /^\/api\/agents\/([^/]+)\/auth\/([^/]+)$/, authenticateAgent],
-  ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgent],
-  ['GET', /^\/api\/agent-auth\/([^/]+)$/, terminalAuthFlow],
-  ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelTerminalAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/([^/]+)$/, authenticateAgentRoute],
+  ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgentRoute],
+  ['GET', /^\/api\/agent-auth\/([^/]+)$/, getAgentAuthFlow],
+  ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelAgentAuthFlow],
+  ['GET', /^\/api\/agents\/([^/]+)$/, getAgentDetail],
   ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
   ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
   ['GET', /^\/api\/status$/, getStatus],
@@ -122,7 +123,7 @@ server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, 'http://localhost');
   const flowMatch = /^\/api\/agent-auth\/([^/]+)\/ws$/.exec(url.pathname);
   if (flowMatch) {
-    handleFlowSocket(request, socket, head, decodeURIComponent(flowMatch[1]));
+    handleAuthFlowSocket(request, socket, head, decodeURIComponent(flowMatch[1]));
     return;
   }
   if (url.pathname !== '/ws') {
@@ -185,98 +186,18 @@ function handleWebSocket(request, rawSocket, head) {
   socket.onClose = () => unsubscribe?.();
 }
 
-/** The terminal socket of one authentication flow. */
-function handleFlowSocket(request, rawSocket, head, flowId) {
-  const flow = agentAuthState.get(flowId);
-  if (!flow) {
+/** Opens the simulated PTY WebSocket for one opaque authentication flow. */
+function handleAuthFlowSocket(request, rawSocket, head, flowId) {
+  if (!state.flowView(flowId)) {
     rawSocket.end('HTTP/1.1 404 Not Found\r\n\r\n');
     return;
   }
   const socket = upgrade(request, rawSocket, head);
   if (!socket) return;
-
-  const listener = (message) => socket.send(JSON.stringify(message));
-  flow.listeners.add(listener);
-  // The retained tail first, then the current lifecycle state.
-  socket.send(JSON.stringify({ type: 'output', data: flow.scrollback }));
-  socket.send(JSON.stringify({ type: 'state', ...agentAuthState.flowView(flow) }));
-
-  socket.onMessage = (text) => {
-    let message;
-    try {
-      message = JSON.parse(text);
-    } catch {
-      return; // A malformed frame cannot change state.
-    }
-    agentAuthState.handleMessage(flow, message);
-  };
-  socket.onClose = () => flow.listeners.delete(listener);
+  state.attachFlowSocket(flowId, socket);
 }
 
 // --------------------------------------------------------------- handlers
-
-// ------------------------------------------------- agent authentication
-
-function agentAuth({ params: [agentId] }) {
-  const view = agentAuthState.agentView(agentId);
-  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
-  return json(view);
-}
-
-function authenticateAgent({ params: [agentId, methodId] }) {
-  const view = agentAuthState.agentView(agentId);
-  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
-  const method = agentAuthState.method(agentId, methodId);
-  if (!method) {
-    throw httpError(404, `Agent '${agentId}' does not advertise the authentication method '${methodId}'`);
-  }
-  if (method.type === 'terminal') {
-    throw httpError(400, `Authentication method '${methodId}' runs in a terminal. Start a terminal authentication flow instead.`);
-  }
-  if (method.type !== 'agent') {
-    throw httpError(400, `Authentication method '${methodId}' uses the unsupported type '${method.type}'`);
-  }
-  agentAuthState.authenticated.add(agentId);
-  return json(view);
-}
-
-function logoutAgent({ params: [agentId] }) {
-  const view = agentAuthState.agentView(agentId);
-  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
-  if (!view.logout_supported) {
-    throw httpError(409, `Agent '${agentId}' does not support logout`);
-  }
-  agentAuthState.authenticated.delete(agentId);
-  return json(view);
-}
-
-function startTerminalAuth({ params: [agentId, methodId] }) {
-  const view = agentAuthState.agentView(agentId);
-  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
-  const method = agentAuthState.method(agentId, methodId);
-  if (!method) {
-    throw httpError(404, `Agent '${agentId}' does not advertise the authentication method '${methodId}'`);
-  }
-  if (method.type !== 'terminal') {
-    throw httpError(400, `Authentication method '${methodId}' is not a terminal method`);
-  }
-  const { flow, error } = agentAuthState.startFlow(agentId, methodId);
-  if (error) throw httpError(409, error);
-  return json(agentAuthState.flowView(flow));
-}
-
-function terminalAuthFlow({ params: [flowId] }) {
-  const flow = agentAuthState.get(flowId);
-  if (!flow) throw httpError(404, 'Authentication flow not found');
-  return json(agentAuthState.flowView(flow));
-}
-
-function cancelTerminalAuth({ params: [flowId] }) {
-  const flow = agentAuthState.get(flowId);
-  if (!flow) throw httpError(404, 'Authentication flow not found');
-  agentAuthState.cancel(flow);
-  return json(agentAuthState.flowView(flow));
-}
 
 function createProject({ body }) {
   const name = requireString(body, 'name');
@@ -401,32 +322,40 @@ function editAgent({ params, body }) {
 
 function removeAgent({ params }) { return json(state.removeAgent(params[0])); }
 
+function getAgentDetail({ params }) { return json(state.agentDetail(params[0])); }
+
 function registryAgents({ url }) {
-  const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
-  const agents = [{
-    id: 'example-acp', name: 'Example ACP', version: '1.0.0',
-    description: 'A representative ACP Registry entry for frontend development.',
-    distributions: ['npx'], platforms: [], selected_distribution: 'npx', update_available: false,
-  }].filter((agent) => !query || `${agent.id} ${agent.name} ${agent.description}`.toLowerCase().includes(query));
-  return json({ status: 'cached', source_url: 'https://registry.example.invalid/registry.json', registry_version: '1.0.0', fetched_at: '2026-01-01T00:00:00Z', host: 'fake-host', rejected: [], agents });
+  return json(state.registryView(url.searchParams.get('q') ?? ''));
 }
 
 function refreshRegistry({ url }) { return registryAgents({ url }); }
 
-function installRegistryAgent({ body }) {
-  if (body.registry_id !== 'example-acp') throw httpError(404, 'Registry agent not found');
-  const id = body.agent_id?.trim() || body.registry_id;
-  if (state.agent(id)) throw httpError(409, 'An agent already uses that id');
-  const agent = { id, display_name: body.display_name?.trim() || 'Example ACP', source: 'registry', availability: 'available', usage_provider: body.usage_provider ?? null, metadata: body.metadata ?? null, mutability: 'registry_managed', display: { description: 'A representative ACP Registry entry for frontend development.', version: '1.0.0' } };
-  AGENTS.push(agent); state.metadataChanged(); return json(agent);
+function installRegistryAgent({ body }) { return json(state.installRegistryAgent(body)); }
+
+function updateRegistryAgent({ params }) { return json(state.updateRegistryAgent(params[0])); }
+
+// ------------------------------------------------------- authentication
+
+function getAgentAuth({ params }) { return json(state.agentAuth(params[0])); }
+
+function authenticateAgentRoute({ params }) {
+  return json(state.authenticateAgent(params[0], params[1]));
 }
 
-function updateRegistryAgent({ params }) {
-  const agent = state.agent(params[0]);
-  if (!agent) throw httpError(404, 'Agent not found');
-  if (agent.source !== 'registry') throw httpError(409, 'Only registry agents can update');
-  return json({ updated: false, from_version: agent.display.version ?? '1.0.0', to_version: agent.display.version ?? '1.0.0', agent });
+function logoutAgentRoute({ params }) { return json(state.logoutAgent(params[0])); }
+
+function startTerminalAuth({ params }) {
+  const flow = state.startTerminalFlow(params[0], params[1]);
+  return json(state.flowView(flow.flow_id), 200);
 }
+
+function getAgentAuthFlow({ params }) {
+  const flow = state.flowView(params[0]);
+  if (!flow) throw httpError(404, 'Authentication flow not found');
+  return json(flow);
+}
+
+function cancelAgentAuthFlow({ params }) { return json(state.cancelFlow(params[0])); }
 
 function getChat({ params }) {
   return json(state.chatView(requireChat(params[0])));
