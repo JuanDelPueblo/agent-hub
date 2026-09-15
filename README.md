@@ -78,11 +78,11 @@ nix build .#batey
 Run it directly from the flake without building first:
 
 ```sh
-nix run .#batey -- --project-root /path/to/projects
+nix run . -- --project-root /path/to/projects
 ```
 
 `nix run` launches the same canonical package binary that `nix build`
-produces. `nix run .#batey -- --help` shows every option.
+produces. `nix run . -- --help` shows every option.
 
 This produces `result/bin/batey`, which includes the embedded production
 frontend:
@@ -286,32 +286,25 @@ you; see the production deployment section below.
 
 ## Production deployment
 
-Batey behaves like a normal nixpkgs-style package and NixOS service.
+Batey behaves like a normal flake package and NixOS service.
 Another flake can consume it directly without copying packaging code. The OCI
 image is built from exactly the same package.
 
-### Flake package and overlay
+### Flake outputs
 
 ```sh
-nix build .#batey
-nix run .#batey -- --help
+nix build                 # same as nix build .#batey
+nix run . -- --help       # runs packages.default, the canonical package
+nix build .#batey-oci     # OCI image tarball
 ```
 
-The version comes from `Cargo.toml`, so there is one authoritative source.
+The supported package outputs are `packages.${system}.batey` and
+`packages.${system}.default`, which are the same canonical Crane build, plus
+`packages.${system}.batey-oci` for the OCI image. The production frontend is
+an internal input to the Batey package, not a separate public package. The
+version comes from `Cargo.toml`, so there is one authoritative source.
 
-A downstream flake can use the package through the overlay:
-
-```nix
-{
-  inputs.batey.url = "github:JuanDelPueblo/batey";
-  outputs = { nixpkgs, batey, ... }: {
-    # makes pkgs.batey available with the same derivation
-    nixpkgs.overlays = [ batey.overlays.default ];
-  };
-}
-```
-
-Or override the service package with the canonical build:
+To override the service package, point it at the canonical build explicitly:
 
 ```nix
 services.batey.package = batey.packages.${system}.batey;
@@ -338,9 +331,9 @@ services.batey.package = batey.packages.${system}.batey;
 ```
 
 That is the whole thing for a standard deployment. Importing
-`batey.nixosModules.default` also installs the Batey overlay, so the
-default `services.batey.package` resolves with nothing else to set;
-override it only when you want a different build. Add network options only
+`batey.nixosModules.default` defaults `services.batey.package` to the exact
+canonical Batey package from this flake; no overlay is required. Override it
+only when you want a different build. Add network options only
 when you need them, such as `services.batey.host`, `.port`, or
 `.publicOrigin`. The module also exposes typed options for prompt timeout,
 registry URL, data/state/config/log/worktree locations, runtime packages,

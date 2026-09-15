@@ -4,7 +4,7 @@
 { pkgs, crane }:
 let
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  batey-frontend = import ./frontend.nix { inherit pkgs; };
+  frontend = import ./frontend.nix { inherit pkgs; };
   craneLib = crane.mkLib pkgs;
   rustSrc = pkgs.lib.fileset.toSource {
     root = ../.;
@@ -42,10 +42,12 @@ craneLib.buildPackage (commonArgs // {
   inherit cargoArtifacts;
   preBuild = ''
     rm -rf static/*
-    cp -r ${batey-frontend}/* static/
+    cp -r ${frontend}/* static/
   '';
   passthru = {
-    inherit batey-frontend;
+    # Kept available to package consumers that need the embedded asset build,
+    # without exposing a second public flake package.
+    inherit frontend;
     inherit version;
   };
 })

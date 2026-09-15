@@ -6,10 +6,9 @@
 #   services.batey.enable = true;
 #   services.batey.projectRoots = [ "/srv/projects" ];
 #
-# Optionally import `batey.overlays.default` to get `pkgs.batey`,
-# or override `services.batey.package` with the canonical package from
-# the flake.
-{ config, lib, pkgs, ... }:
+# The exported flake module supplies `bateyPackage`, so this module does not
+# depend on a package overlay. `services.batey.package` remains overridable.
+{ config, lib, pkgs, bateyPackage, ... }:
 let
   cfg = config.services.batey;
 
@@ -114,7 +113,11 @@ in
   options.services.batey = {
     enable = lib.mkEnableOption "Batey, a persistent ACP project and chat supervisor";
 
-    package = lib.mkPackageOption pkgs "batey" { };
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = bateyPackage;
+      description = "Batey package to run.";
+    };
 
     projectRoots = lib.mkOption {
       type = lib.types.listOf lib.types.str;

@@ -12,11 +12,9 @@
         let
           pkgs = import nixpkgs { inherit system; };
           batey = import ./nix/package.nix { inherit pkgs crane; };
-          batey-frontend = import ./nix/frontend.nix { inherit pkgs; };
           batey-oci = import ./nix/oci.nix { inherit pkgs batey; };
         in {
-          inherit batey batey-frontend batey-oci;
-          frontend = batey-frontend;
+          inherit batey batey-oci;
           default = batey;
         });
 
@@ -83,7 +81,6 @@
       apps = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          batey = self.packages.${system}.batey;
           verify = pkgs.writeShellApplication {
             name = "batey-verify";
             # Every tool the verification suite needs, so `nix run .#verify`
@@ -105,52 +102,31 @@
             text = builtins.readFile ./nix/verify.sh;
           };
         in {
-          batey = {
-            type = "app";
-            program = pkgs.lib.getExe batey;
-          };
-          default = {
-            type = "app";
-            program = pkgs.lib.getExe batey;
-          };
           verify = {
             type = "app";
             program = pkgs.lib.getExe verify;
+            meta.description = "Run Batey's canonical source verification suite";
           };
         });
 
-      overlays.default = import ./nix/overlay.nix { inherit crane; };
-
-      # The exported module installs the Batey overlay itself, so the
-      # default `services.batey.package = pkgs.batey` resolves with
-      # only `nixosModules.default` imported. Overriding `package` still wins.
-      nixosModules.batey = {
-        imports = [ ./nix/nixos-module.nix ];
-        nixpkgs.overlays = [ (import ./nix/overlay.nix { inherit crane; }) ];
-      };
-      nixosModules.default = self.nixosModules.batey;
+      nixosModules.default = { pkgs, ... }:
+        {
+          imports = [ ./nix/nixos-module.nix ];
+          # Keep the service default tied to the exact package exposed by this
+          # flake. Consumers do not need a package overlay just to import the
+          # module, and the option remains overridable in the normal way.
+          _module.args.bateyPackage = self.packages.${pkgs.system}.batey;
+        };
 
       checks = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
           batey = self.packages.${system}.batey;
           batey-oci = self.packages.${system}.batey-oci;
-          module = self.nixosModules.batey;
-          overlaid = import nixpkgs {
-            inherit system;
-            overlays = [ self.overlays.default ];
-          };
+          module = self.nixosModules.default;
         in {
-          eval-checks = import ./nix/eval-checks.nix { inherit pkgs crane batey module; };
+          eval-checks = import ./nix/eval-checks.nix { inherit pkgs batey module; };
           oci-config = import ./nix/oci-check.nix { inherit pkgs batey batey-oci; };
-          overlay-provides-package = pkgs.runCommand "batey-overlay-check" { } ''
-            [ -x ${overlaid.batey}/bin/batey ] \
-              || (echo "overlay does not provide pkgs.batey" >&2; exit 1)
-            ${overlaid.batey}/bin/batey --help > /dev/null
-            [ "$(${overlaid.batey}/bin/batey --version)" = "$(${batey}/bin/batey --version)" ] \
-              || (echo "overlay package version differs from canonical package" >&2; exit 1)
-            touch $out
-          '';
         });
     };
 }

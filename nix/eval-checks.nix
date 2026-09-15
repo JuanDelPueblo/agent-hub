@@ -1,9 +1,9 @@
 # Small evaluation checks for the NixOS module.
-# Covers default package resolution through the wrapper-installed overlay,
-# package override, custom user/group, declarative generation, secret redaction,
+# Covers default package resolution through the exported module, package
+# override, custom user/group, declarative generation, secret redaction,
 # managed directories, and error cases. Runs in `nix flake check` without
 # booting a VM.
-{ pkgs, crane, batey, module }:
+{ pkgs, batey, module }:
 let
   lib = pkgs.lib;
   stub = { lib, ... }: {
@@ -23,10 +23,6 @@ let
       type = lib.types.listOf lib.types.str;
       default = [ ];
     };
-    options.nixpkgs.overlays = lib.mkOption {
-      type = lib.types.listOf lib.types.anything;
-      default = [ ];
-    };
     options.assertions = lib.mkOption {
       type = lib.types.listOf lib.types.anything;
       default = [ ];
@@ -38,22 +34,12 @@ let
   };
   base = {
     enable = true;
-    package = batey;
     projectRoots = [ "/srv/projects" ];
   };
 
-  # The wrapper module must install exactly the Batey overlay, so importing
-  # only `nixosModules.default` makes `pkgs.batey` exist for the package
-  # default. The overlay is referenced here directly from the same file the
-  # wrapper points at; these checks cover the NixOS path without booting a VM.
-  wrapperOverlayCount = builtins.length
-    ((lib.evalModules {
-      modules = [ module stub ];
-      specialArgs = { inherit pkgs; };
-    }).config.nixpkgs.overlays);
-  overlayExtended = pkgs.extend (import ./overlay.nix { inherit crane; });
-
-  customPackage = pkgs.runCommand "batey-custom" { } "mkdir -p $out/bin; echo hi > $out/bin/batey; chmod +x $out/bin/batey";
+  customPackage = pkgs.runCommand "batey-custom" {
+    meta.mainProgram = "batey";
+  } "mkdir -p $out/bin; echo hi > $out/bin/batey; chmod +x $out/bin/batey";
 
   evalDefault = evalWith base;
   evalOverride = evalWith (base // { package = customPackage; });
@@ -104,6 +90,7 @@ let
   # redaction list must reach `--secret-env-vars` as names only.
   evalSecrets = evalWith (base // {
     secretEnvVars = [ "EXTRA_REDACTED" ];
+    environmentFiles = [ "/run/secrets/batey.env" ];
     agents = {
       a = {
         command = "a-acp";
@@ -163,11 +150,11 @@ pkgs.runCommand "batey-eval-checks" {
   secretsOk=${if hasFailedAssertion evalSecrets then "no" else "yes"}
   tmpfilesRules='${lib.concatStringsSep "\n" evalTmpfiles.config.systemd.tmpfiles.rules}'
   tmpfilesOk=${if hasFailedAssertion evalTmpfiles then "no" else "yes"}
-  defaultPkgPath='${overlayExtended.batey}'
+  defaultPkgPath='${evalDefault.config.services.batey.package}'
   defaultPkgExpected='${batey}'
-  defaultPkgVersion='${overlayExtended.batey.version}'
+  defaultPkgVersion='${evalDefault.config.services.batey.package.version}'
   defaultPkgExpectedVersion='${batey.version}'
-  wrapperOverlayCount=${builtins.toString wrapperOverlayCount}
+  secretFiles='${lib.concatStringsSep " " evalSecrets.config.systemd.services.batey.serviceConfig.EnvironmentFile}'
 
   [ "$defaultUser" = batey ] || fail "default user is $defaultUser"
   [ "$hasDefaultUser" = yes ] || fail "default system user was not created"
@@ -188,19 +175,20 @@ pkgs.runCommand "batey-eval-checks" {
   [ "$floatingUvxFailed" = yes ] || fail "floating uvx package was accepted"
   [ "$noLaunchFailed" = yes ] || fail "agent without launch was accepted"
 
-  # The wrapper-installed overlay provides the default package with no
-  # explicit `package` and no separately imported overlay.
-  [ "$wrapperOverlayCount" = 1 ] || fail "wrapper must install exactly one overlay"
   [ "$defaultPkgPath" = "$defaultPkgExpected" ] \
-    || fail "overlay package is not the canonical package: $defaultPkgPath"
+    || fail "module default package is not canonical: $defaultPkgPath"
   [ "$defaultPkgVersion" = "$defaultPkgExpectedVersion" ] \
-    || fail "overlay package version drifted: $defaultPkgVersion"
+    || fail "module default package version drifted: $defaultPkgVersion"
 
   # Secret names (only names) reach `--secret-env-vars`.
   [ "$secretsOk" = yes ] || fail "secrets config trips an assertion"
   case "$secretsExec" in
     *--secret-env-vars*AAA_TOKEN*BBB_TOKEN*EXTRA_REDACTED*) ;;
     *) fail "secret names missing from ExecStart: $secretsExec" ;;
+  esac
+  case "$secretFiles" in
+    *"/run/secrets/batey.env"*) ;;
+    *) fail "secret environment file was not preserved: $secretFiles" ;;
   esac
 
   # Redirected state stays managed through tmpfiles.
