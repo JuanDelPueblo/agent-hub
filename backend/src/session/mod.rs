@@ -350,12 +350,7 @@ impl AcpSession {
         }
 
         if !additional_roots.is_empty()
-            && client
-                .capabilities
-                .read()
-                .await
-                .pointer("/sessionCapabilities/additionalDirectories")
-                .is_none()
+            && !crate::acp::supports_additional_directories(&*client.capabilities.read().await)
         {
             client.shutdown().await;
             *self.child_root_pid.write().await = None;
@@ -816,6 +811,11 @@ impl AcpSession {
         let _guard = self.turn_guard.try_lock().map_err(|_| {
             anyhow::anyhow!("Wait for the active turn before changing connection configuration")
         })?;
+        if self.process_state().await.is_running() && !self.supports_resume().await {
+            anyhow::bail!(
+                "This agent cannot restore its saved ACP session; stop the chat before changing connection configuration"
+            );
+        }
         let store = self
             .store
             .as_ref()

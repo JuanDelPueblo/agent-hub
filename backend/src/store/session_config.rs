@@ -175,11 +175,21 @@ pub(crate) fn mcp_reorder(conn: &mut Connection, chat: &str, ids: &[String]) -> 
             "MCP order must contain every server exactly once".into(),
         ));
     };
+    let temp_base = current
+        .iter()
+        .map(|server| server.position)
+        .max()
+        .unwrap_or(-1)
+        .checked_add(current.len() as i64 + 1)
+        .ok_or_else(|| StoreError::Internal(anyhow::anyhow!("MCP position range exhausted")))?;
     let tx = conn.transaction()?;
+    // `position` has a non-negative CHECK constraint.  Move every row into a
+    // disjoint non-negative range before occupying the requested positions.
+    // This also keeps UNIQUE(chat_id, position) true throughout the update.
     for (p, id) in ids.iter().enumerate() {
         tx.execute(
             "UPDATE chat_mcp_servers SET position=?3 WHERE chat_id=?1 AND id=?2",
-            params![chat, id, -(p as i64) - 1],
+            params![chat, id, temp_base + p as i64],
         )?;
     }
     for (p, id) in ids.iter().enumerate() {
@@ -271,6 +281,23 @@ mod tests {
             }],
         };
         store.insert_mcp_server(&value).unwrap();
+        let second = McpServerConfig {
+            id: "mcp-two".into(),
+            chat_id: chat.id.clone(),
+            position: 1,
+            name: "second".into(),
+            transport: McpTransport::Stdio,
+            url: None,
+            command: Some("/bin/true".into()),
+            args: vec![],
+            secrets: vec![],
+        };
+        store.insert_mcp_server(&second).unwrap();
+        // Regression for the non-negative position CHECK: a swap must not
+        // use a negative temporary position and the exact order must persist.
+        store
+            .reorder_mcp_servers(&chat.id, &[second.id.clone(), value.id.clone()])
+            .unwrap();
         store
             .replace_additional_roots(
                 &chat.id,
@@ -285,8 +312,15 @@ mod tests {
         drop(store);
         let reopened = Store::open(&db).unwrap();
         let saved = reopened.mcp_servers(&chat.id).unwrap();
-        assert_eq!(saved[0].secrets[0].value, "do-not-leak");
-        let exposed = serde_json::to_string(&saved[0].redacted()).unwrap();
+        assert_eq!(
+            saved
+                .iter()
+                .map(|server| server.id.as_str())
+                .collect::<Vec<_>>(),
+            ["mcp-two", "mcp"]
+        );
+        assert_eq!(saved[1].secrets[0].value, "do-not-leak");
+        let exposed = serde_json::to_string(&saved[1].redacted()).unwrap();
         assert!(exposed.contains("present"));
         assert!(!exposed.contains("do-not-leak"));
         assert_eq!(

@@ -774,6 +774,14 @@ pub fn configured_mcp_servers(
         .collect()
 }
 
+/// Stable ACP v1 advertises additional directories with an object. Both an
+/// absent field and `null` explicitly mean unsupported.
+pub fn supports_additional_directories(capabilities: &serde_json::Value) -> bool {
+    capabilities
+        .pointer("/sessionCapabilities/additionalDirectories")
+        .is_some_and(serde_json::Value::is_object)
+}
+
 impl Drop for AcpClient {
     fn drop(&mut self) {
         // Process-tree teardown is asymmetric per OS:
@@ -1988,5 +1996,18 @@ mod tests {
         assert!(validate_config_value(&options, "model", &serde_json::json!("big")).is_err());
         assert!(validate_config_value(&options, "web", &serde_json::json!(true)).is_ok());
         assert!(validate_config_value(&options, "web", &serde_json::json!("yes")).is_err());
+    }
+
+    #[test]
+    fn additional_directories_requires_an_object_capability() {
+        assert!(!supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {}})
+        ));
+        assert!(!supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {"additionalDirectories": null}})
+        ));
+        assert!(supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {"additionalDirectories": {}}})
+        ));
     }
 }
