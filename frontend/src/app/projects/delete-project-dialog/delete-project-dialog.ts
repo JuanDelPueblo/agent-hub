@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -18,6 +18,9 @@ export class DeleteProjectDialogComponent {
   readonly errorMessage = signal('');
 
   readonly project = inject<Project>(MAT_DIALOG_DATA);
+  readonly chatCount = computed(
+    () => this.project.chat_count ?? this.state.chatsByProject()[this.project.id]?.length ?? 0,
+  );
 
   async delete(): Promise<void> {
     this.deleting.set(true);

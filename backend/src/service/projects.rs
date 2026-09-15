@@ -1,6 +1,10 @@
 //! Project operations.
+use super::chats::map_chat_deletion_error;
+use super::workspaces::workspace_error;
 use super::{HubService, ServiceError, ServiceResult};
-use crate::store::{validate_name, validate_project_path, Project};
+use crate::state::TurnState;
+use crate::store::{validate_name, validate_project_path, Chat, Project};
+use crate::workspace;
 
 impl HubService {
     pub fn list_projects(&self) -> ServiceResult<Vec<Project>> {
@@ -52,20 +56,101 @@ impl HubService {
         Ok(project)
     }
 
-    pub fn delete_project(&self, id: &str) -> ServiceResult<()> {
+    /// Deletes a project and every chat it owns as one cascading Batey
+    /// metadata operation. Project files at `Project.path` are never
+    /// touched; only the project registration and its chats' durable
+    /// metadata (and any managed worktrees they own) go away.
+    ///
+    /// A preflight pass runs before any chat is deleted, so a predictable
+    /// blocker (an active turn/task, a dirty managed worktree, or an
+    /// external additional-root reference) is reported without leaving the
+    /// project half-deleted.
+    pub async fn delete_project(&self, id: &str) -> ServiceResult<()> {
         self.store.project(id)?;
-        if self.store.additional_root_references_project(id)? {
+        if self
+            .store
+            .additional_root_references_project_externally(id)?
+        {
             return Err(ServiceError::Conflict(
-                "Remove this project from every chat's additional workspace roots before deleting it".into(),
+                "Remove this project from every other chat's additional workspace roots before deleting it".into(),
             ));
         }
-        if self.store.chats()?.iter().any(|c| c.project_id == id) {
-            return Err(ServiceError::Conflict(
-                "Delete the project's chats first (project files are never deleted)".into(),
-            ));
+        let chats: Vec<Chat> = self
+            .store
+            .chats()?
+            .into_iter()
+            .filter(|c| c.project_id == id)
+            .collect();
+
+        self.preflight_project_chat_deletion(&chats).await?;
+
+        // Delete every owned chat through the same safe path a standalone
+        // chat deletion uses, so worktree/session/event cleanup is
+        // identical either way. A conflict discovered here despite the
+        // preflight above (a race) can still leave some chats already
+        // removed; making that impossible would require one Git transaction
+        // across every managed worktree, which Git does not offer.
+        for chat in &chats {
+            self.delete_chat(&chat.id).await?;
         }
+
         self.store.delete_project(id)?;
         self.notify_metadata_changed();
+        Ok(())
+    }
+
+    /// Detects blockers before any of the project's chats is deleted: an
+    /// active turn, an active terminal task, or a dirty managed worktree.
+    /// Finding one after half the project's chats are already gone would
+    /// leave the project in a confusing, hard-to-recover partial state.
+    async fn preflight_project_chat_deletion(&self, chats: &[Chat]) -> ServiceResult<()> {
+        for chat in chats {
+            if self.sessions.has_agent(&chat.agent) {
+                if let Some(session) = self.sessions.get_by_id(&chat.id).await {
+                    if session.turn_state().await != TurnState::Idle {
+                        return Err(ServiceError::Conflict(format!(
+                            "Chat '{}' has an active turn; wait for it or cancel it before deleting the project",
+                            chat.title
+                        )));
+                    }
+                }
+            }
+            if self
+                .sessions
+                .task_tracker()
+                .active_task_count(&chat.id)
+                .await
+                > 0
+            {
+                return Err(ServiceError::Conflict(format!(
+                    "Chat '{}' has an active task; wait for it or stop it before deleting the project",
+                    chat.title
+                )));
+            }
+            let managed_cleanup = crate::session::resolve_managed_cleanup(&self.store, chat)
+                .await
+                .map_err(map_chat_deletion_error)?;
+            if let Some((repository_root, worktree_root, branch)) = managed_cleanup {
+                let chat_id = chat.id.clone();
+                let dirty = tokio::task::spawn_blocking(move || {
+                    workspace::managed_worktree_dirty(
+                        &repository_root,
+                        &worktree_root,
+                        &chat_id,
+                        &branch,
+                    )
+                })
+                .await
+                .map_err(|error| ServiceError::Internal(anyhow::anyhow!(error)))?
+                .map_err(workspace_error)?;
+                if dirty {
+                    return Err(ServiceError::Conflict(format!(
+                        "Chat '{}' has unsaved changes in its managed worktree; commit or discard them before deleting the project",
+                        chat.title
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 }

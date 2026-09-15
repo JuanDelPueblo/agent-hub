@@ -618,21 +618,25 @@ impl HubService {
         Ok(self.view(chat).await)
     }
 
+    /// Deletion does not require the chat's agent to still be configured.
+    /// A live session runs the normal shutdown-then-cleanup sequence; a
+    /// historical chat whose agent is gone has no session to ask, so its
+    /// durable chat/workspace metadata is the only authority. Both paths
+    /// share the same worktree/branch safety rules (see
+    /// `session::resolve_managed_cleanup`).
     pub async fn delete_chat(&self, chat_id: &str) -> ServiceResult<()> {
-        let live = self.live(chat_id).await?;
-        live.delete_metadata().await.map_err(|error| {
-            if let Some(error) = error.downcast_ref::<workspace::WorkspaceError>() {
-                return match error {
-                    workspace::WorkspaceError::Conflict(message) => {
-                        ServiceError::Conflict(message.clone())
-                    }
-                    workspace::WorkspaceError::Failed(message) => {
-                        ServiceError::Invalid(message.clone())
-                    }
-                };
-            }
-            ServiceError::Invalid(error.to_string())
-        })?;
+        let chat = self.store.chat(chat_id)?;
+        let result = if self.sessions.has_agent(&chat.agent) {
+            let live = self
+                .sessions
+                .get_by_id(chat_id)
+                .await
+                .ok_or_else(|| ServiceError::NotFound("Chat not found".into()))?;
+            live.delete_metadata().await
+        } else {
+            crate::session::delete_chat_durable(&self.store, &chat).await
+        };
+        result.map_err(map_chat_deletion_error)?;
         self.events.forget_chat(chat_id);
         self.sessions.remove_session(chat_id).await;
         self.sessions.task_tracker().forget_chat(chat_id).await;
@@ -1042,6 +1046,19 @@ fn cleanup_managed(
             )
         },
     )
+}
+
+/// Maps a chat-deletion failure to its service error kind. A `WorkspaceError`
+/// carries its own safe-refusal-versus-failure distinction; anything else
+/// (a locked turn guard, an unpersisted chat) is a bad request.
+pub(crate) fn map_chat_deletion_error(error: anyhow::Error) -> ServiceError {
+    if let Some(error) = error.downcast_ref::<workspace::WorkspaceError>() {
+        return match error {
+            workspace::WorkspaceError::Conflict(message) => ServiceError::Conflict(message.clone()),
+            workspace::WorkspaceError::Failed(message) => ServiceError::Invalid(message.clone()),
+        };
+    }
+    ServiceError::Invalid(error.to_string())
 }
 
 fn managed_cleanup_error(message: String, cleanup: Result<(), String>) -> ServiceError {

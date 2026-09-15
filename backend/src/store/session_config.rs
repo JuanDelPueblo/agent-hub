@@ -229,10 +229,21 @@ pub(crate) fn roots_replace(
     tx.commit()?;
     Ok(())
 }
-pub(crate) fn roots_reference_project(conn: &Connection, id: &str) -> StoreResult<bool> {
+/// Whether some chat that does *not* belong to `project_id` still lists it
+/// as an additional workspace root. A chat that belongs to `project_id`
+/// itself does not count: deleting a project already deletes that chat, so
+/// its own reference is not an external dependency.
+pub(crate) fn roots_reference_project_externally(
+    conn: &Connection,
+    project_id: &str,
+) -> StoreResult<bool> {
     Ok(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM chat_additional_roots WHERE project_id=?1)",
-        [id],
+        "SELECT EXISTS(\
+             SELECT 1 FROM chat_additional_roots r \
+             JOIN chats c ON c.id = r.chat_id \
+             WHERE r.project_id = ?1 AND c.project_id != ?1\
+         )",
+        [project_id],
         |r| r.get(0),
     )?)
 }

@@ -312,8 +312,15 @@ impl Store {
     ) -> StoreResult<()> {
         session_config::roots_replace(&mut self.conn.lock().unwrap(), chat_id, roots)
     }
-    pub fn additional_root_references_project(&self, project_id: &str) -> StoreResult<bool> {
-        session_config::roots_reference_project(&self.conn.lock().unwrap(), project_id)
+    /// Whether a chat outside `project_id` still lists it as an additional
+    /// workspace root. A reference from a chat that belongs to `project_id`
+    /// itself does not count, since deleting the project deletes that chat
+    /// too.
+    pub fn additional_root_references_project_externally(
+        &self,
+        project_id: &str,
+    ) -> StoreResult<bool> {
+        session_config::roots_reference_project_externally(&self.conn.lock().unwrap(), project_id)
     }
 
     /// Every installed-agent record, sorted by id. This is the durable half

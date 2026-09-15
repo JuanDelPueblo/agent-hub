@@ -2,6 +2,16 @@
 <mat-dialog-content>
   @if (errorMessage()) { <div class="error-box" role="alert">{{ errorMessage() }}</div> }
   <p>Are you sure you want to remove <strong>“{{ project.name }}”</strong> from Batey?</p>
+  @if (chatCount() > 0) {
+    <p class="note">
+      This deletes {{ chatCount() }} {{ chatCount() === 1 ? 'chat' : 'chats' }} in this project, including
+      their history and configuration.
+    </p>
+  }
+  <p class="note">
+    Batey-managed worktrees for those chats are cleaned up, subject to the same Git safety checks as
+    deleting a chat: a worktree with uncommitted changes blocks deletion instead of losing work.
+  </p>
   <p class="note">Project files on disk will <strong>not</strong> be deleted.</p>
 </mat-dialog-content>
 <mat-dialog-actions align="end">

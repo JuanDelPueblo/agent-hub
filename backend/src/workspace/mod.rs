@@ -835,8 +835,19 @@ pub fn remove_managed_on_branch(
         return Ok(());
     }
     registered_managed_worktree(repo, &worktree, branch, true)?;
-    let dirty = !run_git_ok(
-        &worktree,
+    if worktree_dirty(&worktree)? {
+        return Err(WorkspaceError::Conflict(
+            "managed worktree is dirty; refuse to remove".to_string(),
+        ));
+    }
+    let worktree_arg = worktree_string(&worktree)?;
+    run_git_ok(repo, &["worktree", "remove", &worktree_arg])?;
+    Ok(())
+}
+
+fn worktree_dirty(worktree: &Path) -> Result<bool, WorkspaceError> {
+    Ok(!run_git_ok(
+        worktree,
         &[
             "status",
             "--porcelain",
@@ -845,15 +856,42 @@ pub fn remove_managed_on_branch(
         ],
     )?
     .trim()
-    .is_empty();
-    if dirty {
-        return Err(WorkspaceError::Conflict(
-            "managed worktree is dirty; refuse to remove".to_string(),
+    .is_empty())
+}
+
+/// Whether a managed worktree currently holds uncommitted or untracked
+/// changes. Read-only toward the working tree: it performs the same
+/// worktree-registration repair `remove_managed_on_branch` does before
+/// removing anything, but never removes the worktree or touches its files.
+///
+/// A missing worktree reads as not dirty; there is nothing to lose.
+///
+/// Used by a project-deletion preflight so a dirty chat is reported before
+/// any sibling chat in the same project is deleted, rather than after.
+pub fn managed_worktree_dirty(
+    repo: &Path,
+    workspace_root: &Path,
+    chat_id: &str,
+    branch: &str,
+) -> Result<bool, WorkspaceError> {
+    validate_chat_id(chat_id)?;
+    if !managed_branch_matches(branch, chat_id) {
+        return Err(WorkspaceError::Failed(
+            "invalid managed branch for chat".to_string(),
         ));
     }
-    let worktree_arg = worktree_string(&worktree)?;
-    run_git_ok(repo, &["worktree", "remove", &worktree_arg])?;
-    Ok(())
+    let worktree = workspace_root.join(chat_id);
+    match std::fs::symlink_metadata(&worktree) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(WorkspaceError::Failed(format!(
+                "cannot inspect managed worktree: {error}"
+            )));
+        }
+    }
+    registered_managed_worktree(repo, &worktree, branch, true)?;
+    worktree_dirty(&worktree)
 }
 
 /// Roll back provisioning only while the newly-created branch is still at the

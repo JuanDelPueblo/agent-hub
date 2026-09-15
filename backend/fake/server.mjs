@@ -239,14 +239,31 @@ function editProject({ params, body }) {
   return json(state.projectView(project));
 }
 
+/**
+ * Deletes a project and every chat it owns as one cascading operation,
+ * mirroring the real backend's `HubService::delete_project`. Project files
+ * are a fake-backend fiction (there is no real filesystem here), so nothing
+ * beyond in-memory state is ever touched.
+ */
 function deleteProject({ params }) {
   const project = state.projects.get(params[0]);
   if (!project) throw httpError(404, 'Project not found');
-  if ([...state.chats.values()].some((chat) => chat.project_id === project.id)) {
-    throw httpError(409, "Delete the project's chats first (project files are never deleted)");
+
+  const ownedChatIds = new Set(
+    [...state.chats.values()].filter((chat) => chat.project_id === project.id).map((chat) => chat.id),
+  );
+  const referencedExternally = [...state.additionalRootsByChat.entries()].some(
+    ([chatId, roots]) => !ownedChatIds.has(chatId) && roots.some((root) => root.project_id === project.id),
+  );
+  if (referencedExternally) {
+    throw httpError(
+      409,
+      "Remove this project from every other chat's additional workspace roots before deleting it",
+    );
   }
-  if ([...state.additionalRootsByChat.values()].some((roots) => roots.some((root) => root.project_id === project.id))) {
-    throw httpError(409, "Remove this project from every chat's additional workspace roots before deleting it");
+
+  for (const chatId of ownedChatIds) {
+    deleteChatById(chatId);
   }
   state.projects.delete(project.id);
   state.metadataChanged();
@@ -424,13 +441,18 @@ function editChat({ params, body }) {
   return json(state.chatView(chat));
 }
 
+/** Shared cleanup for one chat: durable metadata, runtime state, and events. */
+function deleteChatById(chatId) {
+  cancel(chatId);
+  state.chats.delete(chatId);
+  state.configByChat.delete(chatId);
+  state.runtime.delete(chatId);
+  state.forgetChat(chatId);
+}
+
 function deleteChat({ params }) {
   const chat = requireChat(params[0]);
-  cancel(chat.id);
-  state.chats.delete(chat.id);
-  state.configByChat.delete(chat.id);
-  state.runtime.delete(chat.id);
-  state.forgetChat(chat.id);
+  deleteChatById(chat.id);
   state.metadataChanged();
   return json({ success: true });
 }

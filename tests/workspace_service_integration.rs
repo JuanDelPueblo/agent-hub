@@ -663,6 +663,215 @@ async fn active_turn_prevents_chat_deletion() {
     sessions.shutdown_all().await;
 }
 
+// ---------------------------------------------------------- T127: deletion independent of configured agents
+
+/// Rebuilds a Hub over the same durable store, but with a different agent
+/// catalog. Used to simulate "restart with the chat's agent no longer
+/// configured" without touching any other Hub state.
+fn hub_with_agents(
+    root: &Path,
+    store: Arc<Store>,
+    definitions: Vec<AgentDefinition>,
+) -> (Arc<HubService>, Arc<SessionManager>) {
+    let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
+    let agents = Arc::new(AgentRegistry::new(definitions));
+    let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
+    let mut config = Config {
+        agents: agents.clone(),
+        ..Default::default()
+    };
+    config.web.project_roots = vec![root.display().to_string()];
+    (
+        HubService::new(store, sessions.clone(), agents, &config),
+        sessions,
+    )
+}
+
+#[tokio::test]
+async fn missing_agent_chat_stays_readable_and_deletes_with_normal_managed_cleanup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    let branch = workspace.branch.clone().unwrap();
+    assert!(Path::new(&workspace.workspace_path).is_dir());
+    sessions.shutdown_all().await;
+
+    // Restart with "codex" no longer in the agent catalog: the durable chat
+    // survives, but no `AcpSession` can be constructed for it.
+    let (restarted, restarted_sessions) = hub_with_agents(tmp.path(), store.clone(), Vec::new());
+
+    let view = restarted.get_chat(&chat.chat.id).await.unwrap();
+    assert_eq!(view.process_state, "STOPPED");
+    assert!(restarted
+        .chat_history(&chat.chat.id, None, None, 100)
+        .is_ok());
+
+    restarted.delete_chat(&chat.chat.id).await.unwrap();
+
+    assert!(store.chat(&chat.chat.id).is_err());
+    assert!(store.workspace(&chat.chat.id).unwrap().is_none());
+    assert!(!Path::new(&workspace.workspace_path).exists());
+    assert_eq!(git(&repo, &["rev-parse", "--verify", &branch]).len(), 40);
+    restarted_sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn missing_agent_dirty_managed_chat_deletion_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+    std::fs::write(
+        Path::new(&workspace.workspace_path).join("README.md"),
+        "changed\n",
+    )
+    .unwrap();
+    sessions.shutdown_all().await;
+
+    let (restarted, restarted_sessions) = hub_with_agents(tmp.path(), store.clone(), Vec::new());
+
+    let error = restarted.delete_chat(&chat.chat.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    assert!(Path::new(&workspace.workspace_path).is_dir());
+    restarted_sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn deleting_project_cascades_many_managed_chats_and_their_worktrees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let mut worktrees = Vec::new();
+    for _ in 0..3 {
+        let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+        let workspace = store.workspace(&chat.chat.id).unwrap().unwrap();
+        worktrees.push((chat.chat.id, workspace));
+    }
+
+    hub.delete_project(&project.id).await.unwrap();
+
+    assert!(hub.get_project(&project.id).is_err());
+    for (chat_id, workspace) in worktrees {
+        assert!(store.chat(&chat_id).is_err());
+        assert!(!Path::new(&workspace.workspace_path).exists());
+    }
+    assert!(repo.is_dir(), "project files must never be deleted");
+}
+
+#[tokio::test]
+async fn deleting_project_cascades_a_chat_whose_agent_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let live_chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let orphaned_chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let orphaned_workspace = store.workspace(&orphaned_chat.chat.id).unwrap().unwrap();
+    sessions.shutdown_all().await;
+
+    let (restarted, restarted_sessions) = hub_with_agents(
+        tmp.path(),
+        store.clone(),
+        vec![AgentDefinition::codex_default()
+            .with_command("python3".into())
+            .with_args(vec![
+                format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+                tmp.path().join("history").display().to_string(),
+                "load".into(),
+            ])],
+    );
+    // Simulate the orphaned chat's agent having been removed by pointing it
+    // at an agent id the restarted catalog does not define.
+    {
+        let raw = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
+        raw.execute(
+            "UPDATE chats SET data = json_set(data, '$.agent', 'gemini') WHERE id = ?1",
+            rusqlite::params![orphaned_chat.chat.id.as_str()],
+        )
+        .unwrap();
+    }
+
+    restarted.delete_project(&project.id).await.unwrap();
+
+    assert!(restarted.get_project(&project.id).is_err());
+    assert!(store.chat(&live_chat.chat.id).is_err());
+    assert!(store.chat(&orphaned_chat.chat.id).is_err());
+    assert!(!Path::new(&orphaned_workspace.workspace_path).exists());
+    restarted_sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn dirty_managed_worktree_blocks_project_deletion_before_any_chat_is_deleted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store) = hub(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let clean_chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let dirty_chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let dirty_workspace = store.workspace(&dirty_chat.chat.id).unwrap().unwrap();
+    std::fs::write(
+        Path::new(&dirty_workspace.workspace_path).join("README.md"),
+        "changed\n",
+    )
+    .unwrap();
+
+    let error = hub.delete_project(&project.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    // Neither chat was deleted: the preflight found the conflict before any
+    // destructive cleanup began.
+    assert!(store.chat(&clean_chat.chat.id).is_ok());
+    assert!(store.chat(&dirty_chat.chat.id).is_ok());
+    assert!(hub.get_project(&project.id).is_ok());
+}
+
+#[tokio::test]
+async fn active_turn_blocks_project_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo(tmp.path());
+    let (hub, store, sessions) = hub_with_manager(tmp.path());
+    let project = hub
+        .create_project("git".into(), repo.display().to_string())
+        .unwrap();
+    let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
+    let session = sessions.get_by_id(&chat.chat.id).await.unwrap();
+    session
+        .start_turn("wait".into(), Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if session.turn_state().await == batey::state::TurnState::Prompting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let error = hub.delete_project(&project.id).await.unwrap_err();
+
+    assert!(matches!(error, ServiceError::Conflict(_)));
+    assert!(store.chat(&chat.chat.id).is_ok());
+    session.cancel().await.unwrap();
+    sessions.shutdown_all().await;
+}
+
 // ---------------------------------------------------------- T125: project-level direnv authorization
 
 /// Writes and commits a file inside `repo`, creating parent directories as

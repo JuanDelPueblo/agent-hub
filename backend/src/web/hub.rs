@@ -284,7 +284,7 @@ pub async fn delete_project(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    hub(&s)?.delete_project(&id)?;
+    hub(&s)?.delete_project(&id).await?;
     Ok(Json(json!({"success":true})))
 }
 pub async fn chats(

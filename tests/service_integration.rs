@@ -165,7 +165,7 @@ async fn full_chat_lifecycle_without_http() {
         .await
         .unwrap()
         .is_empty());
-    restarted_hub.delete_project(&project.id).unwrap();
+    restarted_hub.delete_project(&project.id).await.unwrap();
     assert!(restarted_hub.list_projects().unwrap().is_empty());
 
     restarted_sessions.shutdown_all().await;
@@ -388,18 +388,18 @@ async fn errors_carry_the_kind_the_caller_needs() {
         Err(ServiceError::Invalid(m)) if m == "Unknown agent"
     ));
 
-    // A project that still holds chats cannot be deleted or moved.
+    // A project that still holds chats cannot move, but deleting it cascades
+    // to delete its chats too.
     let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
-    assert!(matches!(
-        hub.delete_project(&project.id),
-        Err(ServiceError::Conflict(_))
-    ));
     let other = tmp.path().join("elsewhere");
     std::fs::create_dir_all(&other).unwrap();
     assert!(matches!(
         hub.edit_project(&project.id, "demo".into(), other.display().to_string()),
         Err(ServiceError::Conflict(_))
     ));
+    hub.delete_project(&project.id).await.unwrap();
+    assert!(hub.get_chat(&chat.chat.id).await.is_err());
+    assert!(hub.get_project(&project.id).is_err());
 
     // A path outside the configured roots is refused.
     assert!(matches!(
@@ -660,7 +660,7 @@ async fn metadata_mutation_succeeds_when_invalidation_publish_fails() {
         .unwrap();
     }
     hub.delete_chat(&chat.chat.id).await.unwrap();
-    hub.delete_project(&second.id).unwrap();
+    hub.delete_project(&second.id).await.unwrap();
     sessions.shutdown_all().await;
 }
 
@@ -902,7 +902,7 @@ async fn additional_root_project_deletion_and_stale_path_are_rejected() {
         .await
         .unwrap();
 
-    let conflict = service.delete_project(&additional.id).unwrap_err();
+    let conflict = service.delete_project(&additional.id).await.unwrap_err();
     assert!(
         matches!(conflict, ServiceError::Conflict(message) if message.contains("additional workspace roots"))
     );

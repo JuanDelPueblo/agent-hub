@@ -992,60 +992,14 @@ impl AcpSession {
         // In particular, an unreadable workspace row must not fall through to
         // the legacy/no-workspace path.
         let chat = store.chat(&self.id)?;
-        let project = store.project(&chat.project_id)?;
-        let workspace = store.workspace(&chat.id)?;
-        let managed_cleanup = match workspace {
-            None => None,
-            Some(workspace) => {
-                anyhow::ensure!(
-                    workspace.chat_id == chat.id && workspace.project_id == chat.project_id,
-                    "chat workspace metadata does not belong to this chat"
-                );
-                match workspace.mode {
-                    WorkspaceMode::ManagedWorktree => {
-                        let state_worktrees = store.worktrees_dir();
-                        let chat_for_validation = chat.clone();
-                        let project_for_validation = project.clone();
-                        let workspace_for_validation = workspace.clone();
-                        Some(
-                            tokio::task::spawn_blocking(move || {
-                                prepare_managed_deletion(
-                                    &chat_for_validation,
-                                    &project_for_validation,
-                                    &workspace_for_validation,
-                                    &state_worktrees,
-                                )
-                            })
-                            .await??,
-                        )
-                    }
-                    // A direct checkout is user-owned. Its metadata is
-                    // removed below, but no Git command is allowed here.
-                    WorkspaceMode::ProjectCheckout => None,
-                }
-            }
-        };
+        let managed_cleanup = resolve_managed_cleanup(store, &chat).await?;
 
         self.shutdown().await;
-
-        if let Some((repository_root, worktree_root, branch)) = managed_cleanup {
-            let chat_id = chat.id.clone();
-            tokio::task::spawn_blocking(move || {
-                workspace::remove_managed_on_branch(
-                    &repository_root,
-                    &worktree_root,
-                    &chat_id,
-                    &branch,
-                )
-            })
-            .await??;
-        }
 
         // This is deliberately after managed cleanup. If the transaction
         // fails, the workspace row and branch remain available for a safe
         // retry/recovery; no compensating Git cleanup is attempted.
-        store.delete_chat(&self.id)?;
-        Ok(())
+        finish_chat_deletion(store, &chat.id, managed_cleanup).await
     }
 
     pub async fn cancel(&self) -> anyhow::Result<()> {
@@ -1601,6 +1555,82 @@ fn prepare_managed_deletion(
         state_worktrees.to_path_buf(),
         branch.to_string(),
     ))
+}
+
+/// Validates a chat's durable workspace metadata and, for a managed
+/// worktree, resolves the exact repository/worktree-root/branch that Git
+/// cleanup must target. Read-only: never mutates Git or SQLite state.
+///
+/// Shared by `AcpSession::delete_metadata` (which must resolve this before
+/// stopping a live process) and by deletion of a historical chat whose agent
+/// is no longer configured, which has no `AcpSession` to ask. Both callers
+/// go through the same validation so neither one grows its own unsafe
+/// shortcut.
+pub(crate) async fn resolve_managed_cleanup(
+    store: &crate::store::Store,
+    chat: &Chat,
+) -> anyhow::Result<Option<(PathBuf, PathBuf, String)>> {
+    let project = store.project(&chat.project_id)?;
+    let workspace = store.workspace(&chat.id)?;
+    let Some(workspace) = workspace else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        workspace.chat_id == chat.id && workspace.project_id == chat.project_id,
+        "chat workspace metadata does not belong to this chat"
+    );
+    match workspace.mode {
+        WorkspaceMode::ManagedWorktree => {
+            let state_worktrees = store.worktrees_dir();
+            let chat = chat.clone();
+            Ok(Some(
+                tokio::task::spawn_blocking(move || {
+                    prepare_managed_deletion(&chat, &project, &workspace, &state_worktrees)
+                })
+                .await??,
+            ))
+        }
+        // A direct checkout is user-owned. Its metadata is removed by the
+        // caller, but no Git command is allowed here.
+        WorkspaceMode::ProjectCheckout => Ok(None),
+    }
+}
+
+/// Performs the Git cleanup a resolved managed cleanup names (if any) and
+/// then removes the chat's durable row. If the transaction fails, the
+/// workspace row and branch remain available for a safe retry/recovery; no
+/// compensating Git cleanup is attempted.
+async fn finish_chat_deletion(
+    store: &crate::store::Store,
+    chat_id: &str,
+    managed_cleanup: Option<(PathBuf, PathBuf, String)>,
+) -> anyhow::Result<()> {
+    if let Some((repository_root, worktree_root, branch)) = managed_cleanup {
+        let chat_id_owned = chat_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            workspace::remove_managed_on_branch(
+                &repository_root,
+                &worktree_root,
+                &chat_id_owned,
+                &branch,
+            )
+        })
+        .await??;
+    }
+    store.delete_chat(chat_id)?;
+    Ok(())
+}
+
+/// Durable cleanup for a historical chat whose agent is no longer
+/// configured, so no `AcpSession` can exist for it: there is no live process
+/// to stop and, since the agent cannot run, no turn that could be active.
+/// The chat's stored metadata is the only authority.
+pub(crate) async fn delete_chat_durable(
+    store: &crate::store::Store,
+    chat: &Chat,
+) -> anyhow::Result<()> {
+    let managed_cleanup = resolve_managed_cleanup(store, chat).await?;
+    finish_chat_deletion(store, &chat.id, managed_cleanup).await
 }
 
 enum PromptAttempt {

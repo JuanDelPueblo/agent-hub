@@ -68,6 +68,15 @@ describe('AppStateService', () => {
     expect(state.projects().some((project) => project.id === created.id)).toBe(false);
   });
 
+  it('removes a project and its cached chats immediately after cascading deletion', async () => {
+    await state.loadProjects();
+    await state.loadChats('project-1');
+    expect(state.chatsByProject()['project-1']).toHaveLength(1);
+    await state.deleteProject('project-1');
+    expect(state.projects().some((project) => project.id === 'project-1')).toBe(false);
+    expect(state.chatsByProject()['project-1']).toBeUndefined();
+  });
+
   it('creates chats and applies streamed permission and process events', async () => {
     await state.loadProjects();
     await state.loadChats('project-1');
