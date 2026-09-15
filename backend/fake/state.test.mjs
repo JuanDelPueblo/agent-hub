@@ -416,6 +416,34 @@ describe('fake backend seed history', () => {
     assert.equal(state.registryView('', true).status, 'fresh');
   });
 
+  it('keeps the full cached catalog and timestamp after a failed refresh', () => {
+    const state = new FakeState();
+    const first = state.registryView();
+    assert.ok(first.agents.length > 0);
+    assert.deepEqual(first.rejected, []);
+    state.registryView('native');
+    assert.deepEqual(state.registryView().agents, first.agents);
+    state.registryRefreshError = 'Network is unreachable';
+    const failed = state.registryView('', true);
+    assert.equal(failed.status, 'cached');
+    assert.equal(failed.fetched_at, first.fetched_at);
+    assert.equal(failed.error, 'Network is unreachable');
+    assert.deepEqual(failed.agents, first.agents);
+    state.registryRefreshError = null;
+    assert.equal(state.registryView('', true).status, 'fresh');
+  });
+
+  it('reports an unavailable registry when the first fetch fails', () => {
+    const state = new FakeState();
+    state.registryRefreshError = 'Network is unreachable';
+    const failed = state.registryView();
+    assert.equal(failed.status, 'unavailable');
+    assert.deepEqual(failed.agents, []);
+    assert.equal(failed.fetched_at, undefined);
+    state.registryRefreshError = null;
+    assert.ok(state.registryView('', true).agents.length > 0);
+  });
+
   it('installs, updates, and uninstalls registry agents', () => {
     const state = new FakeState();
     const installed = state.installRegistryAgent({ registry_id: 'native-agent' });

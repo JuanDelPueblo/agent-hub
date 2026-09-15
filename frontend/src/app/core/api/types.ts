@@ -106,7 +106,7 @@ export interface RegistryCatalog {
   error?: string | null;
   host_platform?: PlatformTarget | null;
   host: string;
-  rejected: Array<{ id?: string; reason?: string } & Record<string, unknown>>;
+  rejected?: Array<{ id?: string | null; reason?: string } & Record<string, unknown>>;
   agents: RegistryEntry[];
 }
 

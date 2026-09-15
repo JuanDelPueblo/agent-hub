@@ -98,12 +98,63 @@ describe('RegistryBrowserComponent', () => {
     expect(text).toContain('No binary distribution covers this platform.');
   });
 
-  it('searches and refreshes the registry', async () => {
-    fixture.componentInstance.query.set('native');
-    await fixture.componentInstance.search();
-    expect(state.loadRegistry).toHaveBeenCalledWith('native');
+  it('renders a production response without an empty rejected field', () => {
+    const { rejected, ...response } = catalog;
+    state.registry.set(response);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(3);
+  });
+
+  function search(query: string): void {
+    const input = fixture.nativeElement.querySelector('input') as HTMLInputElement;
+    input.value = query;
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+  }
+
+  it('filters by name, id, and description as the user types without a request', () => {
+    for (const query of ['NATIVE AGENT', 'native-agent', 'A native agent.']) {
+      search(query);
+      expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(1);
+      expect(fixture.nativeElement.querySelector('.entry-name').textContent).toBe('Native Agent');
+    }
+    expect(state.loadRegistry).not.toHaveBeenCalled();
+    expect(state.refreshRegistry).not.toHaveBeenCalled();
+  });
+
+  it('clears the query and restores all entries without a request', () => {
+    search('no match');
+    expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(0);
+    fixture.nativeElement.querySelector('button[aria-label="Clear search"]').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(3);
+    expect(state.loadRegistry).not.toHaveBeenCalled();
+    expect(state.refreshRegistry).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the full catalog and reapplies the current local query', async () => {
+    search('native');
+    state.refreshRegistry.mockImplementationOnce(async () => {
+      state.registry.set({ ...catalog, status: 'fresh', agents: [
+        ...catalog.agents,
+        { ...catalog.agents[1], id: 'new-native', name: 'New Native' },
+      ] });
+    });
     await fixture.componentInstance.refresh();
+    fixture.detectChanges();
     expect(state.refreshRegistry).toHaveBeenCalled();
+    expect(fixture.componentInstance.query()).toBe('native');
+    expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(2);
+    search('');
+    expect(fixture.nativeElement.querySelectorAll('.entry')).toHaveLength(4);
+  });
+
+  it('shows the fetch timestamp and rejection reasons', () => {
+    state.registry.set({ ...catalog, fetched_at: '2026-09-15T12:00:00Z',
+      rejected: [{ id: 'bad-entry', reason: 'no usable distribution' }] });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('time').getAttribute('datetime')).toBe('2026-09-15T12:00:00Z');
+    expect(fixture.nativeElement.querySelector('details').textContent).toContain('bad-entry: no usable distribution');
   });
 
   it('installs an uninstalled entry through the store and reports success', async () => {

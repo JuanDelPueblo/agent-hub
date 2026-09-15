@@ -184,11 +184,11 @@ struct RawAgent {
 #[derive(Deserialize)]
 struct RawDistribution {
     #[serde(default)]
-    binary: BTreeMap<String, BinaryTarget>,
+    binary: serde_json::Value,
     #[serde(default)]
-    npx: Option<PackageDistribution>,
+    npx: Option<serde_json::Value>,
     #[serde(default)]
-    uvx: Option<PackageDistribution>,
+    uvx: Option<serde_json::Value>,
 }
 
 /// Parses one registry document. The document itself must be well formed and
@@ -214,24 +214,27 @@ pub fn parse_catalog(json: &str) -> anyhow::Result<RegistryCatalog> {
 
     let mut agents: Vec<RegistryAgent> = Vec::new();
     let mut rejected = Vec::new();
+    let mut id_counts = BTreeMap::new();
+    for raw in &document.agents {
+        if let Some(id) = raw.get("id").and_then(|id| id.as_str()) {
+            *id_counts.entry(id.to_string()).or_insert(0) += 1;
+        }
+    }
     for raw in document.agents {
         let claimed_id = raw.get("id").and_then(|id| id.as_str()).map(str::to_string);
+        if claimed_id.as_ref().is_some_and(|id| id_counts[id] > 1) {
+            rejected.push(RegistryRejection {
+                id: claimed_id.map(|id| id.chars().take(128).collect()),
+                reason: "duplicate agent id in the registry document".into(),
+            });
+            continue;
+        }
         match validate_agent(raw) {
             Ok(agent) => {
-                // A duplicate id makes the entry ambiguous, so neither copy
-                // silently wins.
-                if agents.iter().any(|existing| existing.id == agent.id) {
-                    agents.retain(|existing| existing.id != agent.id);
-                    rejected.push(RegistryRejection {
-                        id: Some(agent.id.clone()),
-                        reason: "duplicate agent id in the registry document".into(),
-                    });
-                    continue;
-                }
                 agents.push(agent);
             }
             Err(reason) => rejected.push(RegistryRejection {
-                id: claimed_id,
+                id: claimed_id.map(|id| id.chars().take(128).collect()),
                 reason: reason.to_string(),
             }),
         }
@@ -245,9 +248,10 @@ pub fn parse_catalog(json: &str) -> anyhow::Result<RegistryCatalog> {
 }
 
 fn validate_agent(raw: serde_json::Value) -> anyhow::Result<RegistryAgent> {
-    let raw: RawAgent = serde_json::from_value(raw)?;
+    let raw: RawAgent = serde_json::from_value(raw)
+        .map_err(|_| anyhow::anyhow!("invalid agent metadata: expected Registry v1 field types"))?;
     let id = required(raw.id, "id")?;
-    anyhow::ensure!(is_valid_registry_id(&id), "invalid agent id '{id}'");
+    anyhow::ensure!(is_valid_registry_id(&id), "invalid agent id");
     let name = required(raw.name, "name")?;
     let version = required(raw.version, "version")?;
     let description = required(raw.description, "description")?;
@@ -256,40 +260,51 @@ fn validate_agent(raw: serde_json::Value) -> anyhow::Result<RegistryAgent> {
         .ok_or_else(|| anyhow::anyhow!("missing distribution"))?;
 
     let mut binary = BTreeMap::new();
-    for (target_name, target) in distribution.binary {
-        let target_key: PlatformTarget = target_name
-            .parse()
-            .map_err(|error: String| anyhow::anyhow!("{error}"))?;
-        anyhow::ensure!(
-            !target.archive.trim().is_empty(),
-            "empty archive URL for {target_key}"
-        );
-        anyhow::ensure!(
-            is_https(&target.archive),
-            "archive URL for {target_key} is not https"
-        );
-        anyhow::ensure!(!target.cmd.trim().is_empty(), "empty cmd for {target_key}");
-        if let Some(sha256) = &target.sha256 {
-            anyhow::ensure!(
-                is_sha256_hex(sha256),
-                "sha256 for {target_key} is not 64 hex characters"
-            );
+    let mut failures = Vec::new();
+    if let Some(targets) = distribution.binary.as_object() {
+        for (target_name, value) in targets {
+            let Ok(target_key) = target_name.parse::<PlatformTarget>() else {
+                failures.push("binary: unsupported platform".to_string());
+                continue;
+            };
+            match validate_binary(value.clone()) {
+                Ok(target) => {
+                    binary.insert(target_key, target);
+                }
+                Err(error) => failures.push(format!("binary.{target_key}: {error}")),
+            }
         }
-        binary.insert(target_key, target);
+    } else if !distribution.binary.is_null() {
+        failures.push("binary: expected a platform object".to_string());
     }
-    if let Some(package) = &distribution.npx {
-        anyhow::ensure!(!package.package.trim().is_empty(), "empty npx package");
-    }
-    if let Some(package) = &distribution.uvx {
-        anyhow::ensure!(!package.package.trim().is_empty(), "empty uvx package");
-    }
-
-    let distribution = RegistryDistribution {
-        binary,
-        npx: distribution.npx,
-        uvx: distribution.uvx,
+    let mut package = |kind: &str, value: Option<serde_json::Value>| {
+        value.and_then(
+            |value| match serde_json::from_value::<PackageDistribution>(value) {
+                Ok(package) if !package.package.trim().is_empty() => Some(package),
+                _ => {
+                    failures.push(format!(
+                        "{kind}: expected a non-empty package and valid args/env"
+                    ));
+                    None
+                }
+            },
+        )
     };
-    anyhow::ensure!(!distribution.is_empty(), "no usable distribution");
+    let npx = package("npx", distribution.npx);
+    let uvx = package("uvx", distribution.uvx);
+    let distribution = RegistryDistribution { binary, npx, uvx };
+    failures.sort();
+    failures.dedup();
+    failures.truncate(8);
+    anyhow::ensure!(
+        !distribution.is_empty(),
+        "no usable distribution{}",
+        if failures.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", failures.join("; "))
+        }
+    );
 
     Ok(RegistryAgent {
         id,
@@ -304,6 +319,18 @@ fn validate_agent(raw: serde_json::Value) -> anyhow::Result<RegistryAgent> {
         icon: raw.icon,
         distribution,
     })
+}
+
+fn validate_binary(value: serde_json::Value) -> anyhow::Result<BinaryTarget> {
+    let target: BinaryTarget = serde_json::from_value(value).map_err(|_| {
+        anyhow::anyhow!("expected archive, cmd, and valid optional sha256/args/env")
+    })?;
+    anyhow::ensure!(is_https(&target.archive), "archive URL is not https");
+    anyhow::ensure!(!target.cmd.trim().is_empty(), "empty cmd");
+    if let Some(sha256) = &target.sha256 {
+        anyhow::ensure!(is_sha256_hex(sha256), "sha256 is not 64 hex characters");
+    }
+    Ok(target)
 }
 
 fn required(value: Option<String>, field: &str) -> anyhow::Result<String> {
@@ -321,7 +348,9 @@ fn is_valid_registry_id(id: &str) -> bool {
 
 /// Archives download over TLS only. Plain HTTP is never accepted.
 pub fn is_https(url: &str) -> bool {
-    url.len() > "https://".len() && url[.."https://".len()].eq_ignore_ascii_case("https://")
+    url.get(.."https://".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+        && url.len() > "https://".len()
 }
 
 pub fn is_sha256_hex(value: &str) -> bool {
@@ -331,6 +360,52 @@ pub fn is_sha256_hex(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_official_shape_preserves_agents_and_isolates_distributions() {
+        let catalog = parse_catalog(include_str!(
+            "../../../../tests/fixtures/registry-v1-current.json"
+        ))
+        .unwrap();
+        assert_eq!(catalog.agents.len(), 8);
+        assert_eq!(catalog.rejected.len(), 2);
+        assert_eq!(catalog.rejected[0].id.as_deref(), Some("unsupported-entry"));
+        assert_eq!(
+            catalog.rejected[0].reason,
+            "no usable distribution: binary: unsupported platform"
+        );
+        assert_eq!(catalog.rejected[1].id.as_deref(), Some("malformed-entry"));
+        assert!(catalog.rejected[1]
+            .reason
+            .contains("binary.linux-x86_64: expected archive, cmd"));
+        for id in ["codex-acp", "claude-acp"] {
+            assert!(catalog.agent(id).unwrap().distribution.npx.is_some());
+        }
+        let amp = &catalog.agent("amp-acp").unwrap().distribution.binary;
+        assert_eq!(amp.len(), 5);
+        assert!(amp[&PlatformTarget::LinuxX86_64].sha256.is_some());
+        let cursor = &catalog.agent("cursor").unwrap().distribution.binary;
+        assert_eq!(cursor.len(), 6);
+        assert!(cursor[&PlatformTarget::LinuxX86_64].sha256.is_none());
+        assert_eq!(cursor[&PlatformTarget::LinuxX86_64].args, ["acp"]);
+        let auggie = catalog
+            .agent("auggie")
+            .unwrap()
+            .distribution
+            .npx
+            .as_ref()
+            .unwrap();
+        assert_eq!(auggie.args, ["--acp"]);
+        assert_eq!(auggie.env["AUGMENT_DISABLE_AUTO_UPDATE"], "1");
+        let binary =
+            &catalog.agent("vtcode").unwrap().distribution.binary[&PlatformTarget::LinuxX86_64];
+        assert_eq!(binary.env["VT_ACP_ENABLED"], "1");
+        let mixed = &catalog.agent("mixed-distributions").unwrap().distribution;
+        assert_eq!(mixed.binary.len(), 1);
+        assert!(mixed.binary.contains_key(&PlatformTarget::DarwinAarch64));
+        assert!(mixed.npx.is_some());
+        assert!(mixed.uvx.is_none());
+    }
 
     const VALID: &str = r#"{
       "version": "1.0.0",
@@ -470,7 +545,7 @@ mod tests {
         .unwrap();
         assert!(catalog.agents.is_empty());
         assert!(catalog.agent("dup").is_none());
-        assert_eq!(catalog.rejected.len(), 1);
+        assert_eq!(catalog.rejected.len(), 2);
         assert!(catalog.rejected[0].reason.contains("duplicate"));
     }
 
