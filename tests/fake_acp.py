@@ -55,7 +55,8 @@ for line in sys.stdin:
         if slow_startup:
             time.sleep(1.0)
         reply(id, {"protocolVersion": 1, "agentCapabilities": {"loadSession": can_load,
-                   "sessionCapabilities": {"list": {}, "close": {}, "delete": {}}},
+                   "sessionCapabilities": {"list": {}, "close": {}, "delete": {},
+                                           "prompt": {"image": {}, "audio": {}, "embeddedContext": {}}}},
                    "agentInfo": {"name": "fake-acp", "version": "1.0.0"}, "authMethods": []})
     elif method == "session/new":
         if slow_startup:
@@ -117,7 +118,7 @@ for line in sys.stdin:
             reply(pending_prompt, {"stopReason": "cancelled"})
             pending_prompt = None
     elif method == "session/prompt":
-        text = p["prompt"][0]["text"]
+        text = "\n".join(block.get("text", "") for block in p["prompt"] if block.get("type") == "text")
         count = int((root / current).read_text()) + 1
         (root / current).write_text(str(count))
         if text == "wait":
@@ -161,6 +162,11 @@ for line in sys.stdin:
             update("agent_message_chunk", content={"type": "text", "text": "part-1 "}, messageId="m1")
             update("agent_message_chunk", content={"type": "text", "text": "part-2"}, messageId="m1")
             update("agent_message_chunk", content={"type": "text", "text": "next"}, messageId="m2")
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "rich-output":
+            update("agent_message_chunk", content={"type": "text", "text": "before"}, messageId="rich-1")
+            update("agent_message_chunk", content={"type": "resource_link", "name": "Pueblo", "uri": "https://example.test/pueblo"}, messageId="rich-1")
+            update("agent_thought_chunk", content={"type": "resource", "resource": {"uri": "attachment://note.txt", "mimeType": "text/plain", "text": "private note"}}, messageId="thought-1")
             reply(id, {"stopReason": "end_turn"})
         elif text == "user-chunk":
             # Agent-reflected user chunk must not duplicate local history.

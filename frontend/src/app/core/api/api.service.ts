@@ -14,6 +14,7 @@ import type {
   AgentSummary,
   TerminalTaskSummary,
   TerminalTaskDetails,
+  RichContentBlock,
 } from './types';
 
 export interface AgentStatus {
@@ -142,10 +143,10 @@ export class ApiService {
     await this.request(`/api/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
   }
 
-  async promptChat(chatId: string, text: string): Promise<void> {
+  async promptChat(chatId: string, textOrContent: string | RichContentBlock[]): Promise<void> {
     await this.request(`/api/chats/${encodeURIComponent(chatId)}/prompt`, {
       method: 'POST',
-      body: { text },
+      body: typeof textOrContent === 'string' ? { text: textOrContent } : { content: textOrContent },
     });
   }
 

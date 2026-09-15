@@ -1,6 +1,7 @@
 //! Stable ACP v1 completeness: commands, modes, usage, message IDs,
 //! session/delete, cancellation semantics, and metadata preservation.
 
+use ::agent_client_protocol_schema::v1::{ContentBlock, ImageContent, TextContent};
 use pueblo_hub::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
@@ -334,6 +335,65 @@ async fn remote_session_delete_is_capability_gated() {
         Some(live_id.as_str())
     );
     restarted_sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn rich_prompt_and_agent_chunks_preserve_order_and_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+    let content = vec![
+        ContentBlock::Text(TextContent::new("rich-output")),
+        ContentBlock::Image(ImageContent::new("iVBORw0KGgo=", "image/png")),
+    ];
+    service
+        .prompt_chat_content(&chat.chat.id, content)
+        .await
+        .unwrap();
+    await_turn(&log, &chat.chat.id).await;
+    let events = match log.replay_from(1) {
+        pueblo_hub::events::ReplayResult::Complete(events) => events,
+        _ => panic!("expected complete replay"),
+    };
+    let user = events
+        .iter()
+        .find_map(|event| match &event.payload {
+            EventPayload::UserMessage {
+                content,
+                message_id,
+                ..
+            } if event.session_id == chat.chat.id => Some((content, message_id)),
+            _ => None,
+        })
+        .unwrap();
+    assert!(matches!(
+        user.0.as_slice(),
+        [ContentBlock::Text(_), ContentBlock::Image(_)]
+    ));
+    assert!(user.1.is_some());
+    let chunks = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            EventPayload::MessageChunk {
+                content,
+                message_id,
+                ..
+            } if event.session_id == chat.chat.id => Some((content, message_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(chunks.as_slice(), [(first, Some(id)), (second, Some(id2))] if matches!(first.as_slice(), [ContentBlock::Text(_)]) && matches!(second.as_slice(), [ContentBlock::ResourceLink(_)]) && id == "rich-1" && id2 == "rich-1")
+    );
+    assert!(events.iter().any(|event| matches!(&event.payload, EventPayload::ThoughtChunk { content, message_id: Some(id), .. } if matches!(content.as_slice(), [ContentBlock::Resource(_)]) && id == "thought-1")));
+    sessions.shutdown_all().await;
 }
 
 #[tokio::test]

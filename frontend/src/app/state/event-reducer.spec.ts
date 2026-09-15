@@ -7,6 +7,21 @@ const event = (seq: number, type: SessionEvent['payload']['type'], extra: Record
 });
 
 describe('EventReducer', () => {
+  it('retains ordered rich blocks and message IDs through replay', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'message_chunk', {
+      text: 'before', message_id: 'rich-1', content: [{ type: 'text', text: 'before' }],
+    }));
+    reducer.ingest(event(2, 'message_chunk', {
+      text: '', message_id: 'rich-1', content: [{ type: 'resource_link', name: 'safe', uri: 'https://example.test' }],
+    }));
+    const entry = reducer.items()[0] as { type: string; entries: Array<{ messageId?: string; content?: unknown[] }> };
+    expect(entry.entries[0].messageId).toBe('rich-1');
+    expect(entry.entries[0].content).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'resource_link', name: 'safe', uri: 'https://example.test' },
+    ]);
+  });
   it('aggregates streamed messages and completes the turn', () => {
     const reducer = new EventReducer();
     reducer.ingest(event(1, 'user_message', { text: 'Inspect this' }));

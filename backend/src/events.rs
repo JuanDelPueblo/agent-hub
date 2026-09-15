@@ -1,3 +1,4 @@
+use ::agent_client_protocol_schema::v1::ContentBlock;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +19,10 @@ pub struct SessionEvent {
 pub enum EventPayload {
     UserMessage {
         text: String,
+        /// Ordered stable ACP blocks. `text` remains the backwards-compatible
+        /// shorthand consumed by older clients and history rows.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<ContentBlock>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
     },
@@ -30,11 +35,15 @@ pub enum EventPayload {
     MetadataChanged {},
     MessageChunk {
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<ContentBlock>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
     },
     ThoughtChunk {
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        content: Vec<ContentBlock>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
     },
@@ -48,6 +57,8 @@ pub enum EventPayload {
         parent_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         locations: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<serde_json::Value>,
     },
     ToolCallUpdate {
         id: String,
@@ -59,6 +70,8 @@ pub enum EventPayload {
         output: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         locations: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<serde_json::Value>,
     },
     AvailableCommands {
         commands: serde_json::Value,
@@ -288,6 +301,16 @@ impl EventLog {
             payload,
         };
 
+        // Keep binary ACP output from turning the durable event table into an
+        // unbounded attachment store. This happens before SQLite or broadcast.
+        let encoded = serde_json::to_vec(&event)?;
+        if encoded.len() > crate::content::MAX_DURABLE_RICH_EVENT_BYTES {
+            anyhow::bail!(
+                "Durable event payload exceeds {} bytes",
+                crate::content::MAX_DURABLE_RICH_EVENT_BYTES
+            );
+        }
+
         if let Some(store) = &self.store {
             if let Err(error) = store.save_event(&event) {
                 tracing::error!(%error, "Failed to persist activity event");
@@ -403,6 +426,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "hello".to_string(),
+                content: vec![],
             },
         );
         let seq2 = log.append(
@@ -411,6 +435,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "world".to_string(),
+                content: vec![],
             },
         );
 
@@ -438,6 +463,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "a".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -454,6 +480,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "hi".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -471,6 +498,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "a".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -490,6 +518,7 @@ mod tests {
                 EventPayload::MessageChunk {
                     message_id: None,
                     text: format!("msg{}", i),
+                    content: vec![],
                 },
             )
             .unwrap();
@@ -521,6 +550,7 @@ mod tests {
                     EventPayload::MessageChunk {
                         message_id: None,
                         text: "ordered".to_string(),
+                        content: vec![],
                     },
                 )
             })
@@ -552,7 +582,8 @@ mod tests {
                 "codex",
                 EventPayload::MessageChunk {
                     message_id: None,
-                    text: "lost".into()
+                    text: "lost".into(),
+                    content: vec![],
                 }
             )
             .is_err());
@@ -564,7 +595,8 @@ mod tests {
                 "codex",
                 EventPayload::MessageChunk {
                     message_id: None,
-                    text: "later".into()
+                    text: "later".into(),
+                    content: vec![],
                 }
             )
             .is_err());
@@ -582,6 +614,7 @@ mod tests {
                 EventPayload::MessageChunk {
                     message_id: None,
                     text: index.to_string(),
+                    content: vec![],
                 },
             )
             .unwrap();
@@ -631,6 +664,7 @@ mod tests {
                         EventPayload::MessageChunk {
                             message_id: None,
                             text: format!("filler-{index}"),
+                            content: vec![],
                         },
                     )
                     .unwrap();
@@ -750,6 +784,7 @@ mod tests {
                         EventPayload::MessageChunk {
                             message_id: None,
                             text: format!("filler-{index}"),
+                            content: vec![],
                         },
                     )
                     .unwrap();

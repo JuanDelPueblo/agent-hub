@@ -5,6 +5,11 @@
 .message-input { display: block; width: 100%; min-height: 40px; max-height: 190px; resize: none; border: 0; outline: 0; background: transparent; color: var(--mat-sys-on-surface); font: var(--mat-sys-body-large); line-height: 1.5; }
 .message-input::placeholder { color: var(--mat-sys-on-surface-variant); opacity: 1; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.attachment-input { display: none; }
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
+.attachments span { display: inline-flex; align-items: center; padding-left: 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); font: var(--mat-sys-label-medium); }
+.attachments button { width: 32px; height: 32px; padding: 4px; }
+.attachment-error { margin: 0; color: var(--mat-sys-error); font: var(--mat-sys-body-small); }
 .selectors { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; min-width: 0; }
 .selector { min-height: 40px; padding-inline: 10px; border-radius: 20px; color: var(--mat-sys-on-surface-variant); }
 .selector mat-icon { width: 20px; height: 20px; margin-left: 2px; font-size: 20px; }

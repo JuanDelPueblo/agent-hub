@@ -1,5 +1,6 @@
 use crate::acp::{AcpClient, RequestTimedOut, SavedConfigRejected};
 use crate::agents::{AgentCatalog, AgentRuntime};
+use crate::content;
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
 use crate::store::{Chat, ChatWorkspace, Project, WorkspaceMode};
@@ -21,7 +22,7 @@ pub struct SessionKey {
 pub struct AdmittedTurn {
     _guard: OwnedMutexGuard<()>,
     _checkout_guard: Option<OwnedMutexGuard<()>>,
-    message: String,
+    content: Vec<agent_client_protocol_schema::ContentBlock>,
     timeout: Option<Duration>,
     start_seq: u64,
     user_message_id: String,
@@ -427,7 +428,7 @@ impl AcpSession {
 
     async fn admit_turn(
         &self,
-        message: String,
+        content: Vec<agent_client_protocol_schema::ContentBlock>,
         timeout: Option<Duration>,
     ) -> anyhow::Result<AdmittedTurn> {
         let guard = match self.turn_guard.clone().try_lock_owned() {
@@ -466,7 +467,17 @@ impl AcpSession {
             &self.id,
             &self.key.agent,
             EventPayload::UserMessage {
-                text: message.clone(),
+                text: content
+                    .iter()
+                    .filter_map(|block| match block {
+                        agent_client_protocol_schema::ContentBlock::Text(text) => {
+                            Some(text.text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                content: content.clone(),
                 message_id: Some(user_message_id.clone()),
             },
             turn_started_at,
@@ -480,7 +491,7 @@ impl AcpSession {
         Ok(AdmittedTurn {
             _guard: guard,
             _checkout_guard: checkout_guard,
-            message,
+            content,
             timeout,
             start_seq,
             user_message_id,
@@ -492,7 +503,17 @@ impl AcpSession {
         message: String,
         timeout: Option<Duration>,
     ) -> anyhow::Result<()> {
-        let admitted = self.admit_turn(message, timeout).await?;
+        self.start_turn_content(vec![content::text(message)], timeout)
+            .await
+    }
+
+    pub async fn start_turn_content(
+        self: &Arc<Self>,
+        content: Vec<agent_client_protocol_schema::ContentBlock>,
+        timeout: Option<Duration>,
+    ) -> anyhow::Result<()> {
+        crate::content::validate_prompt(&content)?;
+        let admitted = self.admit_turn(content, timeout).await?;
         let this = self.clone();
         tokio::spawn(async move {
             let _ = this.run_admitted_turn(admitted).await;
@@ -501,21 +522,23 @@ impl AcpSession {
     }
 
     pub async fn ask(&self, message: String, timeout: Option<Duration>) -> anyhow::Result<String> {
-        let admitted = self.admit_turn(message, timeout).await?;
+        let admitted = self
+            .admit_turn(vec![content::text(message)], timeout)
+            .await?;
         self.run_admitted_turn(admitted).await
     }
 
     async fn run_admitted_turn(&self, admitted: AdmittedTurn) -> anyhow::Result<String> {
         let AdmittedTurn {
             _guard,
-            message,
+            content,
             timeout,
             start_seq,
             user_message_id,
             ..
         } = admitted;
         let result = self
-            .execute_prompt(&message, timeout, start_seq, &user_message_id)
+            .execute_prompt(&content, timeout, start_seq, &user_message_id)
             .await;
         if let Err(error) = &result {
             let stop_reason = if error.is::<PromptTimeout>() {
@@ -530,7 +553,7 @@ impl AcpSession {
 
     async fn execute_prompt(
         &self,
-        message: &str,
+        content: &[agent_client_protocol_schema::ContentBlock],
         timeout: Option<Duration>,
         start_seq: u64,
         user_message_id: &str,
@@ -550,7 +573,7 @@ impl AcpSession {
             }
         };
 
-        let prompt_future = client.prompt(&sid, message, user_message_id);
+        let prompt_future = client.prompt(&sid, content, user_message_id);
         tokio::pin!(prompt_future);
 
         let mut event_rx = self.event_log.subscribe();

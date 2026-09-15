@@ -424,6 +424,7 @@ async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
             payload: EventPayload::MessageChunk {
                 message_id: None,
                 text: index.to_string(),
+                content: vec![],
             },
         };
         transaction
@@ -503,6 +504,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "old".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -516,6 +518,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "between startup and baseline".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -584,6 +587,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "live".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -603,6 +607,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "missed while disconnected".into(),
+                content: vec![],
             },
         )
         .unwrap();

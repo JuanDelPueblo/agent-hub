@@ -1,14 +1,14 @@
 @for (entry of entries(); track entry.id) {
   @switch (entry.type) {
     @case ('message_chunk') {
-      <div class="message-text"><hub-markdown [content]="entry.text" /></div>
+      @if (entry.content?.length) { <hub-rich-content [blocks]="entry.content!" /> } @else { <div class="message-text"><hub-markdown [content]="entry.text" /></div> }
     }
     @case ('thought_chunk') {
       <mat-expansion-panel class="thought">
         <mat-expansion-panel-header>
           <mat-panel-title><mat-icon>psychology</mat-icon><span>Thought process</span></mat-panel-title>
         </mat-expansion-panel-header>
-        <div class="thought-text"><hub-markdown [content]="entry.text" /></div>
+        @if (entry.content?.length) { <hub-rich-content [blocks]="entry.content!" /> } @else { <div class="thought-text"><hub-markdown [content]="entry.text" /></div> }
       </mat-expansion-panel>
     }
     @case ('tool_call') {

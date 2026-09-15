@@ -176,16 +176,28 @@ export interface PlanEntry {
   status: string;
 }
 
+/** Stable ACP v1 blocks Pueblo accepts and renders. No executable content is a DOM surface. */
+export type RichContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; uri?: string }
+  | { type: 'audio'; data: string; mimeType: 'audio/mpeg' | 'audio/wav' | 'audio/ogg' | 'audio/webm' }
+  | { type: 'resource_link'; name: string; uri: string; title?: string; description?: string; mimeType?: string; size?: number }
+  | { type: 'resource'; resource: { text: string; uri: string; mimeType?: string } | { blob: string; uri: string; mimeType?: string } };
+
+export interface PromptContentInput { content: RichContentBlock[]; }
+
 export interface TurnEntryMessage {
   id: number;
   type: 'message_chunk';
   text: string;
+  content?: RichContentBlock[];
 }
 
 export interface TurnEntryThought {
   id: number;
   type: 'thought_chunk';
   text: string;
+  content?: RichContentBlock[];
 }
 
 export interface TurnEntryTool {
@@ -198,6 +210,7 @@ export interface TurnEntryTool {
   kind?: string;
   parentId?: string;
   locations?: Array<{ path: string; line?: number | null }> | null;
+  content?: unknown;
 }
 
 export interface TurnEntryElicitation {
@@ -254,6 +267,7 @@ export interface DisplayUserMessage {
   id: number;
   type: 'user_message';
   text: string;
+  content?: RichContentBlock[];
   timestamp: string;
   messageId?: string;
 }
@@ -308,6 +322,7 @@ export interface SessionPayload {
     | 'metadata_changed';
   id?: unknown;
   text?: unknown;
+  content?: unknown;
   message?: unknown;
   title?: unknown;
   status?: unknown;

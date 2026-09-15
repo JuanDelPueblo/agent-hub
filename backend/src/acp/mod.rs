@@ -10,7 +10,7 @@ use agent_client_protocol_schema::{
     CancelNotification, ContentBlock, CreateTerminalRequest, InitializeRequest, InitializeResponse,
     KillTerminalRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
     ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionRequest, SessionId,
-    SessionNotification, SessionUpdate, TerminalOutputRequest, TextContent, ToolCallContent,
+    SessionNotification, SessionUpdate, TerminalOutputRequest, ToolCallContent,
     WaitForTerminalExitRequest, WriteTextFileRequest, CLIENT_METHOD_NAMES,
 };
 use std::collections::HashMap;
@@ -600,7 +600,7 @@ impl AcpClient {
     pub async fn prompt(
         &self,
         session_id: &SessionId,
-        text: &str,
+        content: &[ContentBlock],
         user_message_id: &str,
     ) -> anyhow::Result<PromptResponse> {
         // Stable v1 has no dedicated user-message-id field, so the identity
@@ -608,11 +608,34 @@ impl AcpClient {
         // own namespace. Agents that do not understand it ignore it, as the
         // spec requires; agents that echo it let the turn correlate the
         // response with the durable user message.
-        let req = PromptRequest::new(
-            session_id.clone(),
-            vec![ContentBlock::Text(TextContent::new(text))],
-        )
-        .meta(user_message_meta(user_message_id));
+        crate::content::validate_prompt(content)?;
+        let capabilities = self.capabilities.read().await;
+        for block in content {
+            match block {
+                ContentBlock::Image(_) => anyhow::ensure!(
+                    capabilities
+                        .pointer("/sessionCapabilities/prompt/image")
+                        .is_some_and(serde_json::Value::is_object),
+                    "Agent does not advertise image prompt capability"
+                ),
+                ContentBlock::Audio(_) => anyhow::ensure!(
+                    capabilities
+                        .pointer("/sessionCapabilities/prompt/audio")
+                        .is_some_and(serde_json::Value::is_object),
+                    "Agent does not advertise audio prompt capability"
+                ),
+                ContentBlock::Resource(_) => anyhow::ensure!(
+                    capabilities
+                        .pointer("/sessionCapabilities/prompt/embeddedContext")
+                        .is_some_and(serde_json::Value::is_object),
+                    "Agent does not advertise embedded context prompt capability"
+                ),
+                _ => {}
+            }
+        }
+        drop(capabilities);
+        let req = PromptRequest::new(session_id.clone(), content.to_vec())
+            .meta(user_message_meta(user_message_id));
         let result = self.send_request("session/prompt", req).await?;
         Ok(serde_json::from_value(result)?)
     }
@@ -1308,28 +1331,26 @@ async fn handle_session_update(
             return Ok(());
         }
         SessionUpdate::AgentMessageChunk(chunk) => {
+            crate::content::validate_durable(std::slice::from_ref(&chunk.content))?;
             let text = match &chunk.content {
-                ContentBlock::Text(t) => t.text.as_str(),
-                _ => return Ok(()),
+                ContentBlock::Text(t) => t.text.clone(),
+                _ => String::new(),
             };
-            if text.is_empty() {
-                return Ok(());
-            }
             EventPayload::MessageChunk {
-                text: text.to_string(),
+                text,
+                content: vec![chunk.content.clone()],
                 message_id: chunk.message_id.as_ref().map(|m| m.to_string()),
             }
         }
         SessionUpdate::AgentThoughtChunk(chunk) => {
+            crate::content::validate_durable(std::slice::from_ref(&chunk.content))?;
             let text = match &chunk.content {
-                ContentBlock::Text(t) => t.text.as_str(),
-                _ => return Ok(()),
+                ContentBlock::Text(t) => t.text.clone(),
+                _ => String::new(),
             };
-            if text.is_empty() {
-                return Ok(());
-            }
             EventPayload::ThoughtChunk {
-                text: text.to_string(),
+                text,
+                content: vec![chunk.content.clone()],
                 message_id: chunk.message_id.as_ref().map(|m| m.to_string()),
             }
         }
@@ -1352,9 +1373,17 @@ async fn handle_session_update(
                 kind,
                 parent_id,
                 locations,
+                content: None,
             }
         }
         SessionUpdate::ToolCallUpdate(tcu) => {
+            if let Some(items) = &tcu.fields.content {
+                for item in items {
+                    if let ToolCallContent::Content(content) = item {
+                        crate::content::validate_durable(std::slice::from_ref(&content.content))?;
+                    }
+                }
+            }
             let title = tcu
                 .fields
                 .title
@@ -1385,6 +1414,12 @@ async fn handle_session_update(
                 kind,
                 output: clean_tool_output(format_tool_call_output(&tcu.fields)),
                 locations,
+                content: tcu
+                    .fields
+                    .content
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()?,
             }
         }
         SessionUpdate::Plan(plan) => {

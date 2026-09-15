@@ -2,7 +2,7 @@ import { computed, inject, Service } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs';
 import { EventSocketService } from '../core/event-socket.service';
-import type { ChatWorkspaceSelection, CloneProjectInput, PermissionPolicy, SessionEvent } from '../core/api/types';
+import type { ChatWorkspaceSelection, CloneProjectInput, PermissionPolicy, RichContentBlock, SessionEvent } from '../core/api/types';
 import { EventReducer } from './event-reducer';
 import type { ChatActivity } from './chat-activity';
 import { ChatSessionStore } from './chat-session.store';
@@ -95,7 +95,7 @@ export class AppStateService {
   resetRejectedConfig(chatId: string): Promise<void> { return this.chatStore.resetRejectedConfig(chatId); }
   connectChat(chatId: string) { return this.chatStore.connectChat(chatId); }
   fetchConfig(chatId: string) { return this.chatStore.fetchConfig(chatId); }
-  sendPrompt(chatId: string, text: string): Promise<void> { return this.chatStore.sendPrompt(chatId, text); }
+  sendPrompt(chatId: string, text: string | RichContentBlock[]): Promise<void> { return this.chatStore.sendPrompt(chatId, text); }
   cancelActiveTurn(chatId: string): Promise<void> { return this.chatStore.cancelActiveTurn(chatId); }
   stopChatProcess(chatId: string): Promise<void> { return this.chatStore.stopChatProcess(chatId); }
   setChatPolicy(chatId: string, policy: PermissionPolicy): Promise<void> { return this.chatStore.setChatPolicy(chatId, policy); }

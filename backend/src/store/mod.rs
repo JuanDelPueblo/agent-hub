@@ -609,6 +609,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "a".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -618,6 +619,7 @@ mod tests {
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "b".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -652,6 +654,7 @@ mod tests {
                 payload: EventPayload::MessageChunk {
                     message_id: None,
                     text: index.to_string(),
+                    content: vec![],
                 },
             };
             transaction

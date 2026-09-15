@@ -1,4 +1,4 @@
-<mat-expansion-panel class="tool" [class.subagent-tool]="isSubagentChild()" [disabled]="!cleanOutput()">
+<mat-expansion-panel class="tool" [class.subagent-tool]="isSubagentChild()" [disabled]="!cleanOutput() && !richContent().length">
   <mat-expansion-panel-header>
     <mat-panel-title>
       <mat-icon>{{ icon() }}</mat-icon>
@@ -10,6 +10,7 @@
     <mat-panel-description>{{ tool().status }}</mat-panel-description>
   </mat-expansion-panel-header>
   @if (cleanOutput()) { <pre>{{ cleanOutput() }}</pre> }
+  @if (richContent().length) { <hub-rich-content [blocks]="richContent()" /> }
   @if (tool().locations?.length) {
     <div class="tool-locations" aria-label="Related files">
       @for (loc of tool().locations!; track loc.path) {
@@ -18,4 +19,3 @@
     </div>
   }
 </mat-expansion-panel>
-

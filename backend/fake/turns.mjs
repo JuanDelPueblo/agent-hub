@@ -85,11 +85,11 @@ export function cancelElicitations(chatId) {
  * Runs one turn. It returns at once; the turn streams in the background,
  * exactly like the `tokio::spawn` of `hub::prompt`.
  */
-export function startTurn(state, chat, text, latency) {
+export function startTurn(state, chat, text, latency, content = undefined) {
   const turn = { cancelled: false, permissionId: null, resolvePermission: null };
   active.set(chat.id, turn);
 
-  runTurn(state, chat, text, latency, turn)
+  runTurn(state, chat, text, latency, turn, content)
     .catch((error) => {
       state.emit(chat.id, chat.agent, { type: 'error', message: String(error) });
     })
@@ -99,7 +99,7 @@ export function startTurn(state, chat, text, latency) {
     });
 }
 
-async function runTurn(state, chat, text, latency, turn) {
+async function runTurn(state, chat, text, latency, turn, richContent = undefined) {
   const agent = chat.agent;
   const emit = (payload) => state.emit(chat.id, agent, payload);
   const pause = (ms) => sleep(Math.round(ms * latency));
@@ -113,7 +113,7 @@ async function runTurn(state, chat, text, latency, turn) {
     }
   };
 
-  const userEvent = emit({ type: 'user_message', text });
+  const userEvent = emit({ type: 'user_message', text, ...(richContent ? { content: richContent } : {}) });
   state.touchChatActivity(chat.id, userEvent.timestamp);
   state.setRuntime(chat.id, 'RUNNING', 'PROMPTING');
   await pause(200);

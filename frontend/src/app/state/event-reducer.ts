@@ -87,6 +87,7 @@ export class EventReducer {
         id: this.nextId++,
         type: 'user_message',
         text: this.stringValue(payload.text) ?? '',
+        ...(this.contentBlocks(payload.content) ? { content: this.contentBlocks(payload.content)! } : {}),
         timestamp: event.timestamp,
         ...(messageId != null ? { messageId } : {}),
       });
@@ -204,6 +205,7 @@ export class EventReducer {
 
     if (payload.type === 'message_chunk' || payload.type === 'thought_chunk') {
       const text = this.stringValue(payload.text) ?? '';
+      const content = this.contentBlocks(payload.content);
       const messageId = this.stringValue((payload as Record<string, unknown>)['message_id']);
       // Same messageId means one message; a change starts a new entry.
       // Old agents omit IDs and merge by adjacency.
@@ -217,6 +219,7 @@ export class EventReducer {
         const merged: TurnEntry = {
           ...last,
           text: (last as { text: string }).text + text,
+          ...(content ? { content: [...((last as { content?: unknown[] }).content ?? []), ...content] } : {}),
           ...(messageId != null ? { messageId } : {}),
         } as TurnEntry;
         return { ...turn, entries: [...entries.slice(0, -1), merged] };
@@ -229,6 +232,7 @@ export class EventReducer {
             id: this.nextId++,
             type: payload.type,
             text,
+            ...(content ? { content } : {}),
             ...(messageId != null ? { messageId } : {}),
           } as TurnEntry,
         ],
@@ -258,6 +262,7 @@ export class EventReducer {
             kind,
             parentId,
             locations,
+            ...(payload.content !== undefined ? { content: payload.content } : {}),
           },
         ],
       };
@@ -285,6 +290,7 @@ export class EventReducer {
               ? (tool.output || '') + String(payload.output)
               : tool.output,
           ...(locations !== undefined ? { locations } : {}),
+          ...(payload.content !== undefined ? { content: payload.content } : {}),
         };
         const nextEntries = [...entries];
         nextEntries[index] = updated;
@@ -304,6 +310,7 @@ export class EventReducer {
             kind: this.stringValue(payload['kind']),
             parentId: this.stringValue(payload['parent_id'] ?? payload['parentId']),
             locations: locations ?? null,
+            ...(payload.content !== undefined ? { content: payload.content } : {}),
           },
         ],
       };
@@ -477,6 +484,13 @@ export class EventReducer {
       if (entry.type === 'tool_call' && entry.toolCallId === id) return index;
     }
     return -1;
+  }
+
+  private contentBlocks(value: unknown): import('../core/api/types').RichContentBlock[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.filter((block): block is import('../core/api/types').RichContentBlock =>
+      !!block && typeof block === 'object' && typeof (block as { type?: unknown }).type === 'string',
+    );
   }
 
   private stringValue(value: unknown): string | undefined {
