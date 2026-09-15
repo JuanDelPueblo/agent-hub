@@ -11,6 +11,34 @@ use std::process::Stdio;
 #[cfg(not(windows))]
 use tokio::process::Command;
 
+/// Distinguishes an `execve` `ENOENT` caused by a missing executable from one
+/// caused by a missing ELF interpreter/loader for an executable that does
+/// exist. The OS reports both the same way (`std::io::ErrorKind::NotFound`),
+/// but they need different fixes: install the agent, versus fix the runtime
+/// (see T129 -- a Registry-installed native binary with a conventional
+/// interpreter path the OCI image did not yet provide).
+#[cfg(not(windows))]
+fn classify_spawn_error(
+    command: &str,
+    env_vars: &HashMap<String, String>,
+    e: std::io::Error,
+) -> anyhow::Error {
+    if e.kind() != std::io::ErrorKind::NotFound {
+        return anyhow::anyhow!("Failed to spawn ACP agent '{command}': {e}");
+    }
+    let search_path = env_vars
+        .get("PATH")
+        .map(std::ffi::OsString::from)
+        .unwrap_or_default();
+    match crate::agents::which_in(command, &search_path) {
+        Some(_) => anyhow::anyhow!(
+            "Failed to spawn ACP agent '{command}': the executable exists but the process \
+             could not start, commonly a missing ELF interpreter/loader for this binary: {e}"
+        ),
+        None => anyhow::anyhow!("Failed to spawn ACP agent '{command}': executable not found"),
+    }
+}
+
 pub struct AcpProcess {
     pub child: Box<dyn TokioChildWrapper>,
     pub root_pid: Option<u32>,
@@ -60,7 +88,7 @@ impl AcpProcess {
 
             let mut child = wrap
                 .spawn()
-                .map_err(|e| anyhow::anyhow!("Failed to spawn ACP agent '{}': {}", command, e))?;
+                .map_err(|e| classify_spawn_error(command, env_vars, e))?;
             let root_pid = child.id();
 
             let stdin = child
@@ -106,7 +134,55 @@ pub enum StderrPolicy {
     Discard,
 }
 
-pub async fn drain_stderr(stderr: ChildStderr, agent_name: String, policy: StderrPolicy) {
+/// How many of the most recent stderr lines `StderrTail` keeps, and how much
+/// of each line, so a startup-failure diagnostic stays bounded.
+const STDERR_TAIL_MAX_LINES: usize = 5;
+const STDERR_TAIL_MAX_LINE_CHARS: usize = 200;
+
+/// A small bounded ring of the most recent stderr lines from one ACP
+/// process, populated only under `StderrPolicy::Log`.
+///
+/// It exists so a connection that closes before ACP initialization completes
+/// (for example, a native module failing to load its shared libraries) can
+/// report *why* instead of a bare "connection closed". It is never populated
+/// for `StderrPolicy::Discard` processes (authentication), so no
+/// credential-bearing stderr is retained here, matching the same rule
+/// `drain_stderr` already applies to the log itself.
+#[derive(Clone, Default)]
+pub struct StderrTail(std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>);
+
+impl StderrTail {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn push(&self, line: &str) {
+        let mut truncated = line.to_string();
+        truncated.truncate(STDERR_TAIL_MAX_LINE_CHARS);
+        let mut buf = self.0.lock().expect("stderr tail lock");
+        if buf.len() == STDERR_TAIL_MAX_LINES {
+            buf.pop_front();
+        }
+        buf.push_back(truncated);
+    }
+
+    /// The captured lines joined into one diagnostic snippet, or `None` when
+    /// nothing was captured.
+    pub fn snippet(&self) -> Option<String> {
+        let buf = self.0.lock().expect("stderr tail lock");
+        if buf.is_empty() {
+            return None;
+        }
+        Some(buf.iter().cloned().collect::<Vec<_>>().join(" | "))
+    }
+}
+
+pub async fn drain_stderr(
+    stderr: ChildStderr,
+    agent_name: String,
+    policy: StderrPolicy,
+    tail: StderrTail,
+) {
     let mut reader = BufReader::new(stderr);
     let mut line = String::new();
     loop {
@@ -121,6 +197,7 @@ pub async fn drain_stderr(stderr: ChildStderr, agent_name: String, policy: Stder
                 match policy {
                     StderrPolicy::Log => {
                         tracing::warn!(agent = %agent_name, "stderr: {}", trimmed);
+                        tail.push(trimmed);
                     }
                     // The line may be a credential. Drop it entirely.
                     StderrPolicy::Discard => {}
@@ -188,7 +265,7 @@ mod stderr_policy_tests {
                     .spawn()
                     .expect("a process that writes stderr");
                 let stderr = child.stderr.take().expect("stderr was piped");
-                drain_stderr(stderr, "policy-probe".to_owned(), policy).await;
+                drain_stderr(stderr, "policy-probe".to_owned(), policy, StderrTail::new()).await;
                 child.wait().await.expect("the stderr writer exited");
             });
         });
@@ -217,6 +294,192 @@ mod stderr_policy_tests {
         assert!(
             logged.contains(DIAGNOSTIC),
             "ordinary agent stderr stopped being logged: {logged}"
+        );
+    }
+
+    /// A startup-failure diagnostic (T129) needs the tail captured under
+    /// `Log`, so a launch failure like a missing shared library is visible
+    /// beyond a bare "connection closed".
+    #[test]
+    fn log_policy_populates_the_stderr_tail() {
+        let script = "echo error: cannot open shared object file >&2";
+        let tail = StderrTail::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the drain");
+        runtime.block_on(async {
+            let mut child = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(script)
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("a process that writes stderr");
+            let stderr = child.stderr.take().expect("stderr was piped");
+            drain_stderr(
+                stderr,
+                "tail-probe".to_owned(),
+                StderrPolicy::Log,
+                tail.clone(),
+            )
+            .await;
+            child.wait().await.expect("the stderr writer exited");
+        });
+        assert_eq!(
+            tail.snippet(),
+            Some("error: cannot open shared object file".to_string())
+        );
+    }
+
+    /// Authentication stderr may carry credentials, so the tail must stay
+    /// empty under `Discard` exactly as the log does.
+    #[test]
+    fn discard_policy_never_populates_the_stderr_tail() {
+        const SECRET: &str = "DEVICE-CODE-SECRET-9c1a";
+        let tail = StderrTail::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the drain");
+        runtime.block_on(async {
+            let mut child = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("echo {SECRET} >&2"))
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("a process that writes stderr");
+            let stderr = child.stderr.take().expect("stderr was piped");
+            drain_stderr(
+                stderr,
+                "tail-probe".to_owned(),
+                StderrPolicy::Discard,
+                tail.clone(),
+            )
+            .await;
+            child.wait().await.expect("the stderr writer exited");
+        });
+        assert_eq!(tail.snippet(), None);
+    }
+
+    /// The tail keeps only the most recent lines, bounded, so a chatty
+    /// process cannot turn a diagnostic into an unbounded log.
+    #[test]
+    fn stderr_tail_is_bounded() {
+        let tail = StderrTail::new();
+        for i in 0..(STDERR_TAIL_MAX_LINES + 2) {
+            tail.push(&format!("line-{i}"));
+        }
+        let snippet = tail.snippet().expect("some lines were pushed");
+        assert_eq!(snippet.matches('|').count(), STDERR_TAIL_MAX_LINES - 1);
+        assert!(
+            !snippet.contains("line-0"),
+            "oldest line should have been evicted: {snippet}"
+        );
+
+        let long_line = "x".repeat(STDERR_TAIL_MAX_LINE_CHARS * 3);
+        let tail = StderrTail::new();
+        tail.push(&long_line);
+        let snippet = tail.snippet().expect("a line was pushed");
+        assert_eq!(snippet.len(), STDERR_TAIL_MAX_LINE_CHARS);
+    }
+
+    /// A command that plainly does not exist is reported as such, not as
+    /// some other spawn failure.
+    #[test]
+    fn missing_executable_is_reported_as_missing() {
+        let env = HashMap::from([("PATH".to_string(), "/nonexistent-batey-test".to_string())]);
+        let result = AcpProcess::spawn(
+            "batey-test-definitely-absent",
+            &[],
+            &env,
+            std::path::Path::new("/"),
+        );
+        let message = match result {
+            Ok(_) => panic!("the command does not exist"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            message.contains("executable not found"),
+            "unexpected message: {message}"
+        );
+    }
+
+    /// The regression this guards (T129): an executable that exists but
+    /// whose ELF interpreter/loader is missing fails with the same OS-level
+    /// `ENOENT` as a missing executable. The distinction must survive that,
+    /// so an operator does not chase the wrong fix. Needs `cc` and
+    /// `patchelf`, both present in the Nix dev shell and `nix run .#verify`;
+    /// it skips itself where they are not (for example, a bare CI runner
+    /// with no `patchelf`), since `nix/oci-runtime-compat-smoke.sh` already
+    /// exercises this exact failure mode end to end against a real image.
+    #[test]
+    fn existing_binary_with_missing_interpreter_is_distinguished() {
+        let empty = std::ffi::OsString::new();
+        if crate::agents::which_in("cc", &empty).is_none()
+            && crate::agents::which_in("gcc", &empty).is_none()
+        {
+            eprintln!("skipping: no C compiler on PATH");
+            return;
+        }
+        let Ok(path) = std::env::var("PATH") else {
+            eprintln!("skipping: no PATH to search for cc/patchelf");
+            return;
+        };
+        let path = std::ffi::OsString::from(path);
+        let cc =
+            crate::agents::which_in("cc", &path).or_else(|| crate::agents::which_in("gcc", &path));
+        let Some(cc) = cc else {
+            eprintln!("skipping: no C compiler on PATH");
+            return;
+        };
+        let Some(patchelf) = crate::agents::which_in("patchelf", &path) else {
+            eprintln!("skipping: no patchelf on PATH");
+            return;
+        };
+
+        let dir = std::env::temp_dir().join(format!("batey-interp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let source = dir.join("hello.c");
+        std::fs::write(&source, "int main(void) { return 0; }\n").expect("wrote source");
+        let binary = dir.join("hello");
+        let compiled = std::process::Command::new(&cc)
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .status()
+            .expect("ran the compiler");
+        assert!(compiled.success(), "test binary failed to compile");
+        let patched = std::process::Command::new(&patchelf)
+            .arg("--set-interpreter")
+            .arg("/nonexistent-batey-test-loader")
+            .arg(&binary)
+            .status()
+            .expect("ran patchelf");
+        assert!(
+            patched.success(),
+            "patchelf failed to repoint the interpreter"
+        );
+
+        let env = HashMap::new();
+        let result = AcpProcess::spawn(
+            binary.to_str().expect("a utf-8 path"),
+            &[],
+            &env,
+            std::path::Path::new("/"),
+        );
+        std::fs::remove_dir_all(&dir).ok();
+
+        let message = match result {
+            Ok(_) => panic!("a binary with a missing interpreter cannot start"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            message.contains("missing ELF interpreter/loader"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            !message.contains("executable not found"),
+            "an existing file was misreported as missing: {message}"
         );
     }
 }

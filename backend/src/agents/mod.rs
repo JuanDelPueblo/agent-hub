@@ -21,7 +21,8 @@ pub use definition::{
 };
 pub use file::parse_agents;
 pub use installed::{
-    which, HostRuntimeProbe, InstalledAgent, InstalledDistribution, RegistrySnapshot, RuntimeProbe,
+    which, which_in, HostRuntimeProbe, InstalledAgent, InstalledDistribution, RegistrySnapshot,
+    RuntimeProbe,
 };
 pub use manager::{
     AgentError, AgentManagementDetail, AgentManager, AgentResult, InstallRequest,

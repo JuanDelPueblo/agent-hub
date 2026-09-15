@@ -27,7 +27,7 @@ use crate::events::{EventLog, EventPayload};
 
 use self::callbacks::{CallbackHandler, CallbackPolicy};
 pub use self::process::StderrPolicy;
-use self::process::{drain_stderr, AcpProcess};
+use self::process::{drain_stderr, AcpProcess, StderrTail};
 use self::protocol::{
     IncomingKind, IncomingMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
 };
@@ -166,6 +166,10 @@ pub struct AcpClient {
     child_root_pid: Option<u32>,
     callback_handler: Arc<CallbackHandler>,
     connected: Arc<AtomicBool>,
+    /// A bounded, best-effort diagnostic for a process that dies before
+    /// completing the ACP handshake. Empty (and never populated) for
+    /// authentication processes, which use `StderrPolicy::Discard`.
+    stderr_tail: StderrTail,
 }
 
 impl AcpClient {
@@ -213,8 +217,13 @@ impl AcpClient {
             child_root_pid,
         ));
 
-        let stderr_handle =
-            tokio::spawn(drain_stderr(proc.stderr, agent_name.clone(), stderr_policy));
+        let stderr_tail = StderrTail::new();
+        let stderr_handle = tokio::spawn(drain_stderr(
+            proc.stderr,
+            agent_name.clone(),
+            stderr_policy,
+            stderr_tail.clone(),
+        ));
 
         let config_options = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
         let available_commands = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
@@ -238,6 +247,7 @@ impl AcpClient {
             last_usage.clone(),
             replaying.clone(),
             store,
+            stderr_tail.clone(),
         ));
 
         let wait_handle = tokio::spawn(wait_task(child.clone(), child_root_pid, connected.clone()));
@@ -266,6 +276,7 @@ impl AcpClient {
             child_root_pid,
             callback_handler,
             connected,
+            stderr_tail,
         })
     }
 
@@ -303,13 +314,26 @@ impl AcpClient {
         }
     }
 
+    /// "ACP agent connection closed", with a bounded recent-stderr snippet
+    /// appended when one was captured (never for an authentication process,
+    /// whose stderr is always discarded). This is the first place a process
+    /// that dies before completing `initialize` gets to report why: a plain
+    /// "connection closed" otherwise looks identical whether the executable
+    /// crashed, its interpreter/loader was missing, or it exited cleanly.
+    fn connection_closed_message(&self) -> String {
+        match self.stderr_tail.snippet() {
+            Some(snippet) => format!("ACP agent connection closed (recent stderr: {snippet})"),
+            None => "ACP agent connection closed".to_string(),
+        }
+    }
+
     async fn dispatch_request<P: serde::Serialize>(
         &self,
         method: &'static str,
         params: P,
     ) -> anyhow::Result<(i64, oneshot::Receiver<ResponseResult>)> {
         if !self.is_connected() {
-            anyhow::bail!("ACP agent connection closed");
+            anyhow::bail!(self.connection_closed_message());
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -325,9 +349,9 @@ impl AcpClient {
         if !self.is_connected() {
             let mut pending = self.pending.lock().await;
             if let Some(tx) = pending.remove(&id) {
-                let _ = tx.send(Err(anyhow::anyhow!("ACP agent connection closed")));
+                let _ = tx.send(Err(anyhow::anyhow!(self.connection_closed_message())));
             }
-            anyhow::bail!("ACP agent connection closed");
+            anyhow::bail!(self.connection_closed_message());
         }
 
         if self.writer_tx.send(WriterMsg::Line(line)).await.is_err() {
@@ -1076,6 +1100,7 @@ async fn reader_task(
     last_usage: Arc<tokio::sync::RwLock<serde_json::Value>>,
     replaying: Arc<AtomicBool>,
     store: Option<Arc<crate::store::Store>>,
+    stderr_tail: StderrTail,
 ) {
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(16));
     let mut line = String::new();
@@ -1356,11 +1381,11 @@ async fn reader_task(
         },
     );
     kill_child(&child, child_root_pid).await;
-    fail_pending_requests(
-        &pending,
-        format!("ACP agent connection closed for {}", agent_name),
-    )
-    .await;
+    let mut message = format!("ACP agent connection closed for {}", agent_name);
+    if let Some(snippet) = stderr_tail.snippet() {
+        message = format!("{message} (recent stderr: {snippet})");
+    }
+    fail_pending_requests(&pending, message).await;
 }
 
 /// Namespace for Batey's generic `_meta` extensions. Extension keys

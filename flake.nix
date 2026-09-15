@@ -13,8 +13,9 @@
           pkgs = import nixpkgs { inherit system; };
           batey = import ./nix/package.nix { inherit pkgs crane; };
           batey-oci = import ./nix/oci.nix { inherit pkgs batey; };
+          oci-foreign-elf-fixture = import ./nix/foreign-elf-fixture.nix { inherit pkgs; };
         in {
-          inherit batey batey-oci;
+          inherit batey batey-oci oci-foreign-elf-fixture;
           default = batey;
         });
 
