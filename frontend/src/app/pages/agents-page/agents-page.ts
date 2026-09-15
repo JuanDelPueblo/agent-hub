@@ -1,5 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,7 +9,6 @@ import { AgentCardComponent } from '../../agents/agent-card/agent-card';
 import { AuthTerminalDialogComponent } from '../../agents/auth-terminal-dialog/auth-terminal-dialog';
 import { ConfirmDialogComponent } from '../../agents/confirm-dialog/confirm-dialog';
 import { CustomAgentDialogComponent } from '../../agents/custom-agent-dialog/custom-agent-dialog';
-import { RegistryBrowserComponent } from '../../agents/registry-browser/registry-browser';
 import { AppStateService } from '../../state/app-state.service';
 
 @Component({
@@ -19,7 +18,7 @@ import { AppStateService } from '../../state/app-state.service';
     MatButtonModule,
     MatIconModule,
     MatProgressBarModule,
-    RegistryBrowserComponent,
+    RouterLink,
   ],
   templateUrl: './agents-page.html',
   styleUrl: './agents-page.scss',
@@ -49,7 +48,7 @@ export class AgentsPageComponent implements OnInit {
   }
 
   async initialize(): Promise<void> {
-    await Promise.all([this.state.loadAgents(), this.state.loadRegistry()]);
+    await this.state.loadAgents();
     await this.loadAuthForAll();
     const target = this.targetAgentId();
     if (target) {
@@ -82,7 +81,7 @@ export class AgentsPageComponent implements OnInit {
     this.notice.set('');
     try {
       await this.state.authenticateAgent(agent.id, methodId);
-      this.notice.set(`${agent.display_name} authentication completed.`);
+      this.notice.set(`Signed in to ${agent.display_name}.`);
     } catch {
       // The store records the method-level error.
     }

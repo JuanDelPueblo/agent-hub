@@ -75,6 +75,17 @@ describe('AgentCardComponent', () => {
     expect(text).toContain('Command missing.');
   });
 
+  it('keeps the availability badge as the single status cue in the header', () => {
+    render(summary('builtin', { display: { description: 'A builtin.' } }));
+    const head = fixture.nativeElement.querySelector('.card-head') as HTMLElement;
+    expect(head.textContent).toContain('Available');
+    expect(head.textContent).not.toContain('Read-only');
+    expect(head.textContent).not.toContain('Built-in');
+    const tags = fixture.nativeElement.querySelector('.tags') as HTMLElement;
+    expect(tags.textContent).toContain('Built-in');
+    expect(tags.textContent).toContain('Read-only');
+  });
+
   it('represents agent, terminal, and unsupported methods honestly', () => {
     const auth: AgentAuthState = {
       agent_id: 'x',
@@ -112,12 +123,62 @@ describe('AgentCardComponent', () => {
     });
     const text = fixture.nativeElement.textContent as string;
     expect(text).not.toContain('Active session');
-    expect(text).toContain('Clear active credentials or stored session');
+    expect(text).toContain('Clear the saved sign-in for this agent');
     const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
       .find((item) => (item as HTMLButtonElement).textContent?.includes('Log out')) as HTMLButtonElement;
     expect(button).toBeDefined();
     button.click();
     expect(logout).toHaveBeenCalled();
+  });
+
+  it('shows simple wording when an agent offers no sign-in options', () => {
+    render(summary('builtin'), {
+      agent_id: 'x',
+      logout_supported: false,
+      terminal_supported: false,
+      methods: [],
+    });
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('No sign-in options available.');
+    expect(text).not.toContain('reports no authentication methods');
+  });
+
+  it('offers a check action when sign-in state is not loaded', () => {
+    const retryAuth = vi.fn();
+    fixture.componentInstance.retryAuth.subscribe(retryAuth);
+    render(summary('builtin'), null);
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Sign-in status is not loaded.');
+    const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
+      .find((item) => (item as HTMLButtonElement).textContent?.includes('Check')) as HTMLButtonElement;
+    expect(button).toBeDefined();
+    button.click();
+    expect(retryAuth).toHaveBeenCalled();
+  });
+
+  it('places each method label on the left and its action on the right', () => {
+    render(summary('builtin'), {
+      agent_id: 'x',
+      logout_supported: false,
+      terminal_supported: true,
+      methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
+    });
+    const rows = fixture.nativeElement.querySelectorAll('.method') as NodeListOf<HTMLElement>;
+    expect(rows.length).toBe(1);
+    const text = rows[0].querySelector('.method-text');
+    const action = rows[0].querySelector('.method-action');
+    expect(text).not.toBeNull();
+    expect(action).not.toBeNull();
+    expect(rows[0].querySelectorAll('button').length).toBe(1);
+  });
+
+  it('shows version and usage provider metadata', () => {
+    render(summary('builtin', { usage_provider: 'openai', display: { version: '1.2.3' } }));
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Version');
+    expect(text).toContain('1.2.3');
+    expect(text).toContain('Usage provider');
+    expect(text).toContain('openai');
   });
 
   it('hides logout when logout is not supported', () => {

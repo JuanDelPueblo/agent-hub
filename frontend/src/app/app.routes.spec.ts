@@ -12,7 +12,16 @@ describe('Pueblo Hub routes', () => {
 
   beforeEach(() => {
     const state = {
+      agents: signal([]),
+      agentError: signal(null),
+      agentsLoading: signal(false),
+      authByAgent: signal({}),
+      authLoading: signal(new Set<string>()),
+      authErrors: signal({}),
       findChat: vi.fn(() => null),
+      loadAgents: vi.fn(async () => undefined),
+      loadRegistry: vi.fn(async () => undefined),
+      loadAgentAuth: vi.fn(async () => undefined),
       reducersByChat: signal({}),
       configOptionsByChat: signal({}),
       connectingChats: signal(new Set<string>()),
@@ -41,10 +50,10 @@ describe('Pueblo Hub routes', () => {
   });
 
   it('lazy-loads every page component', async () => {
-    expect(routes.slice(0, 4).every((route) => route.loadComponent && !route.component)).toBe(true);
+    expect(routes.slice(0, 5).every((route) => route.loadComponent && !route.component)).toBe(true);
   });
 
-  it('navigates the supported project, chat, and agents URLs and redirects unknown paths home', async () => {
+  it('navigates the supported project, chat, agents, and registry URLs and redirects unknown paths home', async () => {
     await router.navigateByUrl('/projects/project-1');
     expect(router.url).toBe('/projects/project-1');
 
@@ -53,6 +62,9 @@ describe('Pueblo Hub routes', () => {
 
     await router.navigateByUrl('/agents');
     expect(router.url).toBe('/agents');
+
+    await router.navigateByUrl('/agents/registry');
+    expect(router.url).toBe('/agents/registry');
 
     await router.navigateByUrl('/not-a-route');
     expect(router.url).toBe('/');

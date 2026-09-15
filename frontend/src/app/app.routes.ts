@@ -25,5 +25,13 @@ export const routes: Routes = [
       import('./pages/agents-page/agents-page').then((module) => module.AgentsPageComponent),
     title: 'Agents | Pueblo Hub',
   },
+  {
+    path: 'agents/registry',
+    loadComponent: () =>
+      import('./pages/agent-registry-page/agent-registry-page').then(
+        (module) => module.AgentRegistryPageComponent,
+      ),
+    title: 'Agent Registry | Pueblo Hub',
+  },
   { path: '**', redirectTo: '' },
 ];

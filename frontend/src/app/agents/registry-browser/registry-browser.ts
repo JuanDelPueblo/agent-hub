@@ -32,6 +32,7 @@ export class RegistryBrowserComponent {
   readonly query = signal('');
   readonly busy = signal<string | null>(null);
   readonly actionError = signal('');
+  readonly notice = signal('');
   readonly distributionByEntry = signal<Record<string, DistributionKind>>({});
 
   readonly catalog = this.state.registry;
@@ -60,12 +61,14 @@ export class RegistryBrowserComponent {
     if (!distribution) return;
     this.busy.set(entry.id);
     this.actionError.set('');
+    this.notice.set('');
     try {
       await this.state.installRegistryAgent({
         registry_id: entry.id,
         distribution,
         display_name: entry.name,
       });
+      this.notice.set(`Installed ${entry.name}.`);
     } catch (error: unknown) {
       this.actionError.set(this.message(error, `Failed to install ${entry.name}`));
     } finally {
@@ -77,9 +80,14 @@ export class RegistryBrowserComponent {
     const id = entry.installed_as ?? entry.id;
     this.busy.set(entry.id);
     this.actionError.set('');
+    this.notice.set('');
     try {
       const outcome = await this.state.updateAgent(id);
-      if (!outcome.updated) this.actionError.set(`${entry.name} is already at the newest version.`);
+      this.notice.set(
+        outcome.updated
+          ? `Updated ${entry.name} to v${outcome.to_version}.`
+          : `${entry.name} is already at the newest version.`,
+      );
     } catch (error: unknown) {
       this.actionError.set(this.message(error, `Failed to update ${entry.name}`));
     } finally {
@@ -97,8 +105,10 @@ export class RegistryBrowserComponent {
     if (!confirmed) return;
     this.busy.set(entry.id);
     this.actionError.set('');
+    this.notice.set('');
     try {
       await this.state.removeAgent(id);
+      this.notice.set(`Uninstalled ${entry.name}.`);
     } catch (error: unknown) {
       this.actionError.set(this.message(error, `Failed to uninstall ${entry.name}`));
     } finally {
