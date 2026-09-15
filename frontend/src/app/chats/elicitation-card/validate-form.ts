@@ -8,11 +8,18 @@
  * `format` stay advisory and pass through untouched.
  */
 
+/** Property types Pueblo Hub can render. Anything else is unsupported and
+ * must never render as a known input control. */
+const SUPPORTED_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'array']);
+
 export interface ElicitationFormField {
   key: string;
   title: string;
   description?: string;
   type: string;
+  /** False for absent or unknown/custom types: render an unsupported-field
+   * notice instead of any input control. */
+  supported: boolean;
   required: boolean;
   enumOptions?: string[];
   minLength?: number;
@@ -90,12 +97,13 @@ export function elicitationFields(schema: unknown): ElicitationFormField[] {
     : [];
   return Object.entries(obj.properties as Record<string, SchemaProperty>).map(([key, prop]) => {
     const raw = (prop ?? {}) as SchemaProperty;
-    const type = asString(raw.type) ?? 'string';
+    const type = asString(raw.type) ?? '';
     return {
       key,
       title: asString(raw.title) ?? key,
       description: asString(raw.description),
       type,
+      supported: SUPPORTED_TYPES.has(type),
       required: required.includes(key),
       enumOptions: type === 'array' ? multiSelectAllowed(raw.items) : allowedValues(raw),
       minLength: asNumber(raw.minLength),
@@ -116,6 +124,9 @@ export function applyElicitationDefaults(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...values };
   for (const field of fields) {
+    // Defaults apply only to renderable fields; unsupported types never
+    // contribute values, matching the backend which skips their defaults.
+    if (!field.supported) continue;
     if (merged[field.key] === undefined && field.defaultValue !== undefined) {
       merged[field.key] = field.defaultValue;
     }
@@ -153,7 +164,7 @@ function checkField(field: ElicitationFormField, value: unknown): string | null 
       }
       return null;
     }
-    default: {
+    case 'string': {
       if (typeof value !== 'string') return 'Expected text.';
       if (field.enumOptions && !field.enumOptions.includes(value)) {
         return 'Choose one of the advertised options.';
@@ -167,6 +178,8 @@ function checkField(field: ElicitationFormField, value: unknown): string | null 
       }
       return null;
     }
+    default:
+      return 'This field uses a type Pueblo Hub does not support.';
   }
 }
 
@@ -183,6 +196,21 @@ export function validateElicitationForm(
   }
   const merged = applyElicitationDefaults(fields, values);
   for (const field of fields) {
+    if (!field.supported) {
+      // Unsupported fields render no control, so the UI can never supply
+      // a value for them. An omitted optional one stays acceptable (the
+      // backend accepts the omission too); anything else blocks Accept so
+      // the form is never presented as submittable when it is not.
+      const present = merged[field.key] !== undefined
+        && merged[field.key] !== null
+        && merged[field.key] !== '';
+      if (present) {
+        errors[field.key] = 'This field uses a type Pueblo Hub does not support.';
+      } else if (field.required) {
+        errors[field.key] = 'This field requires a type Pueblo Hub does not support.';
+      }
+      continue;
+    }
     const problem = checkField(field, merged[field.key]);
     if (problem) errors[field.key] = problem;
   }

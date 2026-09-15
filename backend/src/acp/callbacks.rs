@@ -1762,6 +1762,45 @@ mod tests {
         .is_ok());
     }
 
+    #[test]
+    fn test_elicitation_validation_rejects_unknown_property_types() {
+        use super::agent_client_protocol_schema::{
+            ElicitationContentValue as V, ElicitationSchema,
+        };
+        let schema: ElicitationSchema = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "weird": {"type": "_custom", "title": "Weird"},
+            },
+            "required": ["name"],
+        }))
+        .unwrap();
+        // An omitted optional unknown-typed property stays acceptable...
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![("name", V::String("n".into()))]),
+        )
+        .is_ok());
+        // ...but no value for it can be verified, so any submission fails
+        // instead of reaching the agent as supposedly valid content.
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("n".into())),
+                ("weird", V::String("x".into())),
+            ]),
+        )
+        .is_err());
+        let required: ElicitationSchema = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {"weird": {"type": "_custom"}},
+            "required": ["weird"],
+        }))
+        .unwrap();
+        assert!(validate_elicitation_content(&required, &elicitation_map(vec![]),).is_err());
+    }
+
     #[tokio::test]
     async fn test_elicitation_rejected_accept_stays_pending() {
         // A submission that fails schema validation keeps the elicitation

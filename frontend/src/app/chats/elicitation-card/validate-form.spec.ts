@@ -59,4 +59,38 @@ describe('validateElicitationForm', () => {
     expect(merged['level']).toBe('low');
     expect(validateElicitationForm(schema, { name: 'n' }).valid).toBe(true);
   });
+
+  it('never treats unknown or missing types as text', () => {
+    const custom = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        weird: { type: '_custom', title: 'Weird' },
+        typed: { title: 'No type at all' },
+      },
+      required: [],
+    };
+    const fields = elicitationFields(custom);
+    expect(fields.find((f) => f.key === 'name')?.supported).toBe(true);
+    expect(fields.find((f) => f.key === 'weird')?.supported).toBe(false);
+    expect(fields.find((f) => f.key === 'typed')?.supported).toBe(false);
+    // Optional and omitted stays submittable; nothing renders as text.
+    expect(validateElicitationForm(custom, { name: 'n' }).valid).toBe(true);
+    // A submitted value for an unknown type is rejected, matching the backend.
+    expect(validateElicitationForm(custom, { name: 'n', weird: 'x' }).valid).toBe(false);
+  });
+
+  it('blocks Accept while a required field has an unsupported type', () => {
+    const custom = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        config: { type: 'object', title: 'Config' },
+      },
+      required: ['name', 'config'],
+    };
+    const result = validateElicitationForm(custom, { name: 'n' });
+    expect(result.valid).toBe(false);
+    expect(result.errors['config']).toBeTruthy();
+  });
 });

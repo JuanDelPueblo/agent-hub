@@ -21,7 +21,14 @@
       } @else {
         @for (field of fields(); track field.key) {
           <div class="field">
-            @if (field.type === 'array') {
+            @if (!field.supported) {
+              <p class="unsupported" role="alert">
+                <mat-icon aria-hidden="true">block</mat-icon>
+                <span>“{{ field.title }}” uses a field type Pueblo Hub does not support{{ field.type ? ' (“' + field.type + '”)' : '' }}. It cannot be filled in here.</span>
+              </p>
+              @if (field.description) { <p class="hint">{{ field.description }}</p> }
+              @if (fieldError(field.key)) { <p class="error" role="alert">{{ fieldError(field.key) }}</p> }
+            } @else if (field.type === 'array') {
               @if (field.enumOptions?.length) {
                 <mat-form-field appearance="outline">
                   <mat-label>{{ field.title }}{{ field.required ? ' *' : '' }}</mat-label>
@@ -59,13 +66,19 @@
                 @if (field.description) { <mat-hint>{{ field.description }}</mat-hint> }
                 @if (fieldError(field.key)) { <mat-error>{{ fieldError(field.key) }}</mat-error> }
               </mat-form-field>
-            } @else {
+            } @else if (field.type === 'string') {
               <mat-form-field appearance="outline">
                 <mat-label>{{ field.title }}{{ field.required ? ' *' : '' }}</mat-label>
                 <input matInput type="text" [ngModel]="fieldValue(field.key) ?? ''" (ngModelChange)="setFieldValue(field.key, $event)" />
                 @if (field.description) { <mat-hint>{{ field.description }}</mat-hint> }
                 @if (fieldError(field.key)) { <mat-error>{{ fieldError(field.key) }}</mat-error> }
               </mat-form-field>
+            } @else {
+              <p class="unsupported" role="alert">
+                <mat-icon aria-hidden="true">block</mat-icon>
+                <span>“{{ field.title }}” uses a field type Pueblo Hub does not support. It cannot be filled in here.</span>
+              </p>
+              @if (fieldError(field.key)) { <p class="error" role="alert">{{ fieldError(field.key) }}</p> }
             }
           </div>
         }
