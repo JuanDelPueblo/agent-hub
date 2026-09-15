@@ -77,6 +77,9 @@ impl HubService {
                 self.agent_manager
                     .remove_install_files(outcome.previous_install_dir.as_deref());
             }
+            self.sessions
+                .invalidate_stopped_sessions_for_agent(id)
+                .await;
             self.notify_metadata_changed();
         }
         Ok(outcome)
@@ -94,6 +97,9 @@ impl HubService {
             )));
         }
         let outcome = self.agent_manager.remove(id).await?;
+        self.sessions
+            .invalidate_stopped_sessions_for_agent(id)
+            .await;
         self.notify_metadata_changed();
         Ok(outcome)
     }
@@ -123,6 +129,9 @@ impl HubService {
         input: CustomAgentInput,
     ) -> ServiceResult<AgentSummary> {
         let summary = self.agent_manager.edit_custom(id, input).await?;
+        self.sessions
+            .invalidate_stopped_sessions_for_agent(id)
+            .await;
         self.notify_metadata_changed();
         Ok(summary)
     }

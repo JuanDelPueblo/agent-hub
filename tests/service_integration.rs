@@ -782,10 +782,7 @@ async fn concurrent_config_load_and_prompt_share_one_startup() {
     let chat_id = chat.chat.id.clone();
 
     // Ensure the live session entry exists so both callers share one startup lock.
-    // A stopped entry is rebuilt from the catalog on lookup, so re-resolve
-    // while waiting: the handle from before startup is stale once the
-    // route-time lookup materializes the entry that actually starts.
-    sessions.get_by_id(&chat_id).await.unwrap();
+    let live = sessions.get_by_id(&chat_id).await.unwrap();
 
     // Begin route-time config loading on the stopped chat.
     let hub_for_config = hub.clone();
@@ -796,8 +793,7 @@ async fn concurrent_config_load_and_prompt_share_one_startup() {
     // Wait until startup is in progress so the prompt overlaps it deterministically.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let current = sessions.get_by_id(&chat_id).await.unwrap();
-        if current.process_state().await == ProcessState::Starting {
+        if live.process_state().await == ProcessState::Starting {
             break;
         }
         assert!(
