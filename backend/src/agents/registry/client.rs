@@ -19,7 +19,7 @@ pub const DEFAULT_REGISTRY_URL: &str =
 /// Refuse a registry document larger than this.
 pub const MAX_REGISTRY_BYTES: u64 = 32 * 1024 * 1024;
 /// Refuse an archive larger than this.
-pub const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 
 const CATALOG_FILE: &str = "registry.json";
 const METADATA_FILE: &str = "registry-meta.json";
