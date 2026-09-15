@@ -9,11 +9,10 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use futures_util::{SinkExt, StreamExt};
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     auth::{AgentAuthService, MAX_SCROLLBACK_BYTES},
-    config::{Config, PathOverrides, PuebloPaths},
+    config::{BateyPaths, Config, PathOverrides},
     events::EventLog,
     service::HubService,
     session::SessionManager,
@@ -21,12 +20,13 @@ use pueblo_hub::{
     web::{router, AppState},
     workspace_env::take_secret_env,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{path::Path, path::PathBuf, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
-const SHARED_ENV: &str = "PUEBLO_TEST_SHARED_ENV";
+const SHARED_ENV: &str = "BATEY_TEST_SHARED_ENV";
 
 fn agent(id: &str, history: &Path, pass_env: &[&str]) -> AgentDefinition {
     AgentDefinition::new(id, "python3")
@@ -54,7 +54,7 @@ impl Harness {
     /// Every agent records what it observed under `<root>/<agent id>`, so a
     /// test can read the exact invocation each process received.
     async fn start(root: &Path, agents: Vec<AgentDefinition>) -> Self {
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             database: Some(root.join("hub.db")),
             data_dir: Some(root.join("data")),
             state_dir: Some(root.join("state")),
@@ -232,7 +232,7 @@ async fn terminal_auth_reproduces_the_exact_advertised_invocation() {
         root,
         vec![
             agent("demo", &history, &[]).with_env(std::collections::HashMap::from([(
-                "PUEBLO_TEST_LAUNCH_ENV".to_string(),
+                "BATEY_TEST_LAUNCH_ENV".to_string(),
                 "from-launch".to_string(),
             )])),
         ],
@@ -259,16 +259,16 @@ async fn terminal_auth_reproduces_the_exact_advertised_invocation() {
     // The sanitized base environment reached the process.
     assert!(env.get("PATH").is_some(), "the base environment is missing");
     // The base launch environment survives.
-    assert_eq!(env["PUEBLO_TEST_LAUNCH_ENV"], "from-launch");
+    assert_eq!(env["BATEY_TEST_LAUNCH_ENV"], "from-launch");
     // The method environment overrides the same name in the base.
     assert_eq!(env[SHARED_ENV], "from-method");
-    assert_eq!(env["PUEBLO_TEST_METHOD_ENV"], "from-method");
-    // Pueblo Hub owns the working directory; it is neither a project path nor
+    assert_eq!(env["BATEY_TEST_METHOD_ENV"], "from-method");
+    // Batey owns the working directory; it is neither a project path nor
     // anything a client chose.
     let cwd = invocation["cwd"].as_str().unwrap();
     assert!(
         cwd.ends_with("agent-auth"),
-        "the flow ran outside the Pueblo working directory: {cwd}"
+        "the flow ran outside the Batey working directory: {cwd}"
     );
     // The program really got a terminal.
     assert_eq!(invocation["isatty"], true);
@@ -285,8 +285,8 @@ async fn terminal_auth_reproduces_the_exact_advertised_invocation() {
 /// agent's stashed secret.
 #[tokio::test]
 async fn terminal_auth_keeps_per_agent_secret_isolation() {
-    const SECRET_A: &str = "PUEBLO_TEST_TERMINAL_SECRET_A";
-    const SECRET_B: &str = "PUEBLO_TEST_TERMINAL_SECRET_B";
+    const SECRET_A: &str = "BATEY_TEST_TERMINAL_SECRET_A";
+    const SECRET_B: &str = "BATEY_TEST_TERMINAL_SECRET_B";
     unsafe {
         std::env::set_var(SECRET_A, "value-a");
         std::env::set_var(SECRET_B, "value-b");
@@ -376,7 +376,7 @@ async fn flow_socket_carries_input_output_and_resize() {
     harness.sessions.shutdown_all().await;
 }
 
-/// A zero exit status means success, and Pueblo Hub reads the agent's
+/// A zero exit status means success, and Batey reads the agent's
 /// authentication state again without sending `authenticate`.
 #[tokio::test]
 async fn zero_exit_succeeds_and_reinitializes_without_authenticate() {
@@ -694,7 +694,7 @@ async fn a_request_body_cannot_inject_a_command_path_or_environment() {
                         "command": "sh",
                         "args": ["-c", format!("touch {}", marker.display())],
                         "cwd": "/etc",
-                        "env": {"PUEBLO_TEST_INJECTED": "yes"},
+                        "env": {"BATEY_TEST_INJECTED": "yes"},
                         "program": "sh",
                     })
                     .to_string(),
@@ -719,7 +719,7 @@ async fn a_request_body_cannot_inject_a_command_path_or_environment() {
     assert_eq!(argv[3], "terminal-auth", "{argv:?}");
     assert_eq!(argv.len(), 5, "{argv:?}");
     assert!(invocation["cwd"].as_str().unwrap().ends_with("agent-auth"));
-    assert!(invocation["env"].get("PUEBLO_TEST_INJECTED").is_none());
+    assert!(invocation["env"].get("BATEY_TEST_INJECTED").is_none());
     assert!(!marker.exists(), "the request body ran a command");
 
     harness.auth.shutdown();

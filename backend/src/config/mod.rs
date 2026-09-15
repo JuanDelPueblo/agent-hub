@@ -8,16 +8,16 @@ use std::{
     sync::Arc,
 };
 
-const APP_NAME: &str = "pueblo-hub";
+const APP_NAME: &str = "batey";
 
-/// All filesystem locations owned by Pueblo Hub.
+/// All filesystem locations owned by Batey.
 ///
 /// An explicitly supplied database keeps the historical layout: managed
 /// worktrees remain beside that database. Defaults are only used when no
 /// database was supplied, so starting a newer binary cannot relocate an
 /// existing installation implicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PuebloPaths {
+pub struct BateyPaths {
     pub data_dir: PathBuf,
     pub config_dir: PathBuf,
     pub state_dir: PathBuf,
@@ -38,7 +38,7 @@ pub struct PathOverrides {
     pub managed_worktrees: Option<PathBuf>,
 }
 
-impl PuebloPaths {
+impl BateyPaths {
     pub fn from_overrides(overrides: PathOverrides) -> Self {
         let explicit_database = overrides.database.is_some();
         let database = overrides.database.clone().unwrap_or_else(|| {
@@ -46,13 +46,13 @@ impl PuebloPaths {
                 .data_dir
                 .clone()
                 .unwrap_or_else(default_data_dir)
-                .join("pueblo-hub.sqlite3")
+                .join("batey.sqlite3")
         });
         let data_dir = overrides.data_dir.unwrap_or_else(default_data_dir);
         let config_dir = overrides.config_dir.unwrap_or_else(default_config_dir);
         let state_dir = overrides.state_dir.unwrap_or_else(|| {
             if explicit_database {
-                PuebloPaths::state_dir_for_database(&database)
+                BateyPaths::state_dir_for_database(&database)
             } else {
                 default_state_dir()
             }
@@ -82,22 +82,16 @@ impl PuebloPaths {
 
     pub fn from_environment(overrides: PathOverrides) -> Self {
         Self::from_overrides(PathOverrides {
-            database: overrides
-                .database
-                .or_else(|| env_path("PUEBLO_HUB_DATABASE")),
-            data_dir: overrides
-                .data_dir
-                .or_else(|| env_path("PUEBLO_HUB_DATA_DIR")),
+            database: overrides.database.or_else(|| env_path("BATEY_DATABASE")),
+            data_dir: overrides.data_dir.or_else(|| env_path("BATEY_DATA_DIR")),
             config_dir: overrides
                 .config_dir
-                .or_else(|| env_path("PUEBLO_HUB_CONFIG_DIR")),
-            state_dir: overrides
-                .state_dir
-                .or_else(|| env_path("PUEBLO_HUB_STATE_DIR")),
-            log_dir: overrides.log_dir.or_else(|| env_path("PUEBLO_HUB_LOG_DIR")),
+                .or_else(|| env_path("BATEY_CONFIG_DIR")),
+            state_dir: overrides.state_dir.or_else(|| env_path("BATEY_STATE_DIR")),
+            log_dir: overrides.log_dir.or_else(|| env_path("BATEY_LOG_DIR")),
             managed_worktrees: overrides
                 .managed_worktrees
-                .or_else(|| env_path("PUEBLO_HUB_WORKTREES_DIR")),
+                .or_else(|| env_path("BATEY_WORKTREES_DIR")),
         })
     }
 
@@ -146,7 +140,7 @@ fn default_state_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
-/// How Pueblo Hub reaches the ACP Registry.
+/// How Batey reaches the ACP Registry.
 #[derive(Clone)]
 pub struct RegistryConfig {
     pub url: String,
@@ -184,7 +178,7 @@ impl RegistryConfig {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub paths: PuebloPaths,
+    pub paths: BateyPaths,
     pub server: ServerConfig,
     /// Shared with `SessionManager`, so the two can never drift apart.
     pub agents: Arc<AgentCatalog>,
@@ -202,7 +196,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            paths: PuebloPaths::from_environment(PathOverrides::default()),
+            paths: BateyPaths::from_environment(PathOverrides::default()),
             server: ServerConfig::default(),
             agents: Arc::new(AgentCatalog::new([
                 AgentDefinition::codex_default(),
@@ -221,9 +215,9 @@ impl Default for Config {
 
 impl Config {
     /// The working directory every agent-level authentication process runs
-    /// in. It belongs to Pueblo Hub, so an authentication probe never runs in
+    /// in. It belongs to Batey, so an authentication probe never runs in
     /// a project workspace or in a path a browser chose.
-    pub fn agent_auth_dir(paths: &PuebloPaths) -> PathBuf {
+    pub fn agent_auth_dir(paths: &BateyPaths) -> PathBuf {
         paths.state_dir.join("agent-auth")
     }
 }
@@ -291,18 +285,18 @@ mod tests {
 
     #[test]
     fn explicit_database_preserves_sibling_worktrees() {
-        let paths = PuebloPaths::from_overrides(PathOverrides {
-            database: Some(PathBuf::from("/old/hub.db")),
+        let paths = BateyPaths::from_overrides(PathOverrides {
+            database: Some(PathBuf::from("/old/batey.sqlite3")),
             data_dir: Some(PathBuf::from("/new/data")),
             ..Default::default()
         });
-        assert_eq!(paths.database, PathBuf::from("/old/hub.db"));
+        assert_eq!(paths.database, PathBuf::from("/old/batey.sqlite3"));
         assert_eq!(paths.managed_worktrees, PathBuf::from("/old/worktrees"));
     }
 
     #[test]
     fn explicit_worktrees_and_roots_override_derived_paths() {
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             data_dir: Some(PathBuf::from("/data")),
             config_dir: Some(PathBuf::from("/config")),
             state_dir: Some(PathBuf::from("/state")),
@@ -310,7 +304,7 @@ mod tests {
             managed_worktrees: Some(PathBuf::from("/worktrees")),
             ..Default::default()
         });
-        assert_eq!(paths.database, PathBuf::from("/data/pueblo-hub.sqlite3"));
+        assert_eq!(paths.database, PathBuf::from("/data/batey.sqlite3"));
         assert_eq!(paths.managed_worktrees, PathBuf::from("/worktrees"));
         assert_eq!(paths.registry_cache, PathBuf::from("/data/registry-cache"));
         assert_eq!(paths.installed_agents, PathBuf::from("/data/agents"));

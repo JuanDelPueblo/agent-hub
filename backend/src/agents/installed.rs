@@ -1,6 +1,6 @@
 //! The durable record behind one installed agent.
 //!
-//! Registry installs and Pueblo-managed definitions share this record and the
+//! Registry installs and Batey-managed definitions share this record and the
 //! one catalog it feeds. A registry install stores a snapshot of the chosen
 //! manifest and distribution, so the agent launches from pinned data and
 //! never contacts the live registry to start a session.
@@ -17,8 +17,8 @@ use std::time::Duration;
 /// The launch data a registry install pinned, plus where it came from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegistrySnapshot {
-    /// The registry id, which stays separate from the Pueblo catalog id so a
-    /// legacy Pueblo id is never rewritten into a registry id.
+    /// The registry id, which stays separate from the Batey catalog id so a
+    /// legacy Batey id is never rewritten into a registry id.
     pub registry_id: String,
     pub registry_version: String,
     pub distribution: InstalledDistribution,
@@ -97,7 +97,7 @@ impl InstalledDistribution {
 /// One durable installed-agent row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InstalledAgent {
-    /// The Pueblo catalog id. It is chosen once and never rewritten.
+    /// The Batey catalog id. It is chosen once and never rewritten.
     pub id: String,
     pub source: AgentSource,
     pub display_name: String,
@@ -425,32 +425,26 @@ mod tests {
         );
     }
 
-    /// A Pueblo-managed definition carries no registry snapshot, so nothing
+    /// A Batey-managed definition carries no registry snapshot, so nothing
     /// is probed and the user's own command is offered as written.
     #[test]
     fn a_custom_record_is_available_without_probing() {
-        let record = InstalledAgent::new(
-            "private".into(),
-            AgentSource::PuebloManaged,
-            "my-acp".into(),
-        );
+        let record =
+            InstalledAgent::new("private".into(), AgentSource::BateyManaged, "my-acp".into());
         let probe = FakeProbe {
             on_path: Vec::new(),
             files: Vec::new(),
         };
         let definition = record.to_definition(&probe);
         assert_eq!(definition.availability, AgentAvailability::Available);
-        assert_eq!(definition.source, AgentSource::PuebloManaged);
+        assert_eq!(definition.source, AgentSource::BateyManaged);
         assert_eq!(definition.launch.command, "my-acp");
     }
 
     #[test]
     fn definition_carries_every_stored_launch_field() {
-        let mut record = InstalledAgent::new(
-            "private".into(),
-            AgentSource::PuebloManaged,
-            "my-acp".into(),
-        );
+        let mut record =
+            InstalledAgent::new("private".into(), AgentSource::BateyManaged, "my-acp".into());
         record.display_name = "My Agent".into();
         record.args = vec!["--acp".into()];
         record.env.insert("KEY".into(), "value".into());
@@ -484,12 +478,12 @@ mod tests {
     #[test]
     fn which_finds_a_program_in_path_and_ignores_a_missing_one() {
         let tmp = tempfile::tempdir().unwrap();
-        let program = tmp.path().join("pueblo-test-program");
+        let program = tmp.path().join("batey-test-program");
         std::fs::write(&program, "#!/bin/sh\n").unwrap();
         let search_path = tmp.path().as_os_str();
 
-        assert_eq!(which_in("pueblo-test-program", search_path), Some(program));
-        assert_eq!(which_in("pueblo-test-absent", search_path), None);
+        assert_eq!(which_in("batey-test-program", search_path), Some(program));
+        assert_eq!(which_in("batey-test-absent", search_path), None);
         assert_eq!(which_in("", search_path), None);
     }
 

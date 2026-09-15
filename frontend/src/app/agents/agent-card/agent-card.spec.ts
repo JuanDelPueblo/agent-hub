@@ -34,7 +34,7 @@ describe('AgentCardComponent', () => {
     expect(text).toContain('Built-in');
     expect(text).toContain('Read-only');
     expect(text).toContain('A builtin.');
-    expect(text).toContain('Defined outside Pueblo Hub');
+    expect(text).toContain('Defined outside Batey');
     const actionLabels = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
       .map((button) => button.textContent?.trim() ?? '')
       .join(' ');
@@ -48,7 +48,7 @@ describe('AgentCardComponent', () => {
     const remove = vi.fn();
     fixture.componentInstance.edit.subscribe(edit);
     fixture.componentInstance.remove.subscribe(remove);
-    render(summary('pueblo_managed'));
+    render(summary('batey_managed'));
     const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
     const actionLabels = buttons.map((button) => button.textContent?.trim() ?? '').join(' ');
     expect(actionLabels).toContain('Edit');

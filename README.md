@@ -1,23 +1,23 @@
-# Pueblo Hub
+# Batey
 
 An uncomplicated hub to connect and manage all your ACP agents together.
 
-No more shuffling around various tmux sessions or relying on each agent's proprietary remote control interface. Pueblo Hub allows you to drive agents such as Codex, Claude Code, and OpenCode across multiple projects at the same time through a beautiful Material 3 web page that you self-host. Agents can run in parallel using separate worktrees to prevent conflicts and maximize your usage quota across each LLM provider.
+No more shuffling around various tmux sessions or relying on each agent's proprietary remote control interface. Batey allows you to drive agents such as Codex, Claude Code, and OpenCode across multiple projects at the same time through a beautiful Material 3 web page that you self-host. Agents can run in parallel using separate worktrees to prevent conflicts and maximize your usage quota across each LLM provider.
 
 ## Features
 
 - **Angular Material Adaptive UI**: A standalone Angular application using Angular Material/CDK primitives and adaptive layouts responsive to compact, medium, and expanded window sizes.
 - **Persistent Projects & Chats**: Multiple independent chats per project across different or identical agents. Full process lifecycle management with automatic session resumption, cancel, stop, and reconnect.
 - **Server-Side Project Creation**: Create projects by browsing existing server directories with boundary enforcement or cloning remote Git repositories directly.
-- **Streamlined Chat Flow**: New chat creation lets users choose the starting local branch and workspace mode for Git projects; Pueblo Hub automatically connects ACP session and displays configuration options immediately before the first prompt.
+- **Streamlined Chat Flow**: New chat creation lets users choose the starting local branch and workspace mode for Git projects; Batey automatically connects ACP session and displays configuration options immediately before the first prompt.
 - **Dynamic Titles**: ACP agents automatically supply chat titles after conversations start, with persistent storage and optional manual rename overrides.
-- **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Pueblo Hub permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
+- **Permission & Configuration Control**: Dynamic ACP config options (grouped selects, booleans) and strict Batey permission policies (`ask`, `read-only`, `auto-approve`, `deny-all`).
 - **Single-Service Architecture**: Single Rust binary embeds production-hashed frontend assets with optimized HTTP caching and WebSocket streaming.
-- **Workspace Environments & Direnv Authorization**: Automatically loads authorized workspace environments via direnv (`direnv export json`) for both main project checkouts and isolated worktrees. When an `.envrc` is blocked or untrusted, Pueblo Hub surfaces an inline authorization banner in the chat UI, securely invoking `direnv allow` against verified workspace paths.
+- **Workspace Environments & Direnv Authorization**: Automatically loads authorized workspace environments via direnv (`direnv export json`) for both main project checkouts and isolated worktrees. When an `.envrc` is blocked or untrusted, Batey surfaces an inline authorization banner in the chat UI, securely invoking `direnv allow` against verified workspace paths.
 - **Terminal Task Supervision**: Long-running ACP terminal commands are tracked as first-class background tasks. Users can monitor active tasks, view bounded UTF-8 output logs, and stop tasks directly from the web interface.
-- **One interface for your agents** - Connect ACP-compatible agents and manage them from the same place instead of jumping between terminals and separate remote interfaces. Pueblo Hub currently works with agents such as Codex, Claude Code, and OpenCode.
+- **One interface for your agents** - Connect ACP-compatible agents and manage them from the same place instead of jumping between terminals and separate remote interfaces. Batey currently works with agents such as Codex, Claude Code, and OpenCode.
 
-- **Persistent projects and chats** - Organize chats under projects and come back to them later without having to recreate your setup. Pueblo Hub keeps the agent process and session management behind the scenes so you can focus on the conversation.
+- **Persistent projects and chats** - Organize chats under projects and come back to them later without having to recreate your setup. Batey keeps the agent process and session management behind the scenes so you can focus on the conversation.
 
 - **Parallel worktrees** - Run multiple agents against the same Git project without making them fight over a working directory. Isolated chats get their own worktree and branch by default, allowing agents to work independently while keeping your main checkout alone.
 
@@ -25,37 +25,37 @@ No more shuffling around various tmux sessions or relying on each agent's propri
 
 Prompts have no silence timeout by default, so a quiet long-running tool call is
 not killed. Set `--prompt-timeout <seconds>` (or
-`PUEBLO_HUB_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
+`BATEY_PROMPT_TIMEOUT`) only when an inactivity watchdog is required.
 
-- **A proper interface for agent work** - Follow conversations, streaming responses, tool calls, plans, permission requests, and agent state through a responsive Material 3 interface. Pueblo Hub is designed for desktop and mobile layouts so your agents aren't tied to the terminal where you started them.
+- **A proper interface for agent work** - Follow conversations, streaming responses, tool calls, plans, permission requests, and agent state through a responsive Material 3 interface. Batey is designed for desktop and mobile layouts so your agents aren't tied to the terminal where you started them.
 
-- **Agent configuration** - Configure available agents and their launch commands in one place while keeping per-chat options and permission policies close to the conversation. Pueblo Hub talks to agents through ACP rather than maintaining a separate chat implementation for every provider.
+- **Agent configuration** - Configure available agents and their launch commands in one place while keeping per-chat options and permission policies close to the conversation. Batey talks to agents through ACP rather than maintaining a separate chat implementation for every provider.
 
-- **Git work stays safe** - Pueblo Hub treats your existing work as something it does not own. It will not silently reset, clean, stash, rebase, switch, or delete Git work to make its own job easier.
+- **Git work stays safe** - Batey treats your existing work as something it does not own. It will not silently reset, clean, stash, rebase, switch, or delete Git work to make its own job easier.
 
-- **Self-hosted** - Run Pueblo Hub on your own machine or server and put it behind the authentication and HTTPS setup you prefer. The backend only binds to localhost by default rather than exposing itself directly to the network.
+- **Self-hosted** - Run Batey on your own machine or server and put it behind the authentication and HTTPS setup you prefer. The backend only binds to localhost by default rather than exposing itself directly to the network.
 
 ## Workspace Environments & Terminal Tasks
 
 ### Direnv Integration & Authorization
 
-Pueblo Hub integrates with `direnv` to ensure ACP agent processes and terminal executions run with the expected local toolchains, environment variables, and shell configurations:
-- **Automatic Resolution**: Whenever an agent process starts or creates a terminal, Pueblo Hub resolves the authorized environment using `direnv export json`.
-- **Security-First Authorization**: Unapproved `.envrc` files are never auto-executed or sourced directly. If direnv reports that a workspace `.envrc` is blocked, Pueblo Hub catches the blocked state and surfaces a "Workspace environment blocked" banner in the web UI.
-- **Strict Path Validation**: Environment authorizations only operate on paths derived from authenticated, Pueblo-managed chat workspace metadata, preventing path injection or traversal.
+Batey integrates with `direnv` to ensure ACP agent processes and terminal executions run with the expected local toolchains, environment variables, and shell configurations:
+- **Automatic Resolution**: Whenever an agent process starts or creates a terminal, Batey resolves the authorized environment using `direnv export json`.
+- **Security-First Authorization**: Unapproved `.envrc` files are never auto-executed or sourced directly. If direnv reports that a workspace `.envrc` is blocked, Batey catches the blocked state and surfaces a "Workspace environment blocked" banner in the web UI.
+- **Strict Path Validation**: Environment authorizations only operate on paths derived from authenticated, Batey-managed chat workspace metadata, preventing path injection or traversal.
 
 ### Terminal Task Tracking
 
-Agents that invoke long-running build, test, or watch commands via ACP terminal callbacks are supervised by Pueblo Hub:
+Agents that invoke long-running build, test, or watch commands via ACP terminal callbacks are supervised by Batey:
 - **Active Task Monitoring**: Chat headers and cards indicate ongoing terminal tasks and keep the chat in a working status.
 - **Inspection & Control**: The "Terminal tasks" dialog provides a split-view of recent and running commands, command-line arguments, working directory, exit status, and real-time output.
 - **Manual Termination**: Users can terminate running background commands at any time.
 
 ## Quick start
 
-### Running Pueblo Hub
+### Running Batey
 
-Pueblo Hub currently uses Nix to provide its environment.
+Batey currently uses Nix to provide its environment.
 
 Enter the development environment with direnv:
 
@@ -72,23 +72,23 @@ nix develop
 Build the complete application with embedded frontend assets:
 
 ```sh
-nix build .#pueblo-hub
+nix build .#batey
 ```
 
 Run it directly from the flake without building first:
 
 ```sh
-nix run .#pueblo-hub -- --project-root /path/to/projects
+nix run .#batey -- --project-root /path/to/projects
 ```
 
 `nix run` launches the same canonical package binary that `nix build`
-produces. `nix run .#pueblo-hub -- --help` shows every option.
+produces. `nix run .#batey -- --help` shows every option.
 
-This produces `result/bin/pueblo-hub`, which includes the embedded production
+This produces `result/bin/batey`, which includes the embedded production
 frontend:
 
 ```sh
-result/bin/pueblo-hub \
+result/bin/batey \
   --project-root /path/to/projects \
   --agents-file agents.json \
   --registry-url https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json \
@@ -97,27 +97,27 @@ result/bin/pueblo-hub \
 ```
 
 The database is optional. Without an explicit `--database` (or
-`PUEBLO_HUB_DATABASE`), Pueblo uses the platform's XDG-style data location:
-`$XDG_DATA_HOME/pueblo-hub/pueblo-hub.sqlite3` (falling back to
-`~/.local/share/pueblo-hub`). Managed worktrees are kept in the same Pueblo
+`BATEY_DATABASE`), Batey uses the platform's XDG-style data location:
+`$XDG_DATA_HOME/batey/batey.sqlite3` (falling back to
+`~/.local/share/batey`). Managed worktrees are kept in the same Batey
 path model. An explicit database retains the existing layout, with worktrees
 beside its parent in `worktrees/`; no existing data is moved or removed.
 
 The path options `--data-dir`, `--config-dir`, `--state-dir`, `--log-dir`, and
-`--worktrees-dir` have matching `PUEBLO_HUB_*_DIR` environment variables.
-`--host` / `PUEBLO_HUB_HOST` controls the bind address and defaults to
-`127.0.0.1`; `--port` / `PUEBLO_HUB_PORT` controls the port.
+`--worktrees-dir` have matching `BATEY_*_DIR` environment variables.
+`--host` / `BATEY_HOST` controls the bind address and defaults to
+`127.0.0.1`; `--port` / `BATEY_PORT` controls the port.
 
 For standalone backend development without embedded frontend assets:
 
 ```sh
-cargo build --bin pueblo-hub
+cargo build --bin batey
 ```
 
-This produces `target/debug/pueblo-hub`:
+This produces `target/debug/batey`:
 
 ```sh
-target/debug/pueblo-hub --help
+target/debug/batey --help
 ```
 
 The fake backend accepts two options:
@@ -130,7 +130,7 @@ The fake backend accepts two options:
 ### Seeded data
 
 The fake backend starts with three projects and ten deterministic coding-agent
-fixtures. `pueblo-hub` contains the idle WebSocket replay review, an actively
+fixtures. `batey` contains the idle WebSocket replay review, an actively
 working reconnect investigation, an unresolved permission request, a failed
 migration check, a running `nix run .#verify` terminal task, a blocked `.envrc`,
 and an archived read-only migration chat. `corolla-firmware` contains a
@@ -179,8 +179,8 @@ Create a project pointing to an existing directory under a configured project ro
 ### Git chat workspaces
 
 Git chats default to **Isolated worktree**. When creating a chat, choose the
-starting local branch; Pueblo Hub creates a deterministic branch named
-`pueblo-hub/chat/<chat-id>` and a separate managed worktree. Uncommitted changes
+starting local branch; Batey creates a deterministic branch named
+`batey/chat/<chat-id>` and a separate managed worktree. Uncommitted changes
 in the primary checkout are not copied into it. The branch and workspace
 identity are visible in the chat header and configuration panel.
 
@@ -188,7 +188,7 @@ Users may explicitly choose **Project checkout**, which operates on the real
 project checkout and the selected branch. Switching that checkout is allowed
 only when it is safe (clean and not in use). Direct and legacy chats share the
 same repository checkout turn lock and therefore cannot work concurrently.
-Pueblo Hub never silently switches a direct chat back to its expected branch on
+Batey never silently switches a direct chat back to its expected branch on
 resume.
 
 Deleting a clean managed chat removes its worktree but retains its branch.
@@ -197,7 +197,7 @@ and legacy chat deletion leaves the repository checkout and Git state alone.
 
 Opening a chat automatically connects the agent process and loads ACP configuration options immediately. Sending a prompt also connects automatically if stopped. `session/load` or advertised `session/resume` restores agent-owned conversation state.
 
-Stop process and idle reaping preserve the chat and ACP session ID. Pueblo Hub
+Stop process and idle reaping preserve the chat and ACP session ID. Batey
 only reaps an idle process when its ACP agent advertises `session/load` or
 `session/resume`; otherwise it keeps the process alive so the chat remains
 usable. The default eligible idle timeout is 900 seconds. Cancel turn sends
@@ -227,10 +227,10 @@ Agents are configured in `agents.json`:
 
 Definitions accept optional `args` (array), `env` (object), `idle_timeout`
 (seconds), `display_name` (string), `usage_provider` (string), and `metadata`
-(object). Pueblo Hub never derives a usage provider from the agent name.
-The server binds to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing Pueblo Hub remotely.
+(object). Batey never derives a usage provider from the agent name.
+The server binds to `127.0.0.1`. Put authenticated HTTPS in front of it before exposing Batey remotely.
 
-`--registry-url` (or `PUEBLO_HUB_REGISTRY_URL`) selects the HTTPS ACP Registry
+`--registry-url` (or `BATEY_REGISTRY_URL`) selects the HTTPS ACP Registry
 catalog. Registry installs store a pinned launch snapshot locally; browsing or
 refreshing the catalog is never required to resume a chat.
 
@@ -250,12 +250,12 @@ rather than to a chat:
 
 - `GET /api/agents/:id/auth` reports the methods the agent advertised at
   `initialize`, whether it supports logout, and whether this build runs
-  terminal authentication. A method type Pueblo Hub cannot run comes back as
-  unsupported; Pueblo Hub never guesses a fallback for it.
+  terminal authentication. A method type Batey cannot run comes back as
+  unsupported; Batey never guesses a fallback for it.
 - `POST /api/agents/:id/auth/:methodId` runs an `agent` method through the
   stable `authenticate` request.
 - `POST /api/agents/:id/logout` runs the stable `logout` request. It goes out
-  only when the agent advertised that capability, and it never touches Pueblo
+  only when the agent advertised that capability, and it never touches Batey
   Hub chats, sessions, or history.
 - `POST /api/agents/:id/auth/terminal/:methodId` starts a `terminal` method in
   a real PTY and returns a flow. `GET /api/agent-auth/:flowId`,
@@ -265,7 +265,7 @@ rather than to a chat:
 A terminal flow reproduces the configured agent invocation: the same
 executable, the same arguments with the advertised ones appended, the same
 sanitized environment with the advertised values overriding it, and a
-Pueblo-owned working directory. No request supplies an executable, an
+Batey-owned working directory. No request supplies an executable, an
 argument, a working directory, or an environment value, so the API cannot
 become a remote shell. Terminal input and output stay in memory: they never
 reach the event log, the database, or the server log. Cancelling a flow, a
@@ -276,7 +276,7 @@ An agent that answers `auth_required` produces a recoverable `409` with
 exactly as they were.
 
 Deployments can also supply `--declarative-agents-file` (or
-`PUEBLO_HUB_DECLARATIVE_AGENTS_FILE`). It has the same shape as `agents.json`
+`BATEY_DECLARATIVE_AGENTS_FILE`). It has the same shape as `agents.json`
 plus `pass_env`, `default_permission_policy`, and `description`, feeds the
 same catalog with `AgentSource::Declarative`, and stays read-only in the
 management APIs. An `npx` or `uvx` agent is just a pinned manual launch such
@@ -286,15 +286,15 @@ you; see the production deployment section below.
 
 ## Production deployment
 
-Pueblo Hub behaves like a normal nixpkgs-style package and NixOS service.
+Batey behaves like a normal nixpkgs-style package and NixOS service.
 Another flake can consume it directly without copying packaging code. The OCI
 image is built from exactly the same package.
 
 ### Flake package and overlay
 
 ```sh
-nix build .#pueblo-hub
-nix run .#pueblo-hub -- --help
+nix build .#batey
+nix run .#batey -- --help
 ```
 
 The version comes from `Cargo.toml`, so there is one authoritative source.
@@ -303,10 +303,10 @@ A downstream flake can use the package through the overlay:
 
 ```nix
 {
-  inputs.pueblo-hub.url = "github:JuanDelPueblo/pueblo-hub";
-  outputs = { nixpkgs, pueblo-hub, ... }: {
-    # makes pkgs.pueblo-hub available with the same derivation
-    nixpkgs.overlays = [ pueblo-hub.overlays.default ];
+  inputs.batey.url = "github:JuanDelPueblo/batey";
+  outputs = { nixpkgs, batey, ... }: {
+    # makes pkgs.batey available with the same derivation
+    nixpkgs.overlays = [ batey.overlays.default ];
   };
 }
 ```
@@ -314,22 +314,22 @@ A downstream flake can use the package through the overlay:
 Or override the service package with the canonical build:
 
 ```nix
-services.pueblo-hub.package = pueblo-hub.packages.${system}.pueblo-hub;
+services.batey.package = batey.packages.${system}.batey;
 ```
 
 ### Minimal NixOS configuration
 
 ```nix
 {
-  inputs.pueblo-hub.url = "github:JuanDelPueblo/pueblo-hub";
-  outputs = { nixpkgs, pueblo-hub, ... }: {
+  inputs.batey.url = "github:JuanDelPueblo/batey";
+  outputs = { nixpkgs, batey, ... }: {
     nixosConfigurations.server = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        pueblo-hub.nixosModules.default
+        batey.nixosModules.default
         {
-          services.pueblo-hub.enable = true;
-          services.pueblo-hub.projectRoots = [ "/srv/projects" ];
+          services.batey.enable = true;
+          services.batey.projectRoots = [ "/srv/projects" ];
         }
       ];
     };
@@ -338,14 +338,14 @@ services.pueblo-hub.package = pueblo-hub.packages.${system}.pueblo-hub;
 ```
 
 That is the whole thing for a standard deployment. Importing
-`pueblo-hub.nixosModules.default` also installs the Pueblo overlay, so the
-default `services.pueblo-hub.package` resolves with nothing else to set;
+`batey.nixosModules.default` also installs the Batey overlay, so the
+default `services.batey.package` resolves with nothing else to set;
 override it only when you want a different build. Add network options only
-when you need them, such as `services.pueblo-hub.host`, `.port`, or
+when you need them, such as `services.batey.host`, `.port`, or
 `.publicOrigin`. The module also exposes typed options for prompt timeout,
 registry URL, data/state/config/log/worktree locations, runtime packages,
 environment values, environment files, and declarative agents. Run
-`nixos-option services.pueblo-hub` to browse them.
+`nixos-option services.batey` to browse them.
 
 The service starts at the normal multi-user target, restarts on failure,
 shuts down gracefully on SIGTERM, and cleans up supervised ACP descendants
@@ -356,48 +356,48 @@ environments.
 
 Nix workspace environments work out of the box. The service PATH provides
 `direnv` and the Nix tooling needed for `use flake` and nix-direnv style
-`.envrc` files without a custom Pueblo package, and the service sets
+`.envrc` files without a custom Batey package, and the service sets
 `NIX_CONFIG=experimental-features = nix-command flakes` for its own
-environment, so no system-wide Nix settings are required. Pueblo Hub never
+environment, so no system-wide Nix settings are required. Batey never
 auto-authorizes `.envrc` files. When an environment is blocked, authorize
 it from the chat UI, which runs `direnv allow` against the verified
 workspace path.
 
 Supported registry `npx` and `uvx` agents work with the generic runtimes in
-`services.pueblo-hub.runtimePackages`, which defaults to Node (`npx`) and
+`services.batey.runtimePackages`, which defaults to Node (`npx`) and
 `uv` (`uvx`). Extend or override that list for your deployment, but do not
 expect project toolchains there. Remove an entry and its agents are reported
 deterministically unavailable instead of failing at session start.
 
 ### Service user and paths
 
-By default the module creates a dedicated `pueblo-hub` system user and group
-and gives it a stable HOME at `/var/lib/pueblo-hub`. Agent authentication
+By default the module creates a dedicated `batey` system user and group
+and gives it a stable HOME at `/var/lib/batey`. Agent authentication
 and configuration stored there survives restarts and package upgrades.
-Persistent Pueblo state lives under systemd directory management
-(`StateDirectory=pueblo-hub`), with deterministic `--data-dir`,
+Persistent Batey state lives under systemd directory management
+(`StateDirectory=batey`), with deterministic `--data-dir`,
 `--state-dir`, and `--config-dir` instead of root's HOME. Redirecting them
 needs no manual setup either: the module creates and chowns every
-Pueblo-owned directory through tmpfiles, so `dataDir = "/srv/pueblo-data"`
+Batey-owned directory through tmpfiles, so `dataDir = "/srv/batey-data"`
 just works. Project roots are the exception on purpose — they hold your
 data, so the service never takes ownership of them.
 
 To run as an existing account instead:
 
 ```nix
-services.pueblo-hub.user = "alice";
-services.pueblo-hub.group = "users";
+services.batey.user = "alice";
+services.batey.group = "users";
 ```
 
 An explicitly selected user or group is assumed to exist and is never
 redefined. Give that account read and write access to every entry in
-`services.pueblo-hub.projectRoots`, and make sure its HOME persists if your
+`services.batey.projectRoots`, and make sure its HOME persists if your
 agents keep auth there.
 
 ### Declarative agents
 
 ```nix
-services.pueblo-hub.agents.my-agent = {
+services.batey.agents.my-agent = {
   command = "${pkgs.my-agent}/bin/my-acp";
   args = [ "--stdio" ];
   displayName = "My agent";
@@ -408,7 +408,7 @@ services.pueblo-hub.agents.my-agent = {
   env.REGION = "eu";
   passEnv = [ "MY_AGENT_TOKEN" ];
 };
-services.pueblo-hub.agents.pkg = {
+services.batey.agents.pkg = {
   npx.package = "package-acp@1.2.3";
   npx.args = [ "--acp" ];
 };
@@ -431,31 +431,31 @@ Never put API keys, tokens, or passwords in `env`. Those values land in the
 Nix store. Name them with `passEnv` and supply the values at runtime:
 
 ```nix
-services.pueblo-hub.environmentFiles = [ "/run/secrets/pueblo-hub.env" ];
-services.pueblo-hub.agents.my-agent.passEnv = [ "MY_AGENT_TOKEN" ];
+services.batey.environmentFiles = [ "/run/secrets/batey.env" ];
+services.batey.agents.my-agent.passEnv = [ "MY_AGENT_TOKEN" ];
 ```
 
-Where `/run/secrets/pueblo-hub.env` holds `MY_AGENT_TOKEN=...`. Use
-`services.pueblo-hub.environment` only for non-secret values.
+Where `/run/secrets/batey.env` holds `MY_AGENT_TOKEN=...`. Use
+`services.batey.environment` only for non-secret values.
 
-The boundary is real, not advisory. At startup Pueblo moves every listed
+The boundary is real, not advisory. At startup Batey moves every listed
 secret name out of its own environment into a stash, so the inherited
 workspace environment that all agents share never carries them. Each value
 is then injected only into the agents whose `passEnv` names it. An agent
 that names nothing — including every web-managed custom agent — receives
 no secret, and one agent never sees another agent's token. Names that
 should be stripped but injected nowhere belong in
-`services.pueblo-hub.secretEnvVars`.
+`services.batey.secretEnvVars`.
 
 ### Containers
 
 ```sh
-nix build .#pueblo-hub-oci
-docker load -i result  # prints the tag, e.g. pueblo-hub:0.3.0
+nix build .#batey-oci
+docker load -i result  # prints the tag, e.g. batey:0.3.0
 docker run --rm -p 127.0.0.1:8765:8765 \
-  -v pueblo-data:/data \
+  -v batey-data:/data \
   -v "$PWD/projects:/projects" \
-  pueblo-hub:0.3.0
+  batey:0.3.0
 ```
 
 The image is built with `dockerTools` from the canonical package, not a
@@ -466,9 +466,9 @@ in `/projects`:
 ```sh
 docker load -i result
 docker run --rm -p 127.0.0.1:8765:8765 \
-  -v pueblo-data:/data \
+  -v batey-data:/data \
   -v "$PWD/projects:/projects" \
-  pueblo-hub:latest
+  batey:latest
 ```
 
 Persist `/data` if you want the database and ACP-agent auth to survive
@@ -479,13 +479,13 @@ your own `--project-root` flags plus matching mounts). A runtime smoke test
 lives in `nix/oci-smoke.sh` and checks `/api/status` plus the embedded
 frontend with temporary mounts.
 
-### Developing Pueblo Hub
+### Developing Batey
 
 Clone the repository and enter its Nix environment:
 
 ```sh
-git clone https://github.com/JuanDelPueblo/pueblo-hub.git
-cd pueblo-hub
+git clone https://github.com/JuanDelPueblo/batey.git
+cd batey
 direnv allow
 ```
 
@@ -525,7 +525,7 @@ npm run build
 The complete application with embedded frontend assets is built authoritatively with:
 
 ```sh
-nix build .#pueblo-hub
+nix build .#batey
 ```
 
 This build is packaging and release verification. It does not rerun the Rust test suite. `nix run .#verify` remains the verification path.
@@ -536,4 +536,4 @@ GPL-3.0-only.
 
 Backend forked from github.com/missdeer/ccgonext.
 
-Pueblo Hub does not include proprietary agent binaries.
+Batey does not include proprietary agent binaries.

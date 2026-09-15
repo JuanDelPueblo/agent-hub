@@ -139,7 +139,7 @@ fn managed_recovery_and_removal() {
     remove_managed(td.path(), ws.path(), "chat9").unwrap();
     // Branch preserved.
     assert!(is_hex40(
-        &resolve_ref(td.path(), "pueblo-hub/chat/chat9").unwrap()
+        &resolve_ref(td.path(), "batey/chat/chat9").unwrap()
     ));
 }
 
@@ -208,7 +208,7 @@ fn direct_mode_rejects_tags_shas_and_remote_refs() {
 fn provision_rejects_existing_managed_branch() {
     let td = init_repo();
     let base = resolve_ref(td.path(), "main").unwrap();
-    let branch = "pueblo-hub/chat/already";
+    let branch = "batey/chat/already";
     git(td.path(), &["branch", branch]);
     let ws = tempfile::tempdir().unwrap();
 
@@ -222,7 +222,7 @@ fn provision_rejects_existing_managed_branch() {
 fn rollback_deletes_only_at_expected_tip() {
     let td = init_repo();
     let base = resolve_ref(td.path(), "main").unwrap();
-    let branch = "pueblo-hub/chat/rollback";
+    let branch = "batey/chat/rollback";
     git(td.path(), &["branch", branch]);
 
     rollback_provision(td.path(), branch, &base, true).unwrap();
@@ -233,7 +233,7 @@ fn rollback_deletes_only_at_expected_tip() {
 fn rollback_refuses_a_moved_branch() {
     let td = init_repo();
     let base = resolve_ref(td.path(), "main").unwrap();
-    let branch = "pueblo-hub/chat/moved";
+    let branch = "batey/chat/moved";
     git(td.path(), &["branch", branch]);
     fs::write(td.path().join("new.txt"), "new").unwrap();
     git(td.path(), &["add", "new.txt"]);
@@ -288,7 +288,7 @@ fn recovery_repairs_stale_worktree_metadata_without_losing_files() {
     let managed = provision_managed(td.path(), ws.path(), "stale", &base).unwrap();
     let marker = fs::read_to_string(managed.worktree.join(".git")).unwrap();
     let admin = PathBuf::from(marker.trim().strip_prefix("gitdir: ").unwrap());
-    fs::write(admin.join("gitdir"), "/tmp/old-pueblo-hub-worktree/.git\n").unwrap();
+    fs::write(admin.join("gitdir"), "/tmp/old-batey-worktree/.git\n").unwrap();
     fs::write(managed.worktree.join("sentinel.txt"), "preserve").unwrap();
 
     assert!(matches!(

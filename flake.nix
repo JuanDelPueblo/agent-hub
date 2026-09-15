@@ -1,5 +1,5 @@
 {
-  description = "Pueblo Hub: persistent ACP project and chat supervisor";
+  description = "Batey: persistent ACP project and chat supervisor";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.crane.url = "github:ipetkov/crane";
   inputs.crane.inputs.nixpkgs.follows = "nixpkgs";
@@ -11,14 +11,13 @@
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pueblo-hub = import ./nix/package.nix { inherit pkgs crane; };
-          pueblo-hub-frontend = import ./nix/frontend.nix { inherit pkgs; };
-          pueblo-hub-oci = import ./nix/oci.nix { inherit pkgs pueblo-hub; };
+          batey = import ./nix/package.nix { inherit pkgs crane; };
+          batey-frontend = import ./nix/frontend.nix { inherit pkgs; };
+          batey-oci = import ./nix/oci.nix { inherit pkgs batey; };
         in {
-          inherit pueblo-hub pueblo-hub-frontend pueblo-hub-oci;
-          # Compatibility attribute for existing `.#frontend` consumers.
-          frontend = pueblo-hub-frontend;
-          default = pueblo-hub;
+          inherit batey batey-frontend batey-oci;
+          frontend = batey-frontend;
+          default = batey;
         });
 
       devShells = eachSystem (system:
@@ -26,7 +25,7 @@
           pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            name = "pueblo-hub-dev";
+            name = "batey-dev";
 
             packages = with pkgs; [
               # Rust toolchain
@@ -73,7 +72,7 @@
               export NG_CLI_ANALYTICS=false
               export RUST_BACKTRACE=1
 
-              echo "pueblo-hub dev shell: $(rustc --version), node $(node --version)"
+              echo "batey dev shell: $(rustc --version), node $(node --version)"
               echo "  cargo check       fast type check"
               echo "  cargo nextest run fast test run"
               echo "  npm run dev       frontend against the fake backend (in frontend/)"
@@ -84,9 +83,9 @@
       apps = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pueblo-hub = self.packages.${system}.pueblo-hub;
+          batey = self.packages.${system}.batey;
           verify = pkgs.writeShellApplication {
-            name = "pueblo-hub-verify";
+            name = "batey-verify";
             # Every tool the verification suite needs, so `nix run .#verify`
             # works on a clean checkout without entering `nix develop`.
             runtimeInputs = with pkgs; [
@@ -106,13 +105,13 @@
             text = builtins.readFile ./nix/verify.sh;
           };
         in {
-          pueblo-hub = {
+          batey = {
             type = "app";
-            program = pkgs.lib.getExe pueblo-hub;
+            program = pkgs.lib.getExe batey;
           };
           default = {
             type = "app";
-            program = pkgs.lib.getExe pueblo-hub;
+            program = pkgs.lib.getExe batey;
           };
           verify = {
             type = "app";
@@ -122,34 +121,33 @@
 
       overlays.default = import ./nix/overlay.nix { inherit crane; };
 
-      # The exported module installs the Pueblo overlay itself, so the
-      # default `services.pueblo-hub.package = pkgs.pueblo-hub` resolves with
+      # The exported module installs the Batey overlay itself, so the
+      # default `services.batey.package = pkgs.batey` resolves with
       # only `nixosModules.default` imported. Overriding `package` still wins.
-      nixosModules.pueblo-hub = {
+      nixosModules.batey = {
         imports = [ ./nix/nixos-module.nix ];
         nixpkgs.overlays = [ (import ./nix/overlay.nix { inherit crane; }) ];
       };
-      nixosModules.default = self.nixosModules.pueblo-hub;
+      nixosModules.default = self.nixosModules.batey;
 
       checks = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pueblo-hub = self.packages.${system}.pueblo-hub;
-          pueblo-hub-oci = self.packages.${system}.pueblo-hub-oci;
-          module = self.nixosModules.pueblo-hub;
+          batey = self.packages.${system}.batey;
+          batey-oci = self.packages.${system}.batey-oci;
+          module = self.nixosModules.batey;
           overlaid = import nixpkgs {
             inherit system;
             overlays = [ self.overlays.default ];
           };
         in {
-          eval-checks = import ./nix/eval-checks.nix { inherit pkgs crane pueblo-hub module; };
-          oci-config = import ./nix/oci-check.nix { inherit pkgs pueblo-hub pueblo-hub-oci; };
-          vm-test = import ./nix/vm-test.nix { inherit pkgs module; };
-          overlay-provides-package = pkgs.runCommand "pueblo-hub-overlay-check" { } ''
-            [ -x ${overlaid.pueblo-hub}/bin/pueblo-hub ] \
-              || (echo "overlay does not provide pkgs.pueblo-hub" >&2; exit 1)
-            ${overlaid.pueblo-hub}/bin/pueblo-hub --help > /dev/null
-            [ "$(${overlaid.pueblo-hub}/bin/pueblo-hub --version)" = "$(${pueblo-hub}/bin/pueblo-hub --version)" ] \
+          eval-checks = import ./nix/eval-checks.nix { inherit pkgs crane batey module; };
+          oci-config = import ./nix/oci-check.nix { inherit pkgs batey batey-oci; };
+          overlay-provides-package = pkgs.runCommand "batey-overlay-check" { } ''
+            [ -x ${overlaid.batey}/bin/batey ] \
+              || (echo "overlay does not provide pkgs.batey" >&2; exit 1)
+            ${overlaid.batey}/bin/batey --help > /dev/null
+            [ "$(${overlaid.batey}/bin/batey --version)" = "$(${batey}/bin/batey --version)" ] \
               || (echo "overlay package version differs from canonical package" >&2; exit 1)
             touch $out
           '';

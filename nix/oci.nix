@@ -1,10 +1,10 @@
-# OCI/Docker image built from the exact canonical Pueblo Hub package.
-# No second compiler path: `pueblo-hub` below is `nix/package.nix`.
-{ pkgs, pueblo-hub }:
+# OCI/Docker image built from the exact canonical Batey package.
+# No second compiler path: `batey` below is `nix/package.nix`.
+{ pkgs, batey }:
 let
   # Generic runtimes only. No project-specific toolchains.
   runtimeEnv = pkgs.buildEnv {
-    name = "pueblo-hub-runtime-env";
+    name = "batey-runtime-env";
     paths = with pkgs; [
       bash
       coreutils
@@ -18,9 +18,9 @@ let
   };
 in
 pkgs.dockerTools.buildLayeredImage {
-  name = "pueblo-hub";
-  tag = pueblo-hub.version or "latest";
-  contents = [ pueblo-hub runtimeEnv pkgs.dockerTools.caCertificates ];
+  name = "batey";
+  tag = batey.version or "latest";
+  contents = [ batey runtimeEnv pkgs.dockerTools.caCertificates ];
   fakeRootCommands = ''
     mkdir -p ./data ./projects ./tmp
     chown -R 65534:65534 ./data
@@ -28,7 +28,7 @@ pkgs.dockerTools.buildLayeredImage {
     chmod 0777 ./tmp
   '';
   config = {
-    Entrypoint = [ "${pueblo-hub}/bin/pueblo-hub" ];
+    Entrypoint = [ "${batey}/bin/batey" ];
     Cmd = [
       "--host" "0.0.0.0"
       "--port" "8765"
@@ -52,9 +52,9 @@ pkgs.dockerTools.buildLayeredImage {
       "/projects" = { };
     };
     Labels = {
-      "org.opencontainers.image.title" = "Pueblo Hub";
+      "org.opencontainers.image.title" = "Batey";
       "org.opencontainers.image.description" = "Persistent single-owner ACP project and chat supervisor";
-      "org.opencontainers.image.version" = pueblo-hub.version or "unknown";
+      "org.opencontainers.image.version" = batey.version or "unknown";
     };
   };
 }

@@ -1,4 +1,4 @@
-//! The set of agents this Pueblo Hub knows about.
+//! The set of agents this Batey knows about.
 //!
 //! Every source feeds one catalog: the built-in defaults, the file
 //! `--agents-file` names, the ACP Registry, and the definitions a user creates
@@ -298,12 +298,12 @@ mod tests {
         let catalog = AgentCatalog::new([AgentDefinition::codex_default()]);
         let collision = catalog
             .insert(
-                AgentDefinition::new("codex", "my-codex").with_source(AgentSource::PuebloManaged),
+                AgentDefinition::new("codex", "my-codex").with_source(AgentSource::BateyManaged),
             )
             .unwrap_err();
         assert_eq!(collision.id, "codex");
         assert_eq!(collision.existing, AgentSource::Builtin);
-        assert_eq!(collision.incoming, AgentSource::PuebloManaged);
+        assert_eq!(collision.incoming, AgentSource::BateyManaged);
         assert!(collision.to_string().contains("already defined"));
         // The original definition is untouched.
         assert_eq!(
@@ -320,22 +320,22 @@ mod tests {
     #[test]
     fn replace_only_accepts_the_owning_source() {
         let catalog = AgentCatalog::new([
-            AgentDefinition::new("managed", "v1").with_source(AgentSource::PuebloManaged)
+            AgentDefinition::new("managed", "v1").with_source(AgentSource::BateyManaged)
         ]);
         let previous = catalog
-            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::PuebloManaged))
+            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::BateyManaged))
             .unwrap();
         assert_eq!(previous.launch.command, "v1");
         assert_eq!(catalog.runtime("managed").unwrap().launch.command, "v2");
         assert_eq!(
             catalog.source_of("managed"),
-            Some(AgentSource::PuebloManaged)
+            Some(AgentSource::BateyManaged)
         );
 
         let collision = catalog
             .replace(AgentDefinition::new("managed", "v3").with_source(AgentSource::Registry))
             .unwrap_err();
-        assert_eq!(collision.existing, AgentSource::PuebloManaged);
+        assert_eq!(collision.existing, AgentSource::BateyManaged);
         assert_eq!(catalog.runtime("managed").unwrap().launch.command, "v2");
 
         assert!(catalog
@@ -349,12 +349,12 @@ mod tests {
     #[test]
     fn live_runtime_handles_survive_catalog_changes() {
         let catalog = AgentCatalog::new([
-            AgentDefinition::new("managed", "v1").with_source(AgentSource::PuebloManaged)
+            AgentDefinition::new("managed", "v1").with_source(AgentSource::BateyManaged)
         ]);
         let live = catalog.runtime("managed").unwrap();
 
         catalog
-            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::PuebloManaged))
+            .replace(AgentDefinition::new("managed", "v2").with_source(AgentSource::BateyManaged))
             .unwrap();
         assert_eq!(
             live.launch.command, "v1",

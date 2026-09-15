@@ -5,10 +5,10 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     auth::TERMINAL_AUTH_SUPPORTED,
-    config::{Config, PathOverrides, PuebloPaths},
+    config::{BateyPaths, Config, PathOverrides},
     events::EventLog,
     service::HubService,
     session::SessionManager,
@@ -43,7 +43,7 @@ impl Harness {
     /// Builds a hub whose catalog holds one agent per named auth mode.
     fn new(modes: &[(&str, &str)]) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             database: Some(root.path().join("hub.db")),
             data_dir: Some(root.path().join("data")),
             state_dir: Some(root.path().join("state")),
@@ -177,7 +177,7 @@ async fn agent_method_authenticate_succeeds_and_refreshes_state() {
     harness.sessions.shutdown_all().await;
 }
 
-/// An agent that rejects the method reports a failure. Pueblo Hub never
+/// An agent that rejects the method reports a failure. Batey never
 /// reports success it did not get.
 #[tokio::test]
 async fn agent_method_authenticate_error_is_reported() {
@@ -311,7 +311,7 @@ async fn auth_required_is_structured_and_keeps_durable_chat_data() {
 }
 
 /// A shared in-memory sink that captures every tracing event, so a test can
-/// prove what Pueblo Hub logs and what it never logs.
+/// prove what Batey logs and what it never logs.
 fn log_capture() -> &'static std::sync::Mutex<Vec<u8>> {
     static BUFFER: OnceLock<std::sync::Mutex<Vec<u8>>> = OnceLock::new();
     static SUBSCRIBER: Once = Once::new();
@@ -351,7 +351,7 @@ fn stderr_marker_lines() -> Vec<String> {
     let buffer = log_capture();
     String::from_utf8_lossy(&buffer.lock().unwrap())
         .lines()
-        .filter(|line| line.contains("PUEBLO_TEST_STDERR_SECRET"))
+        .filter(|line| line.contains("BATEY_TEST_STDERR_SECRET"))
         .map(|line| line.to_owned())
         .collect()
 }

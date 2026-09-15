@@ -1,7 +1,7 @@
 //! Stable ACP v1 authentication metadata.
 //!
 //! `initialize` returns `authMethods` and `agentCapabilities.auth`. This
-//! module turns both into typed provider-neutral state. Pueblo Hub never
+//! module turns both into typed provider-neutral state. Batey never
 //! reads an agent id to decide how an agent authenticates.
 //!
 //! A method type this build does not implement stays in the state as

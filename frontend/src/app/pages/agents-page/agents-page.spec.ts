@@ -25,7 +25,7 @@ const builtin: AgentSummary = {
 const custom: AgentSummary = {
   id: 'my-custom',
   display_name: 'My Custom',
-  source: 'pueblo_managed',
+  source: 'batey_managed',
   availability: 'available',
   metadata: {},
   mutability: 'editable',

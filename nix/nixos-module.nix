@@ -1,17 +1,17 @@
-# First-class NixOS service for Pueblo Hub.
+# First-class NixOS service for Batey.
 #
-# A downstream configuration consumes Pueblo Hub without copying packaging:
+# A downstream configuration consumes Batey without copying packaging:
 #
-#   imports = [ pueblo-hub.nixosModules.default ];
-#   services.pueblo-hub.enable = true;
-#   services.pueblo-hub.projectRoots = [ "/srv/projects" ];
+#   imports = [ batey.nixosModules.default ];
+#   services.batey.enable = true;
+#   services.batey.projectRoots = [ "/srv/projects" ];
 #
-# Optionally import `pueblo-hub.overlays.default` to get `pkgs.pueblo-hub`,
-# or override `services.pueblo-hub.package` with the canonical package from
+# Optionally import `batey.overlays.default` to get `pkgs.batey`,
+# or override `services.batey.package` with the canonical package from
 # the flake.
 { config, lib, pkgs, ... }:
 let
-  cfg = config.services.pueblo-hub;
+  cfg = config.services.batey;
 
   validId = id:
     builtins.match "[A-Za-z0-9_-]+" id != null && builtins.stringLength id <= 64 && id != "";
@@ -74,17 +74,17 @@ let
 
   declarativeJson = lib.mapAttrs agentJson enabledAgents;
 
-  declarativeFile = pkgs.writeText "pueblo-declarative-agents.json" (builtins.toJSON declarativeJson);
+  declarativeFile = pkgs.writeText "batey-declarative-agents.json" (builtins.toJSON declarativeJson);
 
-  # Every name Pueblo must treat as a secret: all passEnv names of declared
+  # Every name Batey must treat as a secret: all passEnv names of declared
   # agents plus the explicit redaction list. Only names travel on the command
   # line; values stay in runtime environment files.
   secretVars = lib.unique
     (lib.concatMap (agent: agent.passEnv) (builtins.attrValues cfg.agents)
       ++ cfg.secretEnvVars);
 
-  # State Pueblo owns. Each directory is created and chowned through
-  # tmpfiles, so overrides such as `dataDir = "/srv/pueblo-data"` work
+  # State Batey owns. Each directory is created and chowned through
+  # tmpfiles, so overrides such as `dataDir = "/srv/batey-data"` work
   # without manual mkdir/chown. The database contributes its parent
   # directory. HOME is covered when the module manages the account; an
   # explicitly selected existing account keeps its own home.
@@ -93,7 +93,7 @@ let
     ++ lib.optionals (cfg.logDir != null) [ cfg.logDir ]
     ++ lib.optionals (cfg.worktreesDir != null) [ cfg.worktreesDir ]
     ++ lib.optionals (cfg.database != null) [ (builtins.dirOf cfg.database) ]
-    ++ lib.optionals (cfg.user == "pueblo-hub" && cfg.home != "/var/lib/pueblo-hub") [ cfg.home ];
+    ++ lib.optionals (cfg.user == "batey" && cfg.home != "/var/lib/batey") [ cfg.home ];
 
   argsList =
     [ "--host" cfg.host "--port" (toString cfg.port) ]
@@ -111,10 +111,10 @@ let
   execStart = "${lib.getExe cfg.package} " + lib.escapeShellArgs argsList;
 in
 {
-  options.services.pueblo-hub = {
-    enable = lib.mkEnableOption "Pueblo Hub, a persistent ACP project and chat supervisor";
+  options.services.batey = {
+    enable = lib.mkEnableOption "Batey, a persistent ACP project and chat supervisor";
 
-    package = lib.mkPackageOption pkgs "pueblo-hub" { };
+    package = lib.mkPackageOption pkgs "batey" { };
 
     projectRoots = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -129,13 +129,13 @@ in
     host = lib.mkOption {
       type = lib.types.str;
       default = "127.0.0.1";
-      description = "Bind address for the Pueblo Hub web server.";
+      description = "Bind address for the Batey web server.";
     };
 
     port = lib.mkOption {
       type = lib.types.port;
       default = 8765;
-      description = "Port for the Pueblo Hub web server.";
+      description = "Port for the Batey web server.";
     };
 
     publicOrigin = lib.mkOption {
@@ -163,27 +163,27 @@ in
 
     dataDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/pueblo-hub/data";
+      default = "/var/lib/batey/data";
       description = ''
-        Pueblo Hub data directory (database, worktrees, registry cache).
+        Batey data directory (database, worktrees, registry cache).
         Created and chowned to the service user automatically, so overrides
-        such as `/srv/pueblo-data` need no manual setup.
+        such as `/srv/batey-data` need no manual setup.
       '';
     };
 
     stateDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/pueblo-hub/state";
+      default = "/var/lib/batey/state";
       description = ''
-        Pueblo Hub state directory. Created and chowned automatically.
+        Batey state directory. Created and chowned automatically.
       '';
     };
 
     configDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/pueblo-hub/config";
+      default = "/var/lib/batey/config";
       description = ''
-        Pueblo Hub configuration directory. Created and chowned automatically.
+        Batey configuration directory. Created and chowned automatically.
       '';
     };
 
@@ -191,7 +191,7 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Pueblo Hub log directory. Null derives `stateDir/logs`.
+        Batey log directory. Null derives `stateDir/logs`.
         A set value is created and chowned automatically.
       '';
     };
@@ -209,15 +209,15 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Explicit database file. Null derives `dataDir/pueblo-hub.sqlite3`.
+        Explicit database file. Null derives `dataDir/batey.sqlite3`.
       '';
     };
 
     user = lib.mkOption {
       type = lib.types.str;
-      default = "pueblo-hub";
+      default = "batey";
       description = ''
-        Service user. The default `pueblo-hub` system user is created
+        Service user. The default `batey` system user is created
         automatically. Any other value is assumed to exist and is never
         redefined.
       '';
@@ -225,16 +225,16 @@ in
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "pueblo-hub";
+      default = "batey";
       description = ''
-        Service group. The default `pueblo-hub` group is created
+        Service group. The default `batey` group is created
         automatically. Any other value is assumed to exist.
       '';
     };
 
     home = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/pueblo-hub";
+      default = "/var/lib/batey";
       description = ''
         Stable HOME for the service user. ACP-agent authentication and
         configuration stored here survives restarts and upgrades.
@@ -268,7 +268,7 @@ in
       description = ''
         Runtime environment files (systemd `EnvironmentFile`) for secrets.
         Declarative agents reference these values by name through `passEnv`.
-        At startup Pueblo moves every `passEnv` and `secretEnvVars` name out
+        At startup Batey moves every `passEnv` and `secretEnvVars` name out
         of its own environment into a stash, so the inherited workspace
         environment every agent shares never carries them. Each value is then
         injected only into the agents naming it. An agent that names nothing
@@ -339,7 +339,7 @@ in
             description = ''
               Environment variable names injected into this agent at session
               start. Values come from `environment` or `environmentFiles` at
-              runtime and never enter the Nix store. Pueblo removes these
+              runtime and never enter the Nix store. Batey removes these
               names from the shared inherited environment first, so this
               agent receives exactly the names it lists and no other agent's
               secrets.
@@ -361,7 +361,7 @@ in
           metadata = lib.mkOption {
             type = lib.types.nullOr lib.types.attrs;
             default = null;
-            description = "Free-form metadata object. Pueblo Hub stores it and does not read it.";
+            description = "Free-form metadata object. Batey stores it and does not read it.";
           };
 
           defaultPermissionPolicy = lib.mkOption {
@@ -430,7 +430,7 @@ in
     assertions = [
       {
         assertion = cfg.projectRoots != [ ];
-        message = "services.pueblo-hub.projectRoots needs at least one project root.";
+        message = "services.batey.projectRoots needs at least one project root.";
       }
       {
         assertion = lib.all validId (builtins.attrNames enabledAgents);
@@ -487,21 +487,21 @@ in
       }
     ];
 
-    users.users = lib.mkIf (cfg.user == "pueblo-hub") {
-      pueblo-hub = {
+    users.users = lib.mkIf (cfg.user == "batey") {
+      batey = {
         isSystemUser = true;
         group = cfg.group;
         home = cfg.home;
         createHome = true;
-        description = "Pueblo Hub service user";
+        description = "Batey service user";
       };
     };
 
-    users.groups = lib.mkIf (cfg.group == "pueblo-hub") {
-      pueblo-hub = { };
+    users.groups = lib.mkIf (cfg.group == "batey") {
+      batey = { };
     };
 
-    # Pueblo-owned state directories, including any operator overrides.
+    # Batey-owned state directories, including any operator overrides.
     # systemd-tmpfiles creates and chowns them before the service starts, so
     # a redirected `dataDir` works with no manual provisioning. Project roots
     # are deliberately excluded: they hold user data the service must not own.
@@ -509,8 +509,8 @@ in
       (dir: "d ${dir} 0750 ${cfg.user} ${cfg.group} -")
       managedDirs;
 
-    systemd.services.pueblo-hub = {
-      description = "Pueblo Hub persistent ACP project and chat supervisor";
+    systemd.services.batey = {
+      description = "Batey persistent ACP project and chat supervisor";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
       wants = [ "network-online.target" ];
@@ -531,7 +531,7 @@ in
         User = cfg.user;
         Group = cfg.group;
         WorkingDirectory = cfg.home;
-        StateDirectory = "pueblo-hub";
+        StateDirectory = "batey";
         StateDirectoryMode = "0700";
         UMask = "0077";
         KillMode = "control-group";

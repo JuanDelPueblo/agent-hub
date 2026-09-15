@@ -37,7 +37,7 @@ impl HubService {
 
     /// Runs the capability-gated stable logout method.
     ///
-    /// Pueblo Hub chats, sessions, and history stay exactly as they are.
+    /// Batey chats, sessions, and history stay exactly as they are.
     pub async fn logout_agent(&self, agent_id: &str) -> ServiceResult<AgentAuthView> {
         Ok(self.agent_auth.logout(agent_id).await?)
     }

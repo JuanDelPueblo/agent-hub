@@ -90,7 +90,7 @@ impl RegistryDistribution {
         self.binary.is_empty() && self.npx.is_none() && self.uvx.is_none()
     }
 
-    /// The distribution kinds this agent publishes, in the order Pueblo Hub
+    /// The distribution kinds this agent publishes, in the order Batey
     /// prefers them: a native binary first, then the package runtimes.
     pub fn kinds(&self) -> Vec<DistributionKind> {
         let mut kinds = Vec::new();

@@ -1,11 +1,11 @@
 [package]
-name = "pueblo-hub"
+name = "batey"
 version = "0.3.0"
 edition = "2021"
 authors = ["JuanDelPueblo"]
 description = "Persistent single-owner ACP project and chat supervisor"
 license = "GPL-3.0-only"
-repository = "https://github.com/JuanDelPueblo/pueblo-hub"
+repository = "https://github.com/JuanDelPueblo/batey"
 keywords = ["acp", "agent", "supervisor", "claude", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -95,11 +95,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The Rust sources sit in `backend/src`, next to the fake backend, so Cargo
 # needs the paths. Integration tests keep the default `tests/` location.
 [lib]
-name = "pueblo_hub"
+name = "batey"
 path = "backend/src/lib.rs"
 
 [[bin]]
-name = "pueblo-hub"
+name = "batey"
 path = "backend/src/main.rs"
 
 [profile.release]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Canonical source-level verification for Pueblo Hub.
+# Canonical source-level verification for Batey.
 # Public entrypoint: `nix run .#verify` (see `flake.nix`).
 # This script is also runnable directly inside `nix develop`.
 # It fails immediately when a stage fails and preserves command output.

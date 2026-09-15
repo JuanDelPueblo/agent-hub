@@ -12,7 +12,7 @@
       <p class="decision">Response recorded: {{ elicitation().decision }}</p>
     } @else {
       @if (isUrl()) {
-        <p class="url-warning">The agent asks you to visit this address out of band. Pueblo Hub never opens or fetches it automatically.</p>
+        <p class="url-warning">The agent asks you to visit this address out of band. Batey never opens or fetches it automatically.</p>
         @if (elicitation().url; as url) {
           <p class="url-line"><strong>Address:</strong> <span class="url">{{ url }}</span></p>
           @if (host()) { <p class="url-line"><strong>Host:</strong> {{ host() }}</p> }
@@ -24,7 +24,7 @@
             @if (!field.supported) {
               <p class="unsupported" role="alert">
                 <mat-icon aria-hidden="true">block</mat-icon>
-                <span>“{{ field.title }}” uses a field type Pueblo Hub does not support{{ field.type ? ' (“' + field.type + '”)' : '' }}. It cannot be filled in here.</span>
+                <span>“{{ field.title }}” uses a field type Batey does not support{{ field.type ? ' (“' + field.type + '”)' : '' }}. It cannot be filled in here.</span>
               </p>
               @if (field.description) { <p class="hint">{{ field.description }}</p> }
               @if (fieldError(field.key)) { <p class="error" role="alert">{{ fieldError(field.key) }}</p> }
@@ -76,7 +76,7 @@
             } @else {
               <p class="unsupported" role="alert">
                 <mat-icon aria-hidden="true">block</mat-icon>
-                <span>“{{ field.title }}” uses a field type Pueblo Hub does not support. It cannot be filled in here.</span>
+                <span>“{{ field.title }}” uses a field type Batey does not support. It cannot be filled in here.</span>
               </p>
               @if (fieldError(field.key)) { <p class="error" role="alert">{{ fieldError(field.key) }}</p> }
             }

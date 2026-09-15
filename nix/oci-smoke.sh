@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# OCI runtime smoke test for the canonical Pueblo Hub image.
-# Loads `nix build .#pueblo-hub-oci`, runs it with temporary state/project
+# OCI runtime smoke test for the canonical Batey image.
+# Loads `nix build .#batey-oci`, runs it with temporary state/project
 # mounts, and verifies `/api/status` plus the embedded frontend.
 # Needs `docker` or `podman` and a checkout root. Reproducible in CI.
 set -euo pipefail
@@ -22,7 +22,7 @@ if [ ! -f "$ROOT/flake.nix" ]; then
 fi
 
 echo "Building the canonical OCI image..."
-IMAGE_TAR=$(nix build .#pueblo-hub-oci --no-link --print-out-paths)
+IMAGE_TAR=$(nix build .#batey-oci --no-link --print-out-paths)
 echo "Image: $IMAGE_TAR"
 
 echo "Loading into $RUNTIME..."
@@ -33,7 +33,7 @@ else
 fi
 
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-IMAGE_REF="pueblo-hub:${VERSION:-latest}"
+IMAGE_REF="batey:${VERSION:-latest}"
 
 STATE=$(mktemp -d)
 PROJECTS=$(mktemp -d)
@@ -49,7 +49,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Starting pueblo-hub ($IMAGE_REF, state=$STATE projects=$PROJECTS)..."
+echo "Starting batey ($IMAGE_REF, state=$STATE projects=$PROJECTS)..."
 CID=$($RUNTIME run -d --rm \
   -p 127.0.0.1:8765:8765 \
   -v "$STATE:/data" \
@@ -63,7 +63,7 @@ for _ in $(seq 1 60); do
   fi
   sleep 1
 done
-curl -sf http://127.0.0.1:8765/api/status | tee /tmp/pueblo-oci-status.json
+curl -sf http://127.0.0.1:8765/api/status | tee /tmp/batey-oci-status.json
 curl -sf http://127.0.0.1:8765/ | grep -qi '<!doctype html'
 
 echo "Stopping the container (SIGTERM)..."

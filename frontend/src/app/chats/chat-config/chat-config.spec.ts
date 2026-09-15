@@ -55,12 +55,12 @@ describe('ChatConfigComponent', () => {
 
   it('shows managed workspace details read-only', () => {
     fixture.componentRef.setInput('chat', { ...baseChat, workspace: {
-      mode: 'managed_worktree', branch: 'pueblo-hub/chat/chat-1',
+      mode: 'managed_worktree', branch: 'batey/chat/chat-1',
       base_commit: 'abcdef1234567890',
     } });
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Isolated worktree');
-    expect(fixture.nativeElement.textContent).toContain('pueblo-hub/chat/chat-1');
+    expect(fixture.nativeElement.textContent).toContain('batey/chat/chat-1');
     expect(fixture.nativeElement.textContent).toContain('abcdef1');
     expect(fixture.nativeElement.querySelector('[aria-labelledby="workspace-heading"] input, [aria-labelledby="workspace-heading"] select')).toBeNull();
   });
@@ -89,7 +89,7 @@ describe('ChatConfigComponent', () => {
 
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('Other project access');
-    expect(text).toContain('Allow this agent to work with files from other Pueblo projects.');
+    expect(text).toContain('Allow this agent to work with files from other Batey projects.');
     expect(text).not.toContain('Additional workspace roots');
     expect(text).not.toContain('root');
 

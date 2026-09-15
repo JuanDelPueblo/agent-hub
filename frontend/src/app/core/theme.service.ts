@@ -3,7 +3,7 @@ import { effect, inject, Service, signal } from '@angular/core';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-const THEME_STORAGE_KEY = 'pueblo-hub-theme';
+const THEME_STORAGE_KEY = 'batey-theme';
 
 @Service()
 export class ThemeService {

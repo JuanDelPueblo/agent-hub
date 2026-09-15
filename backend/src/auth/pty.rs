@@ -4,10 +4,10 @@
 //! agent program draws a TUI and reads keys. A pipe is not enough, so this
 //! module allocates a real PTY and spawns the program on its slave end.
 //!
-//! Only platforms where Pueblo Hub can also kill the whole process tree run
+//! Only platforms where Batey can also kill the whole process tree run
 //! the real implementation. `TERMINAL_AUTH_SUPPORTED` reports that, and the
 //! ACP client advertises the stable client terminal-auth capability from the
-//! same constant. Pueblo Hub therefore never claims a capability it cannot
+//! same constant. Batey therefore never claims a capability it cannot
 //! honor.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -116,7 +116,7 @@ mod imp {
     impl PtyHandle {
         /// Writes user keystrokes to the program.
         ///
-        /// The bytes go to the PTY master and nowhere else. Pueblo Hub never
+        /// The bytes go to the PTY master and nowhere else. Batey never
         /// stores or logs terminal input.
         pub fn write_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
             let mut writer = self
@@ -172,7 +172,7 @@ mod imp {
         })?;
 
         let mut builder = CommandBuilder::new(&command.program);
-        // `CommandBuilder` seeds itself from the Pueblo Hub environment.
+        // `CommandBuilder` seeds itself from the Batey environment.
         // Clear it first: the caller already resolved the exact sanitized
         // environment, including per-agent secret isolation.
         builder.env_clear();

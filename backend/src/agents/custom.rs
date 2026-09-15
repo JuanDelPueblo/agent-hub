@@ -1,4 +1,4 @@
-//! Pueblo-managed custom ACP definitions.
+//! Batey-managed custom ACP definitions.
 //!
 //! These are the definitions a user creates through the management API. They
 //! persist, they are editable, and they own their id. Validation is
@@ -33,7 +33,7 @@ pub struct CustomAgentInput {
     #[serde(default)]
     pub idle_timeout: Option<u64>,
     /// Which provider reports quota for this agent. Absent means none;
-    /// Pueblo Hub never derives one from the id or the command.
+    /// Batey never derives one from the id or the command.
     #[serde(default)]
     pub usage_provider: Option<String>,
     #[serde(default)]
@@ -105,7 +105,7 @@ impl CustomAgentInput {
             .unwrap_or_else(|| id.clone());
         let mut record = InstalledAgent::new(
             id,
-            AgentSource::PuebloManaged,
+            AgentSource::BateyManaged,
             self.command.trim().to_string(),
         );
         record.display_name = display_name;
@@ -301,7 +301,7 @@ mod tests {
     fn a_complete_input_becomes_a_record() {
         let record = valid().into_record().unwrap();
         assert_eq!(record.id, "private-acp");
-        assert_eq!(record.source, AgentSource::PuebloManaged);
+        assert_eq!(record.source, AgentSource::BateyManaged);
         assert_eq!(record.display_name, "Private ACP");
         assert_eq!(record.command, "/opt/agents/private-acp");
         assert_eq!(record.args, vec!["--acp"]);

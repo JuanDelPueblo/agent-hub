@@ -1,7 +1,7 @@
 export type ProcessState = 'STARTING' | 'RUNNING' | 'STOPPED' | 'DEAD';
 export type TurnState = 'IDLE' | 'PROMPTING' | 'CANCELLING';
 export type PermissionPolicy = 'ask' | 'read-only' | 'auto-approve' | 'deny-all';
-export type AgentSource = 'builtin' | 'file' | 'pueblo_managed' | 'registry' | 'declarative';
+export type AgentSource = 'builtin' | 'file' | 'batey_managed' | 'registry' | 'declarative';
 export type AgentAvailability = 'available' | 'unavailable';
 /** Who may change the definition. Registry entries use their own lifecycle. */
 export type AgentMutability = 'editable' | 'registry_managed' | 'read_only';
@@ -30,7 +30,7 @@ export interface AgentSummary {
   unavailable_reason?: string | null;
 }
 
-/** Authenticated management data for an editable Pueblo-managed definition. */
+/** Authenticated management data for an editable Batey-managed definition. */
 export interface AgentManagementDetail {
   id: string;
   display_name: string;
@@ -369,7 +369,7 @@ export interface PlanEntry {
   status: string;
 }
 
-/** Stable ACP v1 blocks Pueblo accepts and renders. No executable content is a DOM surface. */
+/** Stable ACP v1 blocks Batey accepts and renders. No executable content is a DOM surface. */
 export type RichContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; uri?: string }

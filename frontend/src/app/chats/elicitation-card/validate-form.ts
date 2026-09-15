@@ -8,7 +8,7 @@
  * `format` stay advisory and pass through untouched.
  */
 
-/** Property types Pueblo Hub can render. Anything else is unsupported and
+/** Property types Batey can render. Anything else is unsupported and
  * must never render as a known input control. */
 const SUPPORTED_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'array']);
 
@@ -179,7 +179,7 @@ function checkField(field: ElicitationFormField, value: unknown): string | null 
       return null;
     }
     default:
-      return 'This field uses a type Pueblo Hub does not support.';
+      return 'This field uses a type Batey does not support.';
   }
 }
 
@@ -205,9 +205,9 @@ export function validateElicitationForm(
         && merged[field.key] !== null
         && merged[field.key] !== '';
       if (present) {
-        errors[field.key] = 'This field uses a type Pueblo Hub does not support.';
+        errors[field.key] = 'This field uses a type Batey does not support.';
       } else if (field.required) {
-        errors[field.key] = 'This field requires a type Pueblo Hub does not support.';
+        errors[field.key] = 'This field requires a type Batey does not support.';
       }
       continue;
     }

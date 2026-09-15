@@ -5,7 +5,7 @@
 //! disturb a chat that is already running a turn. This coordinator therefore
 //! starts its own short-lived ACP processes and never touches a chat session.
 //!
-//! Every process it starts uses the installed catalog runtime, a Pueblo-owned
+//! Every process it starts uses the installed catalog runtime, a Batey-owned
 //! working directory, and the sanitized per-agent environment. It never reads
 //! a project `.envrc`, because an agent-level login has no project.
 use super::flow::{
@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-/// How long a probe result answers a read before Pueblo Hub probes again.
+/// How long a probe result answers a read before Batey probes again.
 /// Every probe starts an agent process, so repeated reads must not start one
 /// each time. Every authentication change refreshes the entry immediately.
 const AUTH_CACHE_TTL: Duration = Duration::from_secs(15);
@@ -113,7 +113,7 @@ pub struct AgentAuthService {
     agents: Arc<AgentCatalog>,
     sessions: Arc<SessionManager>,
     /// The working directory every authentication process runs in. It belongs
-    /// to Pueblo Hub, so no browser path and no project workspace is involved.
+    /// to Batey, so no browser path and no project workspace is involved.
     work_dir: PathBuf,
     flows: Arc<TerminalAuthFlows>,
     /// Probe results per agent. A plain `RwLock` keeps invalidation
@@ -205,7 +205,7 @@ impl AgentAuthService {
     /// Runs the capability-gated stable `logout` method, then reads the
     /// authoritative state again.
     ///
-    /// Pueblo Hub chats, sessions, and history are untouched. Logout only
+    /// Batey chats, sessions, and history are untouched. Logout only
     /// removes the credentials the agent itself holds.
     pub async fn logout(&self, agent_id: &str) -> AuthResult<AgentAuthView> {
         let client = self.connect(agent_id).await?;
@@ -324,7 +324,7 @@ impl AgentAuthService {
     ///
     /// A successful terminal command means the agent stored its own
     /// credentials. The stable protocol forbids `authenticate` for that
-    /// method, so Pueblo Hub starts the agent again and reads `initialize`.
+    /// method, so Batey starts the agent again and reads `initialize`.
     fn watch_terminal_flow(self: &Arc<Self>, flow: Arc<TerminalAuthFlow>) {
         let service = self.clone();
         tokio::spawn(async move {
@@ -482,7 +482,7 @@ impl AgentAuthService {
 
     /// The sanitized environment one authentication process starts with.
     ///
-    /// The base is the Pueblo Hub process environment, which startup already
+    /// The base is the Batey process environment, which startup already
     /// emptied of every stashed secret. `resolve_agent_env` scrubs the stashed
     /// names again and injects only the names this agent's `pass_env` lists,
     /// so one agent never observes another agent's secret.
@@ -562,11 +562,11 @@ mod tests {
             &runtime(),
             &method,
             &HashMap::new(),
-            Path::new("/var/lib/pueblo"),
+            Path::new("/var/lib/batey"),
         );
         assert_eq!(command.program, "demo-acp");
         assert_eq!(command.args, vec!["acp", "--stdio", "login", "--device"]);
-        assert_eq!(command.cwd, Path::new("/var/lib/pueblo"));
+        assert_eq!(command.cwd, Path::new("/var/lib/batey"));
     }
 
     #[test]

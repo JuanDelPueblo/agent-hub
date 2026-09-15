@@ -240,7 +240,7 @@ pub fn take_secret_env(names: &[String]) -> HashMap<String, String> {
 
 /// The complete environment one agent process starts with.
 ///
-/// The workspace environment always starts from the Pueblo process
+/// The workspace environment always starts from the Batey process
 /// environment, which may still carry a secret that no list named (for
 /// example, an operator added it to an environment file but to no redaction
 /// list). Scrubbing every stashed name first keeps that accident from
@@ -336,7 +336,7 @@ printf '{%s}\n' "$json"
     #[test]
     fn test_merge_precedence() {
         let mut base = HashMap::new();
-        base.insert("PUEBLO".to_string(), "1".to_string());
+        base.insert("BATEY".to_string(), "1".to_string());
         base.insert("OVERRIDE".to_string(), "base".to_string());
 
         let mut launch = HashMap::new();
@@ -344,7 +344,7 @@ printf '{%s}\n' "$json"
         launch.insert("LAUNCH_ONLY".to_string(), "launch".to_string());
 
         let merged = merge_launch_env(&base, &launch);
-        assert_eq!(merged.get("PUEBLO").unwrap(), "1");
+        assert_eq!(merged.get("BATEY").unwrap(), "1");
         assert_eq!(merged.get("OVERRIDE").unwrap(), "launch");
         assert_eq!(merged.get("LAUNCH_ONLY").unwrap(), "launch");
 
@@ -417,26 +417,26 @@ printf '{%s}\n' "$json"
     #[test]
     fn take_secret_env_moves_listed_names_out_of_the_process() {
         unsafe {
-            std::env::set_var("PUEBLO_TEST_SECRET_TAKE_A", "aaa");
-            std::env::set_var("PUEBLO_TEST_SECRET_TAKE_B", "bbb");
+            std::env::set_var("BATEY_TEST_SECRET_TAKE_A", "aaa");
+            std::env::set_var("BATEY_TEST_SECRET_TAKE_B", "bbb");
         }
         let stashed = take_secret_env(&[
-            "PUEBLO_TEST_SECRET_TAKE_A".to_string(),
+            "BATEY_TEST_SECRET_TAKE_A".to_string(),
             "  ".to_string(),
-            "PUEBLO_TEST_SECRET_TAKE_ABSENT".to_string(),
+            "BATEY_TEST_SECRET_TAKE_ABSENT".to_string(),
         ]);
         assert_eq!(
-            stashed.get("PUEBLO_TEST_SECRET_TAKE_A").map(String::as_str),
+            stashed.get("BATEY_TEST_SECRET_TAKE_A").map(String::as_str),
             Some("aaa")
         );
-        assert!(std::env::var("PUEBLO_TEST_SECRET_TAKE_A").is_err());
+        assert!(std::env::var("BATEY_TEST_SECRET_TAKE_A").is_err());
         // Anything not listed is left alone.
         assert_eq!(
-            std::env::var("PUEBLO_TEST_SECRET_TAKE_B").as_deref(),
+            std::env::var("BATEY_TEST_SECRET_TAKE_B").as_deref(),
             Ok("bbb")
         );
         unsafe {
-            std::env::remove_var("PUEBLO_TEST_SECRET_TAKE_B");
+            std::env::remove_var("BATEY_TEST_SECRET_TAKE_B");
         }
     }
 
@@ -503,7 +503,7 @@ printf '{%s}\n' "$json"
         let temp_dir = tempfile::tempdir().unwrap();
         let direnv = fake_direnv(temp_dir.path());
         let envrc_path = temp_dir.path().join(".envrc");
-        std::fs::write(&envrc_path, "export DIREnv_TEST_VAR=pueblo_test_123\n").unwrap();
+        std::fs::write(&envrc_path, "export DIREnv_TEST_VAR=batey_test_123\n").unwrap();
 
         // 1. Unapproved .envrc must return EnvrcBlocked
         let err = resolve_workspace_env_internal(
@@ -541,7 +541,7 @@ printf '{%s}\n' "$json"
         .expect("resolve should succeed after allow");
         assert_eq!(
             resolved.get("DIREnv_TEST_VAR").map(|s| s.as_str()),
-            Some("pueblo_test_123")
+            Some("batey_test_123")
         );
     }
 
@@ -549,7 +549,7 @@ printf '{%s}\n' "$json"
     async fn test_unset_variable_propagation_and_spawn() {
         let temp_dir = tempfile::tempdir().unwrap();
         let direnv = fake_direnv(temp_dir.path());
-        let test_unset_key = "PUEBLO_TEST_INHERITED_UNSET_VAR";
+        let test_unset_key = "BATEY_TEST_INHERITED_UNSET_VAR";
         unsafe {
             std::env::set_var(test_unset_key, "should_be_removed_by_direnv");
         }
@@ -557,7 +557,7 @@ printf '{%s}\n' "$json"
         std::fs::write(
             temp_dir.path().join(".envrc"),
             format!(
-                "unset {}\nexport PUEBLO_RETAINED_TEST=kept\n",
+                "unset {}\nexport BATEY_RETAINED_TEST=kept\n",
                 test_unset_key
             ),
         )
@@ -576,7 +576,7 @@ printf '{%s}\n' "$json"
         .unwrap();
         assert!(!resolved.contains_key(test_unset_key));
         assert_eq!(
-            resolved.get("PUEBLO_RETAINED_TEST").map(|s| s.as_str()),
+            resolved.get("BATEY_RETAINED_TEST").map(|s| s.as_str()),
             Some("kept")
         );
 
@@ -585,7 +585,7 @@ printf '{%s}\n' "$json"
             &[
                 "-c".into(),
                 format!(
-                    "echo UNSET=${} RETAINED=$PUEBLO_RETAINED_TEST",
+                    "echo UNSET=${} RETAINED=$BATEY_RETAINED_TEST",
                     test_unset_key
                 ),
             ],

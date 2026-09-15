@@ -3,11 +3,11 @@
 //! Replaces process-wrap's `JobObject` wrapper on Windows. process-wrap also
 //! associates an IoCompletionPort with the job (`JobObjectAssociateCompletion
 //! PortInformation`); empirically that association keeps the codex-acp tree
-//! alive even after pueblo-hub dies, so `KILL_ON_JOB_CLOSE` never fires. We create
+//! alive even after batey dies, so `KILL_ON_JOB_CLOSE` never fires. We create
 //! a plain job with only KILL_ON_JOB_CLOSE, AssignProcessToJobObject, and
 //! resume — verified to terminate the whole tree.
 //!
-//! Setting `PUEBLO_HUB_WIN_JOB_DEBUG=1` adds verbose per-spawn diagnostics:
+//! Setting `BATEY_WIN_JOB_DEBUG=1` adds verbose per-spawn diagnostics:
 //! T0..T4 markers, periodic `JobObjectBasicProcessIdList` dumps, and member
 //! snapshots around start_kill/Drop.
 #![cfg(windows)]
@@ -46,7 +46,7 @@ use windows_sys::Win32::System::Threading::{
 
 use super::process::AcpProcess;
 
-pub const VERBOSE_ENV_FLAG: &str = "PUEBLO_HUB_WIN_JOB_DEBUG";
+pub const VERBOSE_ENV_FLAG: &str = "BATEY_WIN_JOB_DEBUG";
 
 fn verbose() -> bool {
     std::env::var(VERBOSE_ENV_FLAG)
@@ -256,7 +256,7 @@ fn log_self_job_status() {
         tracing::warn!(error = %err, "T0: IsProcessInJob(self) failed");
         return;
     }
-    tracing::info!(in_job = in_job != 0, "T0: pueblo-hub itself in some job?");
+    tracing::info!(in_job = in_job != 0, "T0: batey itself in some job?");
 
     if in_job == 0 {
         return;
@@ -280,7 +280,7 @@ fn log_self_job_status() {
     }
     log_limit_flags(
         info.BasicLimitInformation.LimitFlags,
-        "T0: pueblo-hub's outer job",
+        "T0: batey's outer job",
     );
 }
 

@@ -264,7 +264,7 @@ async function runTurn(state, chat, text, latency, turn, richContent = undefined
     const task = state.createTask(
       chat.id,
       'npm test -- --watch=false',
-      `${PROJECT_ROOT}/pueblo-hub/frontend`,
+      `${PROJECT_ROOT}/batey/frontend`,
       'starting frontend tests…',
     );
     const toolId = randomUUID();

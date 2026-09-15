@@ -5,25 +5,25 @@ export const routes: Routes = [
     path: '',
     loadComponent: () =>
       import('./pages/home-page/home-page').then((module) => module.HomePageComponent),
-    title: 'Pueblo Hub',
+    title: 'Batey',
   },
   {
     path: 'projects/:projectId',
     loadComponent: () =>
       import('./pages/project-page/project-page').then((module) => module.ProjectPageComponent),
-    title: 'Project | Pueblo Hub',
+    title: 'Project | Batey',
   },
   {
     path: 'projects/:projectId/chats/:chatId',
     loadComponent: () =>
       import('./pages/chat-page/chat-page').then((module) => module.ChatPageComponent),
-    title: 'Chat | Pueblo Hub',
+    title: 'Chat | Batey',
   },
   {
     path: 'agents',
     loadComponent: () =>
       import('./pages/agents-page/agents-page').then((module) => module.AgentsPageComponent),
-    title: 'Agents | Pueblo Hub',
+    title: 'Agents | Batey',
   },
   {
     path: 'agents/registry',
@@ -31,7 +31,7 @@ export const routes: Routes = [
       import('./pages/agent-registry-page/agent-registry-page').then(
         (module) => module.AgentRegistryPageComponent,
       ),
-    title: 'Agent Registry | Pueblo Hub',
+    title: 'Agent Registry | Batey',
   },
   { path: '**', redirectTo: '' },
 ];

@@ -1,6 +1,6 @@
 //! Durable installed-agent records.
 //!
-//! One table holds both registry installs and Pueblo-managed definitions, so
+//! One table holds both registry installs and Batey-managed definitions, so
 //! there is one durable source for the one runtime catalog. The `source`
 //! column stays queryable because ownership decides which API may change a
 //! row. Everything else lives in the JSON `data` blob, the same shape the
@@ -62,7 +62,7 @@ pub(crate) fn insert(conn: &Connection, agent: &InstalledAgent) -> StoreResult<(
 }
 
 /// Replaces an existing record. The stored `source` must match, so a registry
-/// lifecycle call can never rewrite a Pueblo-managed row and the reverse.
+/// lifecycle call can never rewrite a Batey-managed row and the reverse.
 pub(crate) fn update(conn: &Connection, agent: &InstalledAgent) -> StoreResult<()> {
     let existing = get(conn, &agent.id)?
         .ok_or_else(|| StoreError::NotFound(format!("Agent '{}' not found", agent.id)))?;
@@ -181,7 +181,7 @@ mod tests {
             "1.11.0"
         );
         assert_eq!(agents[1].id, "private");
-        assert_eq!(agents[1].source, AgentSource::PuebloManaged);
+        assert_eq!(agents[1].source, AgentSource::BateyManaged);
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod tests {
         assert!(error.to_string().contains("already exists"), "{error}");
         assert_eq!(
             store.installed_agent("shared").unwrap().unwrap().source,
-            AgentSource::PuebloManaged
+            AgentSource::BateyManaged
         );
     }
 
@@ -268,7 +268,7 @@ mod tests {
             store.installed_agent_sources().unwrap(),
             vec![
                 ("codex".to_string(), AgentSource::Registry),
-                ("private".to_string(), AgentSource::PuebloManaged),
+                ("private".to_string(), AgentSource::BateyManaged),
             ]
         );
     }

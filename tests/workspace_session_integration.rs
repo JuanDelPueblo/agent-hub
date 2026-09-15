@@ -1,4 +1,4 @@
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::EventLog,
@@ -28,7 +28,7 @@ impl Fixture {
             &repository,
             &["config", "user.email", "tests@example.invalid"],
         );
-        git(&repository, &["config", "user.name", "Pueblo Hub tests"]);
+        git(&repository, &["config", "user.name", "Batey tests"]);
         std::fs::write(repository.join("nested/file.txt"), "fixture\n").unwrap();
         git(&repository, &["add", "."]);
         git(&repository, &["commit", "-m", "fixture"]);
@@ -61,13 +61,13 @@ impl Fixture {
         }
     }
 
-    fn project(&self) -> pueblo_hub::store::Project {
+    fn project(&self) -> batey::store::Project {
         self.store
             .create_project("fixture".into(), self.repository.display().to_string())
             .unwrap()
     }
 
-    fn nested_project(&self) -> pueblo_hub::store::Project {
+    fn nested_project(&self) -> batey::store::Project {
         self.store
             .create_project(
                 "nested fixture".into(),
@@ -76,7 +76,7 @@ impl Fixture {
             .unwrap()
     }
 
-    fn managed_chat(&self) -> (pueblo_hub::store::Chat, ChatWorkspace) {
+    fn managed_chat(&self) -> (batey::store::Chat, ChatWorkspace) {
         let project = self.nested_project();
         let chat = self
             .store
@@ -103,17 +103,17 @@ impl Fixture {
         (chat, metadata)
     }
 
-    fn direct_chat(&self, branch: &str) -> pueblo_hub::store::Chat {
+    fn direct_chat(&self, branch: &str) -> batey::store::Chat {
         let project = self.project();
         self.direct_chat_for_project(&project, branch, "")
     }
 
     fn direct_chat_for_project(
         &self,
-        project: &pueblo_hub::store::Project,
+        project: &batey::store::Project,
         branch: &str,
         project_subdir: &str,
-    ) -> pueblo_hub::store::Chat {
+    ) -> batey::store::Chat {
         let chat = self
             .store
             .create_chat(project.id.clone(), "codex".into(), None)
@@ -134,12 +134,12 @@ impl Fixture {
 
     fn direct_chat_with_metadata(
         &self,
-        project: &pueblo_hub::store::Project,
+        project: &batey::store::Project,
         repository_root: &Path,
         workspace_path: &Path,
         project_subdir: &str,
         branch: &str,
-    ) -> pueblo_hub::store::Chat {
+    ) -> batey::store::Chat {
         let chat = self
             .store
             .create_chat(project.id.clone(), "codex".into(), None)
@@ -183,7 +183,7 @@ fn git_output(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
-async fn wait_for_turn_state(session: &pueblo_hub::session::AcpSession, expected: TurnState) {
+async fn wait_for_turn_state(session: &batey::session::AcpSession, expected: TurnState) {
     for _ in 0..1_000 {
         if session.turn_state().await == expected {
             return;
@@ -385,7 +385,7 @@ async fn corrupted_direct_workspace_metadata_cannot_redirect_startup() {
     std::fs::create_dir_all(&foreign).unwrap();
     git(&foreign, &["init", "-b", "main"]);
     git(&foreign, &["config", "user.email", "tests@example.invalid"]);
-    git(&foreign, &["config", "user.name", "Pueblo Hub tests"]);
+    git(&foreign, &["config", "user.name", "Batey tests"]);
     std::fs::write(foreign.join("foreign.txt"), "foreign\n").unwrap();
     git(&foreign, &["add", "."]);
     git(&foreign, &["commit", "-m", "foreign"]);

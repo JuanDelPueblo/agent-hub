@@ -1,4 +1,4 @@
-//! What Pueblo Hub knows about one ACP agent.
+//! What Batey knows about one ACP agent.
 //!
 //! `AgentLaunch` holds what it takes to start the process. Everything the
 //! process does not need — a display name, a usage provider, registry
@@ -17,25 +17,25 @@ pub struct AgentLaunch {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
-    /// Environment variable names inherited from the Pueblo Hub process at
+    /// Environment variable names inherited from the Batey process at
     /// session start. The values never live in a declarative file or in the
     /// Nix store; systemd `EnvironmentFile` supplies them at runtime.
     pub pass_env: Vec<String>,
     pub idle_timeout: Duration,
 }
 
-/// Where a definition came from. Sources are explicit metadata; Pueblo never
+/// Where a definition came from. Sources are explicit metadata; Batey never
 /// infers ownership or provider behavior from an agent id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSource {
-    /// Compiled into Pueblo Hub.
+    /// Compiled into Batey.
     #[default]
     Builtin,
     /// Read from the file `--agents-file` names.
     File,
-    /// Created and owned by Pueblo Hub through the management API.
-    PuebloManaged,
+    /// Created and owned by Batey through the management API.
+    BateyManaged,
     /// Installed from the ACP Registry.
     Registry,
     /// Supplied by a future declarative configuration source.
@@ -47,7 +47,7 @@ impl AgentSource {
         match self {
             Self::Builtin => "builtin",
             Self::File => "file",
-            Self::PuebloManaged => "pueblo_managed",
+            Self::BateyManaged => "batey_managed",
             Self::Registry => "registry",
             Self::Declarative => "declarative",
         }
@@ -57,7 +57,7 @@ impl AgentSource {
     /// any mutation, so a read-only source never changes through a write API.
     pub fn mutability(self) -> AgentMutability {
         match self {
-            Self::PuebloManaged => AgentMutability::Editable,
+            Self::BateyManaged => AgentMutability::Editable,
             Self::Registry => AgentMutability::RegistryManaged,
             Self::Builtin | Self::File | Self::Declarative => AgentMutability::ReadOnly,
         }
@@ -77,7 +77,7 @@ impl std::str::FromStr for AgentSource {
         match value {
             "builtin" => Ok(Self::Builtin),
             "file" => Ok(Self::File),
-            "pueblo_managed" => Ok(Self::PuebloManaged),
+            "batey_managed" => Ok(Self::BateyManaged),
             "registry" => Ok(Self::Registry),
             "declarative" => Ok(Self::Declarative),
             other => Err(format!("Unknown agent source '{other}'")),
@@ -89,16 +89,16 @@ impl std::str::FromStr for AgentSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMutability {
-    /// Pueblo Hub owns the definition, so the mutable APIs accept it.
+    /// Batey owns the definition, so the mutable APIs accept it.
     Editable,
     /// Registry lifecycle operations own the definition: update and uninstall.
     RegistryManaged,
-    /// A declarative definition. Change the source, not Pueblo Hub.
+    /// A declarative definition. Change the source, not Batey.
     ReadOnly,
 }
 
 /// Provider-neutral presentation metadata. The ACP Registry supplies most of
-/// it; a Pueblo-managed definition may supply any of it too. None of it ever
+/// it; a Batey-managed definition may supply any of it too. None of it ever
 /// changes how a process starts.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentDisplay {
@@ -120,7 +120,7 @@ pub struct AgentDisplay {
     pub authors: Vec<String>,
 }
 
-/// Whether Pueblo can offer an agent for a new session.
+/// Whether Batey can offer an agent for a new session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentAvailability {
@@ -135,12 +135,12 @@ pub struct AgentDefinition {
     pub display_name: String,
     pub launch: AgentLaunch,
     /// Which provider reports quota and account status for this agent. The
-    /// usage subsystem resolves it. Pueblo Hub never infers it from `id`.
+    /// usage subsystem resolves it. Batey never infers it from `id`.
     pub usage_provider: Option<String>,
     pub source: AgentSource,
     pub availability: AgentAvailability,
-    /// Opaque to Pueblo Hub. Registry installs and Pueblo-managed definitions
-    /// both store their caller-supplied blob here; Pueblo never reads it.
+    /// Opaque to Batey. Registry installs and Batey-managed definitions
+    /// both store their caller-supplied blob here; Batey never reads it.
     pub metadata: serde_json::Value,
     /// The policy a session uses when no stored chat supplies one.
     pub default_permission_policy: CallbackPolicy,

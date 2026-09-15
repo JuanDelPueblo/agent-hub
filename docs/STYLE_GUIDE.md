@@ -1,6 +1,6 @@
 # Documentation style guide
 
-Pueblo Hub documentation should be clear, practical, and human. Write like someone explaining a project they built and care about, not like corporate or academic documentation.
+Batey documentation should be clear, practical, and human. Write like someone explaining a project they built and care about, not like corporate or academic documentation.
 
 ## Voice
 
@@ -14,9 +14,9 @@ Prefer concrete descriptions:
 
 Instead of abstract ones:
 
-> Pueblo Hub provides concurrent workspace isolation capabilities for Git-based projects.
+> Batey provides concurrent workspace isolation capabilities for Git-based projects.
 
-Use **Pueblo Hub** when describing the software and **you** freely when speaking to the reader. First-person **we** is acceptable when discussing project goals, decisions, or recommendations.
+Use **Batey** when describing the software and **you** freely when speaking to the reader. First-person **we** is acceptable when discussing project goals, decisions, or recommendations.
 
 Contractions are fine.
 

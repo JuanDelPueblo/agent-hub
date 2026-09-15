@@ -2,7 +2,7 @@
 //!
 //! This is the proof that a later MCP or federation surface can reuse these
 //! operations instead of reimplementing chat and session behavior.
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::{EventLog, EventPayload},
@@ -225,7 +225,7 @@ async fn title_rename_is_live_but_guarded_compound_edits_are_atomic() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let current = sessions.get_by_id(&chat.chat.id).await.unwrap();
-        if current.turn_state().await == pueblo_hub::state::TurnState::Prompting {
+        if current.turn_state().await == batey::state::TurnState::Prompting {
             break;
         }
         assert!(
@@ -918,7 +918,7 @@ async fn additional_root_project_deletion_and_stale_path_are_rejected() {
 
 #[tokio::test]
 async fn concurrent_config_load_and_prompt_share_one_startup() {
-    use pueblo_hub::state::ProcessState;
+    use batey::state::ProcessState;
 
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(&root.path().join("hub.db")).unwrap());
@@ -1157,7 +1157,7 @@ async fn task_cleanup_on_chat_deletion() {
         .unwrap();
     let chat = hub.create_chat(&project.id, "codex", None).await.unwrap();
 
-    let task = Arc::new(pueblo_hub::tasks::ManagedTask::new(
+    let task = Arc::new(batey::tasks::ManagedTask::new(
         "task-test-del".into(),
         chat.chat.id.clone(),
         "echo hi".into(),

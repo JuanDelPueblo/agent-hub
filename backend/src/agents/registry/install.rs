@@ -2,7 +2,7 @@
 //!
 //! Selection is explicit: the host platform is resolved from a table and an
 //! agent that publishes nothing for this host is reported, never approximated.
-//! Installation writes only under the Pueblo-managed install root, checks
+//! Installation writes only under the Batey-managed install root, checks
 //! registry integrity metadata when the manifest supplies it, and extracts
 //! through the strict archive rules.
 use super::archive::{self, ArchiveKind};
@@ -145,7 +145,7 @@ pub struct PreparedInstall {
 
 /// Downloads and installs the selected distribution.
 ///
-/// `install_root` is the Pueblo-managed agent directory. Binary files land in
+/// `install_root` is the Batey-managed agent directory. Binary files land in
 /// `<install_root>/<agent_id>/<version>`, a deterministic location, after
 /// extraction into a staging directory beside it. `npx` and `uvx` write
 /// nothing: they only record the pinned package spec.
@@ -349,7 +349,7 @@ pub fn split_package(spec: &str, kind: DistributionKind) -> Option<(String, Stri
 pub fn ensure_pinned(spec: &str, kind: DistributionKind) -> anyhow::Result<()> {
     let (name, version) = split_package(spec, kind).ok_or_else(|| {
         anyhow::anyhow!(
-            "The {kind} package '{spec}' does not pin a version. Pueblo Hub installs \
+            "The {kind} package '{spec}' does not pin a version. Batey installs \
              pinned packages only, so a session never resolves a new version at startup."
         )
     })?;
@@ -358,7 +358,7 @@ pub fn ensure_pinned(spec: &str, kind: DistributionKind) -> anyhow::Result<()> {
     anyhow::ensure!(
         !FLOATING_VERSIONS.contains(&version.to_lowercase().as_str()),
         "The {kind} package '{spec}' pins the floating version '{version}'. \
-         Pueblo Hub installs an exact version only."
+         Batey installs an exact version only."
     );
     anyhow::ensure!(
         exact_version(version),

@@ -1,6 +1,6 @@
 //! Bounded, stable ACP v1 rich-content handling shared by web, sessions, and events.
 //!
-//! Content blocks are deliberately the schema crate's types.  Pueblo adds policy
+//! Content blocks are deliberately the schema crate's types.  Batey adds policy
 //! (size, media and URI safety), not a second hand-maintained wire schema.
 use ::agent_client_protocol_schema::v1 as acp;
 use acp::{ContentBlock, EmbeddedResourceResource};
@@ -25,7 +25,7 @@ pub fn validate_prompt(blocks: &[ContentBlock]) -> anyhow::Result<()> {
 }
 
 /// Agent output uses the same conservative payload rules before it can enter
-/// the durable event log. Links are retained but are never fetched by Pueblo.
+/// the durable event log. Links are retained but are never fetched by Batey.
 pub fn validate_durable(blocks: &[ContentBlock]) -> anyhow::Result<()> {
     validate(blocks, MAX_DURABLE_RICH_EVENT_BYTES, false)
 }

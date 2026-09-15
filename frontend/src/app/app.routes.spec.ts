@@ -7,7 +7,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { AppStateService } from './state/app-state.service';
 import { routes } from './app.routes';
 
-describe('Pueblo Hub routes', () => {
+describe('Batey routes', () => {
   let router: Router;
 
   beforeEach(() => {

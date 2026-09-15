@@ -239,7 +239,7 @@ describe('fake backend seed history', () => {
 
   it('provides Git and non-Git workspace options and retains selections', () => {
     const state = new FakeState();
-    const gitProject = [...state.projects.values()].find((project) => project.name === 'pueblo-hub');
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'batey');
     const nonGitProject = [...state.projects.values()].find((project) => project.name === 'scratch');
     const options = state.workspaceOptions(gitProject.id);
     assert.equal(options.is_git, true);
@@ -297,11 +297,11 @@ describe('fake backend seed history', () => {
 
   it('seeds representative managed and direct workspace summaries without paths', () => {
     const state = new FakeState();
-    const gitProject = [...state.projects.values()].find((project) => project.name === 'pueblo-hub');
+    const gitProject = [...state.projects.values()].find((project) => project.name === 'batey');
     const chats = state.listChats(gitProject.id);
     const managed = chats.find((chat) => chat.workspace?.mode === 'managed_worktree');
     const direct = chats.find((chat) => chat.workspace?.mode === 'project_checkout');
-    assert.ok(managed?.workspace?.branch?.startsWith(`pueblo-hub/chat/${managed.id}`));
+    assert.ok(managed?.workspace?.branch?.startsWith(`batey/chat/${managed.id}`));
     assert.equal(direct?.workspace?.branch, 'feature/ui');
     for (const chat of [managed, direct]) {
       assert.ok(chat);
@@ -317,11 +317,11 @@ describe('fake backend seed history', () => {
     assert.equal(state.chatView(chat).active_tasks, 0);
     assert.deepEqual(state.listTasks(chat.id), []);
 
-    const task1 = state.createTask(chat.id, 'cargo test', '/home/dev/projects/agent-hub', 'running tests...');
+    const task1 = state.createTask(chat.id, 'cargo test', '/home/dev/projects/batey', 'running tests...');
     assert.equal(task1.state, 'running');
     assert.equal(state.chatView(chat).active_tasks, 1);
 
-    const task2 = state.createTask(chat.id, 'npm run build', '/home/dev/projects/agent-hub/frontend');
+    const task2 = state.createTask(chat.id, 'npm run build', '/home/dev/projects/batey/frontend');
     assert.equal(state.chatView(chat).active_tasks, 2);
 
     const tasks = state.listTasks(chat.id);
@@ -385,7 +385,7 @@ describe('fake backend seed history', () => {
     assert.equal(state.agent(installed.id), undefined);
   });
 
-  it('exposes authenticated custom detail and edits a Pueblo-managed agent', () => {
+  it('exposes authenticated custom detail and edits a Batey-managed agent', () => {
     const state = new FakeState();
     const detail = state.agentDetail('my-custom');
     assert.equal(detail.command, 'my-agent');

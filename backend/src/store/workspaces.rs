@@ -226,7 +226,7 @@ mod tests {
             "/repo".into(),
             workspace_path.into(),
             String::new(),
-            Some("pueblo-hub/chat/test".into()),
+            Some("batey/chat/test".into()),
             Some("abc123".into()),
         )
     }

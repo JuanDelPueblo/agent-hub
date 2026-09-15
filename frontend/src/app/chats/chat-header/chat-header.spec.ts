@@ -111,7 +111,7 @@ describe('ChatHeaderComponent', () => {
   });
 
   it('renders a truncated branch badge with the full mode tooltip', () => {
-    const branch = 'pueblo-hub/chat/chat-1-with-a-deliberately-long-generated-branch-name';
+    const branch = 'batey/chat/chat-1-with-a-deliberately-long-generated-branch-name';
     fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
       mode: 'managed_worktree', branch, base_commit: 'abcdef1234567890',
     } });
@@ -189,7 +189,7 @@ describe('ChatHeaderComponent', () => {
   it('copies the branch name when the workspace tag is clicked', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    const branch = 'pueblo-hub/chat/chat-1';
+    const branch = 'batey/chat/chat-1';
     fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
       mode: 'managed_worktree', branch, base_commit: 'abcdef1234567890',
     } });

@@ -3,7 +3,7 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "pueblo-hub-frontend": {
+    "batey-frontend": {
       "projectType": "application",
       "root": "",
       "sourceRoot": "src",
@@ -52,10 +52,10 @@
           },
           "configurations": {
             "development": {
-              "buildTarget": "pueblo-hub-frontend:build:development"
+              "buildTarget": "batey-frontend:build:development"
             },
             "production": {
-              "buildTarget": "pueblo-hub-frontend:build:production"
+              "buildTarget": "batey-frontend:build:production"
             }
           },
           "defaultConfiguration": "development"

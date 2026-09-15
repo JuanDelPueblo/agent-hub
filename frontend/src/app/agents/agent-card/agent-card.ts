@@ -41,7 +41,7 @@ export class AgentCardComponent {
   readonly mutability = computed<AgentMutability>(() => {
     const agent = this.agent();
     if (agent.mutability) return agent.mutability;
-    if (agent.source === 'pueblo_managed') return 'editable';
+    if (agent.source === 'batey_managed') return 'editable';
     if (agent.source === 'registry') return 'registry_managed';
     return 'read_only';
   });
@@ -52,7 +52,7 @@ export class AgentCardComponent {
 
   sourceLabel(source: string): string {
     switch (source) {
-      case 'pueblo_managed':
+      case 'batey_managed':
         return 'Custom';
       case 'registry':
         return 'Registry';

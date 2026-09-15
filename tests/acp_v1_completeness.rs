@@ -2,7 +2,7 @@
 //! session/delete, cancellation semantics, and metadata preservation.
 
 use ::agent_client_protocol_schema::v1::{ContentBlock, ImageContent, TextContent};
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::{EventLog, EventPayload},
@@ -112,8 +112,8 @@ fn current_mode_id(modes: &serde_json::Value) -> &str {
 
 async fn collect_text(log: &EventLog, chat_id: &str, start_seq: u64) -> String {
     match log.replay_from(start_seq) {
-        pueblo_hub::events::ReplayResult::Complete(events)
-        | pueblo_hub::events::ReplayResult::Partial { events, .. } => events
+        batey::events::ReplayResult::Complete(events)
+        | batey::events::ReplayResult::Partial { events, .. } => events
             .iter()
             .filter(|e| e.session_id == chat_id)
             .filter_map(|e| match &e.payload {
@@ -223,7 +223,7 @@ async fn usage_message_ids_and_user_chunk_no_duplication() {
     assert!(text.contains("next"));
     // Message IDs survive through the event model.
     let events = match log.replay_from(start2) {
-        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        batey::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     };
     let chunks: Vec<_> = events
@@ -238,7 +238,7 @@ async fn usage_message_ids_and_user_chunk_no_duplication() {
 
     // user_message_chunk reflections never duplicate local history.
     let before: Vec<_> = match log.replay_from(start) {
-        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        batey::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     }
     .into_iter()
@@ -250,7 +250,7 @@ async fn usage_message_ids_and_user_chunk_no_duplication() {
     prompt_when_idle(&service, &chat.chat.id, "user-chunk").await;
     await_turn(&log, &chat.chat.id).await;
     let after: Vec<_> = match log.replay_from(start) {
-        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        batey::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     }
     .into_iter()
@@ -301,7 +301,7 @@ async fn remote_session_delete_is_capability_gated() {
         .delete_remote_session(&chat.chat.id, &live_id)
         .await
         .is_err());
-    // An unlinked remote session deletes normally; the Pueblo chat remains.
+    // An unlinked remote session deletes normally; the Batey chat remains.
     let mut target: Option<String> = None;
     for s in &sessions_arr {
         let sid = s["sessionId"].as_str().unwrap_or("<missing>");
@@ -363,7 +363,7 @@ async fn rich_prompt_and_agent_chunks_preserve_order_and_identity() {
         .unwrap();
     await_turn(&log, &chat.chat.id).await;
     let events = match log.replay_from(1) {
-        pueblo_hub::events::ReplayResult::Complete(events) => events,
+        batey::events::ReplayResult::Complete(events) => events,
         _ => panic!("expected complete replay"),
     };
     let user = events
@@ -428,7 +428,7 @@ async fn unsupported_rich_prompt_capabilities_fail_before_user_persistence() {
             "{mode}: {error}"
         );
         let events = match log.replay_from(1) {
-            pueblo_hub::events::ReplayResult::Complete(events) => events,
+            batey::events::ReplayResult::Complete(events) => events,
             _ => panic!("expected complete replay"),
         };
         assert!(!events.iter().any(|event| {
@@ -455,7 +455,7 @@ async fn initial_tool_call_rich_content_is_preserved() {
     prompt_when_idle(&service, &chat.chat.id, "tool-rich").await;
     await_turn(&log, &chat.chat.id).await;
     let events = match log.replay_from(1) {
-        pueblo_hub::events::ReplayResult::Complete(events) => events,
+        batey::events::ReplayResult::Complete(events) => events,
         _ => panic!("expected complete replay"),
     };
     assert!(events.iter().any(|event| matches!(
@@ -485,7 +485,7 @@ async fn tool_locations_and_session_info_preserved() {
     prompt_when_idle(&service, &chat.chat.id, "tool-loc").await;
     await_turn(&log, &chat.chat.id).await;
     let events = match log.replay_from(1) {
-        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        batey::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     };
     assert!(events.iter().any(|e| matches!(
@@ -508,7 +508,7 @@ async fn tool_locations_and_session_info_preserved() {
 
 fn count_payload(log: &EventLog, chat_id: &str, ty: &str) -> usize {
     match log.replay_from(1) {
-        pueblo_hub::events::ReplayResult::Complete(events) => events
+        batey::events::ReplayResult::Complete(events) => events
             .iter()
             .filter(|e| e.session_id == chat_id)
             .filter(|e| serde_json::to_value(&e.payload).unwrap()["type"] == ty)
@@ -576,7 +576,7 @@ async fn stop_reconnect_retains_dynamic_state_without_duplicating_history() {
         config_before + 1
     );
     let history = match log.replay_from(1) {
-        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        batey::events::ReplayResult::Complete(e) => e,
         _ => panic!("expected complete"),
     };
     assert!(!history.iter().any(|e| matches!(
@@ -620,13 +620,13 @@ fn observed_cancels(log: &std::path::Path) -> Vec<String> {
 
 #[tokio::test]
 async fn timed_out_requests_emit_cancel_request() {
-    use pueblo_hub::acp::{callbacks::CallbackPolicy, AcpClient, RequestTimedOut, StderrPolicy};
+    use batey::acp::{callbacks::CallbackPolicy, AcpClient, RequestTimedOut, StderrPolicy};
 
     let tmp = tempfile::tempdir().unwrap();
     let script = tmp.path().join("hang_peer.py");
     std::fs::write(&script, HANG_PEER).unwrap();
     let cancel_log = tmp.path().join("cancels.log");
-    let tracker = Arc::new(pueblo_hub::tasks::TerminalTaskTracker::default());
+    let tracker = Arc::new(batey::tasks::TerminalTaskTracker::default());
     // The child needs a real environment (notably PATH) to exec python3.
     let env: std::collections::HashMap<String, String> = std::env::vars().collect();
     let client = AcpClient::spawn(
@@ -703,7 +703,7 @@ async fn user_message_identity_round_trip() {
 
     // The durable user message persists the sent identity.
     let durable_id = match log.replay_from(start) {
-        pueblo_hub::events::ReplayResult::Complete(events) => events
+        batey::events::ReplayResult::Complete(events) => events
             .into_iter()
             .filter(|e| e.session_id == chat.chat.id)
             .find_map(|e| match e.payload {

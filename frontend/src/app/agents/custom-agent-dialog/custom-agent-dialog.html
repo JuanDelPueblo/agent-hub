@@ -26,7 +26,7 @@
   <mat-form-field appearance="outline">
     <mat-label>Command</mat-label>
     <input matInput [value]="command()" (input)="command.set($any($event.target).value)" />
-    <mat-hint>The executable Pueblo Hub starts for this agent.</mat-hint>
+    <mat-hint>The executable Batey starts for this agent.</mat-hint>
     @if (issueFor('command')) { <mat-error>{{ issueFor('command') }}</mat-error> }
   </mat-form-field>
 
@@ -52,7 +52,7 @@
     <mat-form-field appearance="outline">
       <mat-label>Usage provider</mat-label>
       <input matInput [value]="usageProvider()" (input)="usageProvider.set($any($event.target).value)" />
-      <mat-hint>Optional. Pueblo Hub never infers it from the id.</mat-hint>
+      <mat-hint>Optional. Batey never infers it from the id.</mat-hint>
       @if (issueFor('usage_provider')) { <mat-error>{{ issueFor('usage_provider') }}</mat-error> }
     </mat-form-field>
   </div>

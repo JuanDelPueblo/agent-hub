@@ -139,21 +139,21 @@ export const PROJECT_ROOT = '/home/dev/projects';
 export const RICH_IMAGE_DATA = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 export const RICH_HISTORY_CONTENT = [
   { type: 'text', text: 'The captured dashboard state after the Material 3 migration.' },
-  { type: 'image', data: RICH_IMAGE_DATA, mimeType: 'image/png', uri: 'https://example.invalid/pueblo-hub/dashboard.png' },
+  { type: 'image', data: RICH_IMAGE_DATA, mimeType: 'image/png', uri: 'https://example.invalid/batey/dashboard.png' },
   {
     type: 'resource_link',
     name: 'Render trace',
     title: 'Open the render trace',
     description: 'A safe, metadata-only link from the fake ACP agent.',
-    uri: 'https://example.invalid/pueblo-hub/render-trace.json',
+    uri: 'https://example.invalid/batey/render-trace.json',
     mimeType: 'application/json',
   },
   {
     type: 'resource',
     resource: {
-      uri: 'https://example.invalid/pueblo-hub/artifacts/render-trace.json',
+      uri: 'https://example.invalid/batey/artifacts/render-trace.json',
       mimeType: 'application/json',
-      text: '{"route":"/projects/pueblo-hub","firstPaintMs":184,"layoutShift":0.01}',
+      text: '{"route":"/projects/batey","firstPaintMs":184,"layoutShift":0.01}',
     },
   },
 ];
@@ -276,7 +276,7 @@ export class FakeState {
     // Authentication state and opaque terminal flows (T111 contract).
     this.authByAgent = new Map();
     this.flows = new Map();
-    // Editable Pueblo-managed definitions, including their launch environment.
+    // Editable Batey-managed definitions, including their launch environment.
     this.customDetails = new Map();
 
     this.seed();
@@ -397,7 +397,7 @@ export class FakeState {
       title_overridden: hasExplicitTitle,
       workspace: workspace ? {
         mode: workspace.mode,
-        branch: workspace.mode === 'managed_worktree' ? `pueblo-hub/chat/${chat.id}` : workspace.branch,
+        branch: workspace.mode === 'managed_worktree' ? `batey/chat/${chat.id}` : workspace.branch,
         base_commit: workspace.base_commit ?? this.workspaceOptionsByProject.get(projectId)?.branches
           ?.find((branch) => branch.name === workspace.branch)?.sha ?? null,
       } : null,
@@ -485,7 +485,7 @@ export class FakeState {
       id: randomUUID(),
       chat_id: chatId,
       command,
-      cwd: cwd ?? `${PROJECT_ROOT}/agent-hub`,
+      cwd: cwd ?? `${PROJECT_ROOT}/batey`,
       state: 'running',
       exit_code: null,
       started_at: startedAt,
@@ -562,7 +562,7 @@ export class FakeState {
   editCustomAgent(id, input) {
     const agent = this.agent(id);
     if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
-    if (agent.source !== 'pueblo_managed') throw Object.assign(new Error('This agent is not Pueblo-managed'), { status: 409 });
+    if (agent.source !== 'batey_managed') throw Object.assign(new Error('This agent is not Batey-managed'), { status: 409 });
     if (input.id !== id) throw Object.assign(new Error('An agent id cannot change'), { status: 400 });
     Object.assign(agent, customSummary(input));
     this.customDetails.set(id, customDetail(input));
@@ -573,8 +573,8 @@ export class FakeState {
   agentDetail(id) {
     const agent = this.agent(id);
     if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
-    if (agent.source !== 'pueblo_managed') {
-      throw Object.assign(new Error('This agent is not an editable Pueblo-managed definition'), { status: 409 });
+    if (agent.source !== 'batey_managed') {
+      throw Object.assign(new Error('This agent is not an editable Batey-managed definition'), { status: 409 });
     }
     return { ...this.customDetails.get(id), id };
   }
@@ -823,7 +823,7 @@ export class FakeState {
       usage_provider: null,
       metadata: null,
       default_permission_policy: 'ask',
-      description: 'A Pueblo-managed custom agent.',
+      description: 'A Batey-managed custom agent.',
     };
     if (!this.agent(custom.id)) AGENTS.push(customSummary(custom));
     this.customDetails.set(custom.id, customDetail(custom));
@@ -831,7 +831,7 @@ export class FakeState {
 
   seed() {
     this.seedAgents();
-    const hub = this.createProject('pueblo-hub', `${PROJECT_ROOT}/pueblo-hub`, {
+    const hub = this.createProject('batey', `${PROJECT_ROOT}/batey`, {
       is_git: true,
       current_branch: 'master',
       head_sha: '1111111111111111111111111111111111111111',
@@ -888,7 +888,7 @@ export class FakeState {
     this.createTask(
       terminal.id,
       'nix run .#verify',
-      `${PROJECT_ROOT}/pueblo-hub`,
+      `${PROJECT_ROOT}/batey`,
       'checking Rust formatting…\nwaiting for frontend build…',
       '2026-09-15T15:20:04.000Z',
     );
@@ -1139,7 +1139,7 @@ export class FakeState {
   setManagedWorkspace(chat, baseCommit) {
     chat.workspace = {
       mode: 'managed_worktree',
-      branch: `pueblo-hub/chat/${chat.id}`,
+      branch: `batey/chat/${chat.id}`,
       base_commit: baseCommit,
     };
   }
@@ -1178,7 +1178,7 @@ function customSummary(input) {
   validateCustomInput(input);
   return {
     id: input.id.trim(), display_name: input.display_name?.trim() || input.id.trim(),
-    source: 'pueblo_managed', availability: 'available', usage_provider: input.usage_provider ?? null,
+    source: 'batey_managed', availability: 'available', usage_provider: input.usage_provider ?? null,
     metadata: input.metadata ?? null, mutability: 'editable',
     display: {
       ...(input.description?.trim() ? { description: input.description.trim() } : {}),

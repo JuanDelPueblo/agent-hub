@@ -1,14 +1,14 @@
 # Validates the OCI image construction through Nix only (no daemon).
 # Asserts the canonical package binary is the entrypoint, the image runs
 # non-root, exposes port 8765, and documents persistent mounts.
-{ pkgs, pueblo-hub-oci, pueblo-hub }:
-pkgs.runCommand "pueblo-hub-oci-config-check" {
+{ pkgs, batey-oci, batey }:
+pkgs.runCommand "batey-oci-config-check" {
   nativeBuildInputs = [ pkgs.jq ];
 } ''
   set -euo pipefail
   fail() { echo "oci-check failed: $1" >&2; exit 1; }
 
-  image=${pueblo-hub-oci}
+  image=${batey-oci}
   work=$(mktemp -d)
   tar -xf "$image" -C "$work"
   manifest="$work/manifest.json"
@@ -19,7 +19,7 @@ pkgs.runCommand "pueblo-hub-oci-config-check" {
 
   entry=$(jq -r '.config.Entrypoint | join(" ")' "$config")
   case "$entry" in
-    */bin/pueblo-hub*) ;;
+    */bin/batey*) ;;
     *) fail "Entrypoint does not run the canonical package: $entry" ;;
   esac
 

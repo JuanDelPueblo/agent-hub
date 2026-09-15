@@ -6,10 +6,10 @@ let
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
 in
 pkgs.buildNpmPackage {
-  pname = "pueblo-hub-frontend";
+  pname = "batey-frontend";
   inherit version;
   src = ../frontend;
-  npmDepsHash = "sha256-O0SO3Lc0p7fjQ41gGqVCSP/PxqGJlqVgHq6xOL2u98M=";
+  npmDepsHash = "sha256-GYGyh6hphURRcrUlhpmQs4LZnyz40MoFtf2q701/uLM=";
   preBuild = ''
     export NG_CLI_ANALYTICS=false
   '';

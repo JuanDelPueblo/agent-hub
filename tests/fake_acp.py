@@ -112,7 +112,7 @@ def auth_methods():
         {"id": "api-key-broken", "name": "Broken API key", "type": "agent"},
         {"id": "tui", "name": "Terminal login", "type": "terminal",
          "args": ["terminal-auth", str(root)],
-         "env": {"PUEBLO_TEST_METHOD_ENV": "from-method", "PUEBLO_TEST_SHARED_ENV": "from-method"}},
+         "env": {"BATEY_TEST_METHOD_ENV": "from-method", "BATEY_TEST_SHARED_ENV": "from-method"}},
         {"id": "future", "name": "Future scheme", "type": "browser-popup"},
     ]
     if (root / "authenticated").exists():
@@ -158,7 +158,7 @@ for line in sys.stdin:
             # Authentication helpers print credentials to stderr. This marker
             # stands in for such a line, so a test can prove what the
             # authentication path logs and what an ordinary chat agent logs.
-            print(f"PUEBLO_TEST_STDERR_SECRET cwd={os.getcwd()}", file=sys.stderr, flush=True)
+            print(f"BATEY_TEST_STDERR_SECRET cwd={os.getcwd()}", file=sys.stderr, flush=True)
             # The environment this authentication process received, so a test
             # can prove per-agent secret isolation on the probe path too.
             (root / "probe-env.json").write_text(json.dumps(dict(os.environ)))
@@ -284,7 +284,7 @@ for line in sys.stdin:
             reply(id, {"stopReason": "end_turn"})
         elif text == "rich-output":
             update("agent_message_chunk", content={"type": "text", "text": "before"}, messageId="rich-1")
-            update("agent_message_chunk", content={"type": "resource_link", "name": "Pueblo", "uri": "https://example.test/pueblo"}, messageId="rich-1")
+            update("agent_message_chunk", content={"type": "resource_link", "name": "Batey", "uri": "https://example.test/batey"}, messageId="rich-1")
             update("agent_thought_chunk", content={"type": "resource", "resource": {"uri": "attachment://note.txt", "mimeType": "text/plain", "text": "private note"}}, messageId="thought-1")
             reply(id, {"stopReason": "end_turn"})
         elif text == "user-chunk":
@@ -296,13 +296,13 @@ for line in sys.stdin:
             # Echo the client-generated user message identity from `_meta`
             # so the round trip can be correlated. Other prompts omit the
             # echo entirely, exercising agents that ignore the extension.
-            observed = p.get("_meta", {}).get("puebloHub", {}).get("userMessageId")
+            observed = p.get("_meta", {}).get("batey", {}).get("userMessageId")
             update("agent_message_chunk", content={"type": "text", "text": f"identity:{observed}"})
             if observed is None:
                 reply(id, {"stopReason": "end_turn"})
             else:
                 reply(id, {"stopReason": "end_turn",
-                           "_meta": {"puebloHub": {"userMessageId": observed}}})
+                           "_meta": {"batey": {"userMessageId": observed}}})
         elif text == "tool-loc":
             update("tool_call", toolCallId="t1", title="Edit", kind="edit",
                    locations=[{"path": "/tmp/a.rs", "line": 3}])
@@ -312,7 +312,7 @@ for line in sys.stdin:
             update("tool_call", toolCallId="rich-tool", title="Inspect", kind="read",
                    content=[
                        {"type": "content", "content": {"type": "text", "text": "summary"}},
-                       {"type": "content", "content": {"type": "resource_link", "name": "Pueblo", "uri": "https://example.test/tool"}},
+                       {"type": "content", "content": {"type": "resource_link", "name": "Batey", "uri": "https://example.test/tool"}},
                        {"type": "content", "content": {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}},
                    ])
             reply(id, {"stopReason": "end_turn"})

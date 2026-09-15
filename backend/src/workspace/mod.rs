@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Branch prefix for managed chat worktrees.
-pub const MANAGED_PREFIX: &str = "pueblo-hub/chat/";
+pub const MANAGED_PREFIX: &str = "batey/chat/";
 
 /// Bounded error type. `Conflict` signals a safe refusal, never a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]

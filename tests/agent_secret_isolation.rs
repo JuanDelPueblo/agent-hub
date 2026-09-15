@@ -4,7 +4,7 @@
 //! process must observe exactly its own secret: the startup drain removes
 //! both names from the inherited environment, and each session injects only
 //! the names its agent lists in `pass_env`.
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::EventLog,
@@ -15,8 +15,8 @@ use pueblo_hub::{
 };
 use std::sync::Arc;
 
-const SECRET_A: &str = "PUEBLO_TEST_ISOLATION_TOKEN_A";
-const SECRET_B: &str = "PUEBLO_TEST_ISOLATION_TOKEN_B";
+const SECRET_A: &str = "BATEY_TEST_ISOLATION_TOKEN_A";
+const SECRET_B: &str = "BATEY_TEST_ISOLATION_TOKEN_B";
 
 fn agent(id: &str, history: &std::path::Path, pass_env: &[&str]) -> AgentDefinition {
     AgentDefinition::new(id, "python3")

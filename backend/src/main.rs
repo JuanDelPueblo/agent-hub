@@ -1,31 +1,31 @@
-use clap::Parser;
-use pueblo_hub::{
+use batey::{
     agents::{parse_agents, parse_declarative_agents, AgentManager, HostRuntimeProbe},
     auth::AgentAuthService,
-    config::{Config, PathOverrides, PuebloPaths},
+    config::{BateyPaths, Config, PathOverrides},
     events::EventLog,
     session::SessionManager,
     store::Store,
     web::WebServer,
 };
+use clap::Parser;
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Parser)]
 #[command(about = "Persistent single-owner ACP project/chat supervisor", version)]
 struct Args {
-    #[arg(long, env = "PUEBLO_HUB_DATABASE")]
+    #[arg(long, env = "BATEY_DATABASE")]
     database: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_DATA_DIR")]
+    #[arg(long, env = "BATEY_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_CONFIG_DIR")]
+    #[arg(long, env = "BATEY_CONFIG_DIR")]
     config_dir: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_STATE_DIR")]
+    #[arg(long, env = "BATEY_STATE_DIR")]
     state_dir: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_LOG_DIR")]
+    #[arg(long, env = "BATEY_LOG_DIR")]
     log_dir: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_WORKTREES_DIR")]
+    #[arg(long, env = "BATEY_WORKTREES_DIR")]
     worktrees_dir: Option<PathBuf>,
-    #[arg(long, env = "PUEBLO_HUB_AGENTS_FILE")]
+    #[arg(long, env = "BATEY_AGENTS_FILE")]
     agents_file: Option<PathBuf>,
     /// Declarative deployment agents in the same shape as `--agents-file`
     /// plus `pass_env`, `default_permission_policy`, and `description`.
@@ -33,31 +33,31 @@ struct Args {
     /// read-only through the management APIs, and collide explicitly with any
     /// other source. The NixOS module generates this file; values are
     /// non-secret because the path lands in the Nix store.
-    #[arg(long, env = "PUEBLO_HUB_DECLARATIVE_AGENTS_FILE")]
+    #[arg(long, env = "BATEY_DECLARATIVE_AGENTS_FILE")]
     declarative_agents_file: Option<PathBuf>,
     /// Environment variable names treated as secrets. Their values are moved
     /// out of the process environment at startup into a stash, so the
     /// workspace environment every agent inherits never carries them. Each
     /// value is then injected only into the agents whose `pass_env` names it.
     /// The NixOS module derives this list from declarative `passEnv` names.
-    #[arg(long, env = "PUEBLO_HUB_SECRET_ENV_VARS", value_delimiter = ',')]
+    #[arg(long, env = "BATEY_SECRET_ENV_VARS", value_delimiter = ',')]
     secret_env_vars: Vec<String>,
     /// The ACP Registry document to read. The default is the official one.
-    #[arg(long, env = "PUEBLO_HUB_REGISTRY_URL")]
+    #[arg(long, env = "BATEY_REGISTRY_URL")]
     registry_url: Option<String>,
-    #[arg(long, default_value_t = 8765, env = "PUEBLO_HUB_PORT")]
+    #[arg(long, default_value_t = 8765, env = "BATEY_PORT")]
     port: u16,
-    #[arg(long, default_value = "127.0.0.1", env = "PUEBLO_HUB_HOST")]
+    #[arg(long, default_value = "127.0.0.1", env = "BATEY_HOST")]
     host: String,
-    #[arg(long, env = "PUEBLO_HUB_PUBLIC_ORIGIN")]
+    #[arg(long, env = "BATEY_PUBLIC_ORIGIN")]
     public_origin: Option<String>,
     /// Optional inactivity watchdog for prompts. Unset means no silence timeout.
-    #[arg(long, env = "PUEBLO_HUB_PROMPT_TIMEOUT")]
+    #[arg(long, env = "BATEY_PROMPT_TIMEOUT")]
     prompt_timeout: Option<u64>,
     #[arg(
         long,
         required = true,
-        env = "PUEBLO_HUB_PROJECT_ROOTS",
+        env = "BATEY_PROJECT_ROOTS",
         value_delimiter = ','
     )]
     project_root: Vec<String>,
@@ -70,13 +70,13 @@ async fn main() -> anyhow::Result<()> {
     // so no inherited workspace environment and no spawned child can observe
     // them. Sessions inject each value only into agents naming it in
     // `pass_env`.
-    let secrets = pueblo_hub::workspace_env::take_secret_env(&args.secret_env_vars);
+    let secrets = batey::workspace_env::take_secret_env(&args.secret_env_vars);
     let secret_count = secrets.len();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     tracing::info!(count = secret_count, "stashed secret environment variables");
-    let paths = PuebloPaths::from_overrides(PathOverrides {
+    let paths = BateyPaths::from_overrides(PathOverrides {
         database: args.database,
         data_dir: args.data_dir,
         config_dir: args.config_dir,

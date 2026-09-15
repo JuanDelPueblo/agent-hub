@@ -1,10 +1,10 @@
-# The canonical Pueblo Hub application derivation.
+# The canonical Batey application derivation.
 # Every consumer -- `nix build`, the NixOS module, and the OCI image -- uses
 # this exact derivation. Version comes from Cargo.toml.
 { pkgs, crane }:
 let
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  pueblo-hub-frontend = import ./frontend.nix { inherit pkgs; };
+  batey-frontend = import ./frontend.nix { inherit pkgs; };
   craneLib = crane.mkLib pkgs;
   rustSrc = pkgs.lib.fileset.toSource {
     root = ../.;
@@ -16,7 +16,7 @@ let
     ];
   };
   commonArgs = {
-    pname = "pueblo-hub";
+    pname = "batey";
     inherit version;
     src = rustSrc;
     strictDeps = true;
@@ -31,7 +31,7 @@ let
     meta = {
       description = "Persistent single-owner ACP project and chat supervisor";
       license = pkgs.lib.licenses.gpl3Only;
-      mainProgram = "pueblo-hub";
+      mainProgram = "batey";
     };
   };
   # Dependencies compile once from the manifest and lockfile.
@@ -42,10 +42,10 @@ craneLib.buildPackage (commonArgs // {
   inherit cargoArtifacts;
   preBuild = ''
     rm -rf static/*
-    cp -r ${pueblo-hub-frontend}/* static/
+    cp -r ${batey-frontend}/* static/
   '';
   passthru = {
-    inherit pueblo-hub-frontend;
+    inherit batey-frontend;
     inherit version;
   };
 })

@@ -63,7 +63,7 @@ pub struct TerminalAuthFlowView {
     pub method_id: String,
     pub state: TerminalFlowState,
     pub exit_code: Option<u32>,
-    /// Why the flow ended, in Pueblo Hub's own words. Never a transcript.
+    /// Why the flow ended, in Batey's own words. Never a transcript.
     pub reason: Option<String>,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -360,7 +360,7 @@ impl TerminalAuthFlows {
     }
 
     /// Ends every flow and kills every process tree. Server shutdown calls
-    /// this, so an abandoned login never outlives Pueblo Hub.
+    /// this, so an abandoned login never outlives Batey.
     pub fn shutdown_all(&self) {
         let flows: Vec<Arc<TerminalAuthFlow>> = self
             .flows
@@ -373,7 +373,7 @@ impl TerminalAuthFlows {
             flow.finish(
                 TerminalFlowState::Cancelled,
                 None,
-                Some("Pueblo Hub is shutting down".into()),
+                Some("Batey is shutting down".into()),
             );
         }
         self.flows

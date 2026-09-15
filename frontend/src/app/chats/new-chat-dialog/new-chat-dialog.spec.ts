@@ -60,7 +60,7 @@ describe('NewChatDialogComponent', () => {
   it('loads the first available catalog entry and disables unavailable entries', async () => {
     await setup({ is_git: false, current_branch: null, head_sha: null, dirty: false, branches: [] }, [
       { id: 'offline', display_name: 'Offline', source: 'file', availability: 'unavailable', metadata: null },
-      { id: 'custom', display_name: 'Custom ACP', source: 'pueblo_managed', availability: 'available', metadata: null },
+      { id: 'custom', display_name: 'Custom ACP', source: 'batey_managed', availability: 'available', metadata: null },
     ]);
     expect(fixture.componentInstance.selectedAgent()).toBe('custom');
     expect(fixture.componentInstance.availableAgents().map((agent) => agent.id)).toEqual(['custom']);

@@ -2,7 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use pueblo_hub::{
+use batey::{
     agents::{AgentDefinition, AgentRegistry},
     config::Config,
     events::EventLog,
@@ -34,7 +34,7 @@ fn git_repo(root: &Path) -> std::path::PathBuf {
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-b", "main"]);
     git(&repo, &["config", "user.email", "test@example.com"]);
-    git(&repo, &["config", "user.name", "Pueblo Hub tests"]);
+    git(&repo, &["config", "user.name", "Batey tests"]);
     std::fs::write(repo.join("README.md"), "base\n").unwrap();
     std::fs::create_dir_all(repo.join("nested")).unwrap();
     std::fs::write(repo.join("nested/project.txt"), "nested\n").unwrap();
@@ -314,7 +314,7 @@ async fn active_direct_turn_reserves_checkout_before_same_branch_creation() {
         .await
         .unwrap();
     for _ in 0..100 {
-        if current_session.turn_state().await == pueblo_hub::state::TurnState::Prompting {
+        if current_session.turn_state().await == batey::state::TurnState::Prompting {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -648,7 +648,7 @@ async fn active_turn_prevents_chat_deletion() {
         .await
         .unwrap();
     for _ in 0..100 {
-        if session.turn_state().await == pueblo_hub::state::TurnState::Prompting {
+        if session.turn_state().await == batey::state::TurnState::Prompting {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

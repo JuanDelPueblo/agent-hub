@@ -1,6 +1,6 @@
-# Pueblo Hub: Developer & AI Agent Guide
+# Batey: Developer & AI Agent Guide
 
-This document gives architectural context, development guidelines, and operational procedures for software engineers and AI assistants who work on **Pueblo Hub**.
+This document gives architectural context, development guidelines, and operational procedures for software engineers and AI assistants who work on **Batey**.
 This file contains implementation rules for coding agents. Product scope belongs in GitHub Issues and release grouping in milestones.
 
 ## Start here
@@ -13,7 +13,7 @@ For each task:
 4. Read `README.md` or other docs only when the task needs that context.
 5. Make the smallest correct change. Avoid unrelated refactors, dependency upgrades, cleanup, or future work.
 
-Pueblo Hub is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents. It provides a web interface that follows Material 3 design and adaptive-layout conventions. It manages persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
+Batey is a single-owner, persistent web supervisor for local ACP (Agent Client Protocol) coding agents. It provides a web interface that follows Material 3 design and adaptive-layout conventions. It manages persistent projects, chats, ACP streaming, permissions, configuration, archive/delete, and process lifecycles.
 
 Do not inventory the whole repository by default. Source and tests are the authority for current implementation details.
 
@@ -21,13 +21,13 @@ Do not inventory the whole repository by default. Source and tests are the autho
 
 ## Stack and map
 
-Pueblo Hub is a single-owner persistent supervisor for local ACP coding agents.
+Batey is a single-owner persistent supervisor for local ACP coding agents.
 
 - Backend: Rust, `tokio`, `axum`, SQLite.
 - Agent protocol: ACP over NDJSON JSON-RPC on stdio.
 - Frontend: standalone Angular, TypeScript, signals, Angular Material/CDK.
 - Packaging: one Rust binary embeds the production frontend with `rust-embed`.
-- Builds/toolchain: Nix owns the reproducible development and release environment; `nix build .#pueblo-hub` is the authoritative complete application build.
+- Builds/toolchain: Nix owns the reproducible development and release environment; `nix build .#batey` is the authoritative complete application build.
 
 Important paths:
 
@@ -65,7 +65,7 @@ Important paths:
 
 ### Git workspaces
 
-- Pueblo Hub owns managed worktree creation, validation, recovery, and cleanup; ACP agents should only receive the resulting working directory.
+- Batey owns managed worktree creation, validation, recovery, and cleanup; ACP agents should only receive the resulting working directory.
 - Never silently discard Git work. Do not implicitly reset, clean, stash, rebase, merge, fast-forward, cherry-pick, switch branches, or delete branches/worktrees containing user changes.
 - Direct/project-checkout chats share the real checkout and must preserve its external state.
 
@@ -131,13 +131,13 @@ Optional fields per agent:
 - `idle_timeout`: Idle timeout in seconds before the process is reaped (default: 900).
 - `display_name`: Name for the user interface (default: the map key).
 - `usage_provider`: Identifier of the provider that reports quota and account
-  status. Pueblo Hub never infers this from the agent name, so an agent named
+  status. Batey never infers this from the agent name, so an agent named
   `codex` gets no provider until this field names one.
-- `metadata`: Free-form object. Pueblo Hub stores it and does not read it yet.
+- `metadata`: Free-form object. Batey stores it and does not read it yet.
 
 The file rejects an unknown field, so a typo fails at startup.
 
-Pueblo-managed custom agents and ACP Registry installs share the runtime
+Batey-managed custom agents and ACP Registry installs share the runtime
 catalog with these declarative definitions. Their durable records live in
 `installed_agents`; registry installs persist a pinned launch snapshot, so a
 session never needs to contact the registry to start. Sources own their ids:
@@ -149,8 +149,8 @@ update/uninstall lifecycle, and file/built-in definitions are read-only.
 ## 4. Directory Structure
 
 ```
-pueblo-hub/
-├── Cargo.toml                # Rust crate configuration (pueblo-hub)
+batey/
+├── Cargo.toml                # Rust crate configuration (batey)
 ├── flake.nix                 # Nix package outputs and the dev shell
 ├── .envrc                    # direnv entry point for the dev shell
 ├── backend/
@@ -207,9 +207,9 @@ pueblo-hub/
   after the migration succeeds. A database from a newer build is reported, never
   reset. Add a migration to the end of the table; never edit one that shipped.
   Write each migration so a second run is safe: prefer `IF NOT EXISTS`, and give
-  it a `precondition` query when no such form exists. Pueblo Hub v0.2 reset
+  it a `precondition` query when no such form exists. Batey v0.2 reset
   `user_version` on every open, so a downgraded database can arrive claiming an
-  old version with a new schema. Managed chats use the `pueblo-hub/chat/<chat-id>`
+  old version with a new schema. Managed chats use the `batey/chat/<chat-id>`
   branch prefix.
 - **Modules**: `Store` owns the connection. `projects.rs`, `chats.rs`, and
   `events.rs` hold the SQL for one entity each and take a `&Connection`, so the
@@ -242,7 +242,7 @@ pueblo-hub/
   supplies an executable, an argument, a working directory, or an environment
   value.
 - **Environment**: Every authentication process uses the sanitized per-agent
-  environment of T108 and a Pueblo-owned working directory. It never resolves
+  environment of T108 and a Batey-owned working directory. It never resolves
   a project `.envrc`.
 - **Terminal methods**: They run in a real PTY, never through ACP
   `terminal/create`. The client advertises the terminal-auth capability only
@@ -263,7 +263,7 @@ pueblo-hub/
 
 ### 5.7. Frontend (`frontend/`)
 - **Framework**: Angular standalone components with signals, `HttpClient`, the Angular Router, and RxJS for the WebSocket stream.
-- **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Pueblo Hub status tokens.
+- **UI System**: Angular Material and CDK components, one Material 3 theme in `src/styles.scss`, and a small set of Batey status tokens.
 - **Window Classes**: Compact (<600px) uses a modal drawer, full-width inputs, touch targets of 48px or more, and `env(safe-area-inset-bottom)`. Medium (600–839px) uses a modal drawer and flexible margins. Expanded (>=840px) uses a permanent drawer, a dual-pane layout, and a side sheet for configuration.
 - **Routing**: `/`, `/projects/:projectId`, and `/projects/:projectId/chats/:chatId`, with the Rust SPA fallback for deep links.
 - **State**: A signal store (`src/app/state/app-state.service.ts`) and a pure event reducer (`src/app/state/event-reducer.ts`) that aggregates turns, thoughts, tools, plans, and permissions.
@@ -310,10 +310,10 @@ npm run build
 Packaging/release/deployment changes:
 
 ```sh
-nix build .#pueblo-hub
+nix build .#batey
 ```
 
-`nix build .#pueblo-hub` is the authoritative complete application build, responsible for building the Angular frontend, staging assets into `static/`, and compiling the Rust binary with those assets embedded. The Rust package builds with Crane. Dependencies compile once into shared artifacts, so crate-only edits recompile only the final crate. It is packaging and release verification. It does not rerun the Rust test suite. `nix run .#verify` remains the verification path.
+`nix build .#batey` is the authoritative complete application build, responsible for building the Angular frontend, staging assets into `static/`, and compiling the Rust binary with those assets embedded. The Rust package builds with Crane. Dependencies compile once into shared artifacts, so crate-only edits recompile only the final crate. It is packaging and release verification. It does not rerun the Rust test suite. `nix run .#verify` remains the verification path.
 
 Do not run expensive unrelated verification solely for a docs-only or narrowly isolated change.
 

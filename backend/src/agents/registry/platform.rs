@@ -1,6 +1,6 @@
 //! Host platform resolution for binary distributions.
 //!
-//! The ACP Registry keys binary distributions by `<os>-<arch>`. Pueblo Hub
+//! The ACP Registry keys binary distributions by `<os>-<arch>`. Batey
 //! resolves the host target explicitly and reports an unsupported host or an
 //! unsupported distribution instead of guessing a near match.
 use serde::{Deserialize, Serialize};

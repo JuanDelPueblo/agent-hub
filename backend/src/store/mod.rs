@@ -22,7 +22,7 @@ pub use session_config::{
 pub use validation::{validate_name, validate_project_path};
 pub use workspaces::{ChatWorkspace, WorkspaceMode};
 
-use crate::config::{PathOverrides, PuebloPaths};
+use crate::config::{BateyPaths, PathOverrides};
 use rusqlite::{Connection, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
@@ -82,14 +82,14 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path) -> StoreResult<Self> {
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             database: Some(path.to_path_buf()),
             ..Default::default()
         });
         Self::open_with_paths(&paths)
     }
 
-    pub fn open_with_paths(paths: &PuebloPaths) -> StoreResult<Self> {
+    pub fn open_with_paths(paths: &BateyPaths) -> StoreResult<Self> {
         if paths.database.as_os_str() != ":memory:" {
             if let Some(parent) = paths
                 .database
@@ -106,7 +106,7 @@ impl Store {
         }
         let mut db = Connection::open(&paths.database)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
-        migrations::check_version(&db)?;
+        migrations::ensure_batey_identity(&mut db, &paths.database)?;
         // Both pragmas must run outside a transaction. SQLite rejects
         // `journal_mode=WAL` inside one and silently ignores `foreign_keys`.
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn configured_worktrees_are_used_by_the_store() {
         let tmp = tempfile::tempdir().unwrap();
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             database: Some(tmp.path().join("hub.db")),
             managed_worktrees: Some(tmp.path().join("managed")),
             ..Default::default()
@@ -599,7 +599,7 @@ mod tests {
     fn open_with_paths_creates_only_missing_database_parent() {
         let tmp = tempfile::tempdir().unwrap();
         let database_parent = tmp.path().join("new").join("nested");
-        let paths = PuebloPaths::from_overrides(PathOverrides {
+        let paths = BateyPaths::from_overrides(PathOverrides {
             database: Some(database_parent.join("hub.db")),
             ..Default::default()
         });
@@ -616,14 +616,14 @@ mod tests {
     #[test]
     fn relative_database_paths_resolve_under_cwd() {
         let cwd = std::env::current_dir().unwrap();
-        let resolved = PuebloPaths::state_dir_for_database(Path::new("hub.db"));
+        let resolved = BateyPaths::state_dir_for_database(Path::new("hub.db"));
         assert_eq!(resolved, cwd);
-        let resolved = PuebloPaths::state_dir_for_database(Path::new("data/hub.db"));
+        let resolved = BateyPaths::state_dir_for_database(Path::new("data/hub.db"));
         assert_eq!(resolved, cwd.join("data"));
-        let absolute = std::path::PathBuf::from("/var/lib/pueblo-hub/hub.db");
+        let absolute = std::path::PathBuf::from("/var/lib/batey/hub.db");
         assert_eq!(
-            PuebloPaths::state_dir_for_database(&absolute),
-            std::path::PathBuf::from("/var/lib/pueblo-hub")
+            BateyPaths::state_dir_for_database(&absolute),
+            std::path::PathBuf::from("/var/lib/batey")
         );
     }
 

@@ -1,4 +1,4 @@
-//! Installed-agent management: registry lifecycle and Pueblo-managed CRUD.
+//! Installed-agent management: registry lifecycle and Batey-managed CRUD.
 //!
 //! The manager owns the durable rows and the one runtime catalog together, so
 //! there is never a second registry at runtime. It enforces source ownership
@@ -83,7 +83,7 @@ pub enum RegistryStatus {
     Unavailable,
 }
 
-/// One registry entry, with what Pueblo Hub knows about installing it.
+/// One registry entry, with what Batey knows about installing it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegistryEntryView {
     pub id: String,
@@ -149,7 +149,7 @@ pub struct RegistryCatalogView {
 pub struct InstallRequest {
     pub registry_id: String,
     /// The catalog id to install under. It defaults to the registry id, and
-    /// an existing Pueblo id is never rewritten to match the registry.
+    /// an existing Batey id is never rewritten to match the registry.
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
@@ -191,7 +191,7 @@ pub struct RemoveOutcome {
     pub agent: Option<AgentSummary>,
 }
 
-/// Authenticated management data for an editable Pueblo-managed definition.
+/// Authenticated management data for an editable Batey-managed definition.
 /// Unlike `AgentSummary`, this intentionally includes launch environment
 /// values; it is exposed only by the authenticated per-agent management route.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -413,7 +413,7 @@ impl AgentManager {
             .ok_or_else(|| AgentError::NotFound(format!("'{registry_id}' is not in the registry")))
     }
 
-    /// Installs one registry agent under a Pueblo catalog id.
+    /// Installs one registry agent under a Batey catalog id.
     pub async fn install(&self, request: InstallRequest) -> AgentResult<AgentSummary> {
         let _guard = self.mutation_lock.lock().await;
         let registry_id = request.registry_id.trim().to_string();
@@ -594,7 +594,7 @@ impl AgentManager {
         let _guard = self.mutation_lock.lock().await;
         let record = self.require_record(id)?;
         match record.source {
-            AgentSource::Registry | AgentSource::PuebloManaged => {}
+            AgentSource::Registry | AgentSource::BateyManaged => {}
             other => {
                 return Err(AgentError::Conflict(format!(
                     "Agent '{id}' comes from the {other} source and is read-only here. \
@@ -641,7 +641,7 @@ impl AgentManager {
         })
     }
 
-    /// Deletes a directory only when it sits under the Pueblo-managed install
+    /// Deletes a directory only when it sits under the Batey-managed install
     /// root, so a bad snapshot can never reach unrelated user data.
     pub fn remove_install_files(&self, install_dir: Option<&str>) {
         let Some(install_dir) = install_dir else {
@@ -669,7 +669,7 @@ impl AgentManager {
         }
     }
 
-    // ----------------------------------------------------- pueblo-managed
+    // ----------------------------------------------------- batey-managed
 
     pub fn validate_custom(&self, input: &CustomAgentInput) -> ValidationReport {
         let mut report = input.report();
@@ -709,7 +709,7 @@ impl AgentManager {
     ) -> AgentResult<AgentSummary> {
         let _guard = self.mutation_lock.lock().await;
         let record = self.require_record(id)?;
-        if record.source != AgentSource::PuebloManaged {
+        if record.source != AgentSource::BateyManaged {
             return Err(AgentError::Conflict(format!(
                 "Agent '{id}' comes from the {} source, so it cannot be edited here.",
                 record.source
@@ -729,9 +729,9 @@ impl AgentManager {
 
     pub fn management_detail(&self, id: &str) -> AgentResult<AgentManagementDetail> {
         let record = self.require_record(id)?;
-        if record.source != AgentSource::PuebloManaged {
+        if record.source != AgentSource::BateyManaged {
             return Err(AgentError::Conflict(format!(
-                "Agent '{id}' is not an editable Pueblo-managed definition."
+                "Agent '{id}' is not an editable Batey-managed definition."
             )));
         }
         Ok(AgentManagementDetail {
@@ -767,7 +767,7 @@ impl AgentManager {
                 CatalogCollision {
                     id: id.to_string(),
                     existing,
-                    incoming: AgentSource::PuebloManaged,
+                    incoming: AgentSource::BateyManaged,
                 }
                 .to_string(),
             ));
@@ -1316,7 +1316,7 @@ mod tests {
             .unwrap();
         let error = harness.manager.update("private").await.unwrap_err();
         assert!(matches!(error, AgentError::Conflict(_)));
-        assert!(error.to_string().contains("pueblo_managed"), "{error}");
+        assert!(error.to_string().contains("batey_managed"), "{error}");
 
         harness
             .catalog
@@ -1470,7 +1470,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(summary.source, AgentSource::PuebloManaged);
+        assert_eq!(summary.source, AgentSource::BateyManaged);
         assert_eq!(summary.mutability, super::super::AgentMutability::Editable);
         assert_eq!(summary.display_name, "Private");
         assert_eq!(summary.usage_provider.as_deref(), Some("internal"));

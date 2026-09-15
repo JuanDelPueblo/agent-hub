@@ -1,8 +1,8 @@
-use pueblo_hub::agents::{AgentDefinition, AgentRegistry};
-use pueblo_hub::events::EventLog;
-use pueblo_hub::session::SessionManager;
-use pueblo_hub::state::{ProcessState, TurnState};
-use pueblo_hub::store::Store;
+use batey::agents::{AgentDefinition, AgentRegistry};
+use batey::events::EventLog;
+use batey::session::SessionManager;
+use batey::state::{ProcessState, TurnState};
+use batey::store::Store;
 #[cfg(windows)]
 use serde_json::json;
 use std::sync::Arc;

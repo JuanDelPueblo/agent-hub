@@ -39,7 +39,7 @@ pub struct AcpSession {
     acp_session_id: RwLock<Option<agent_client_protocol_schema::SessionId>>,
     // Last spawned wrapper PID. Kept independently of `client` so that even if
     // `mark_dead` takes the client (and the spawned shutdown task races with
-    // pueblo-hub's own exit), `shutdown` still has a root pid to sweep descendants.
+    // batey's own exit), `shutdown` still has a root pid to sweep descendants.
     child_root_pid: RwLock<Option<u32>>,
     runtime: Arc<AgentRuntime>,
     event_log: Arc<EventLog>,
@@ -198,7 +198,7 @@ impl AcpSession {
         user_message_id: &str,
     ) -> anyhow::Result<()> {
         // Correlate the agent's response with the durable user message when
-        // the agent echoes the identity Pueblo Hub sent on `_meta`. Agents
+        // the agent echoes the identity Batey sent on `_meta`. Agents
         // that omit it are normal; the durable UserMessage already carries
         // the client-generated identity and stays authoritative.
         match crate::acp::echoed_user_message_id(&resp.meta) {
@@ -1143,7 +1143,7 @@ impl AcpSession {
     pub async fn delete_remote_session(&self, remote_id: &str) -> anyhow::Result<()> {
         self.resume().await?;
         // Never delete the agent session backing this chat through the
-        // remote-history path: after a restart Pueblo Hub would try to
+        // remote-history path: after a restart Batey would try to
         // resume an agent session it deliberately destroyed instead of
         // reporting the saved chat cleanly. Detach by deleting the chat
         // itself, which owns the full cleanup workflow.
@@ -1415,7 +1415,7 @@ pub(crate) fn validate_persistent_workspace(
             let expected_worktree = state_worktrees.join(&chat.id);
             anyhow::ensure!(
                 Path::new(&workspace.workspace_path) == expected_worktree,
-                "managed workspace path is not Pueblo Hub's deterministic worktree"
+                "managed workspace path is not Batey's deterministic worktree"
             );
 
             let info = workspace::inspect(Path::new(&project.path))
@@ -1505,7 +1505,7 @@ fn prepare_managed_deletion(
     let expected_worktree = state_worktrees.join(&chat.id);
     anyhow::ensure!(
         Path::new(&workspace.workspace_path) == expected_worktree,
-        "managed workspace path is not Pueblo Hub's deterministic worktree"
+        "managed workspace path is not Batey's deterministic worktree"
     );
 
     let info = workspace::inspect(Path::new(&project.path))

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fake Pueblo Hub backend.
+// Fake Batey backend.
 //
 // It serves the REST and WebSocket surface of `backend/src/web/` from memory, so the
 // frontend runs without a Rust build and without an ACP agent binary. It is a
@@ -138,7 +138,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 server.listen(options.port, '127.0.0.1', () => {
-  log(`fake Pueblo Hub backend on http://127.0.0.1:${options.port}`);
+  log(`fake Batey backend on http://127.0.0.1:${options.port}`);
   log(`${state.projects.size} projects, ${state.chats.size} chats, latency x${options.latency}`);
   log('prompt keywords: plan, tool, permission, error, long, rich, terminal/task, quiet');
 });
@@ -744,10 +744,10 @@ function getStatus() {
 
 // A synthetic tree. It keeps the folder picker independent of the machine.
 const DIRECTORY_TREE = {
-  [PROJECT_ROOT]: ['pueblo-hub', 'corolla-firmware', 'scratch', 'vendor'],
-  [`${PROJECT_ROOT}/pueblo-hub`]: ['frontend', 'src', 'tests'],
-  [`${PROJECT_ROOT}/pueblo-hub/frontend`]: ['public', 'src'],
-  [`${PROJECT_ROOT}/pueblo-hub/src`]: ['acp', 'config', 'session', 'state', 'web'],
+  [PROJECT_ROOT]: ['batey', 'corolla-firmware', 'scratch', 'vendor'],
+  [`${PROJECT_ROOT}/batey`]: ['frontend', 'src', 'tests'],
+  [`${PROJECT_ROOT}/batey/frontend`]: ['public', 'src'],
+  [`${PROJECT_ROOT}/batey/src`]: ['acp', 'config', 'session', 'state', 'web'],
   [`${PROJECT_ROOT}/corolla-firmware`]: ['calibration', 'flash', 'tools'],
   [`${PROJECT_ROOT}/scratch`]: [],
   [`${PROJECT_ROOT}/vendor`]: ['libmvci', 'openssl'],

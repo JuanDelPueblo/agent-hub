@@ -3,19 +3,19 @@ use axum::{
     http::Request,
 };
 use base64::Engine as _;
-use futures_util::{SinkExt, StreamExt};
-use pueblo_hub::{
+use batey::{
     agents::registry::{HttpFetch, RegistryClient},
     agents::{
         parse_agents, AgentCatalog, AgentDefinition, AgentManager, AgentRegistry, AgentSource,
         HostRuntimeProbe,
     },
-    config::{Config, PathOverrides, PuebloPaths, RegistryConfig},
+    config::{BateyPaths, Config, PathOverrides, RegistryConfig},
     events::{EventLog, EventPayload},
     session::SessionManager,
     store::Store,
     web::{router, AppState},
 };
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
@@ -27,7 +27,7 @@ impl HttpFetch for OfflineRegistry {
         &self,
         _url: String,
         _max_bytes: u64,
-    ) -> pueblo_hub::agents::registry::client::FetchFuture<'_> {
+    ) -> batey::agents::registry::client::FetchFuture<'_> {
         Box::pin(async { Err(anyhow::anyhow!("fixture registry is offline")) })
     }
 }
@@ -40,7 +40,7 @@ fn managed_app(
     Arc<AgentCatalog>,
     Arc<AgentManager>,
 ) {
-    let paths = PuebloPaths::from_overrides(PathOverrides {
+    let paths = BateyPaths::from_overrides(PathOverrides {
         database: Some(root.join("hub.db")),
         data_dir: Some(root.join("data")),
         ..Default::default()
@@ -70,7 +70,7 @@ fn managed_app(
             url: "https://registry.fixture.invalid/registry.json".into(),
             http,
         },
-        web: pueblo_hub::config::WebConfig {
+        web: batey::config::WebConfig {
             project_roots: vec![root.display().to_string()],
             ..Default::default()
         },
@@ -125,7 +125,7 @@ async fn rich_prompt_http_body_limit_accepts_encoded_media_and_rejects_oversize(
         .create_chat(project.id, "codex".into(), Some("uploads".into()))
         .unwrap();
 
-    let mut png = vec![0_u8; pueblo_hub::content::MAX_MEDIA_BYTES];
+    let mut png = vec![0_u8; batey::content::MAX_MEDIA_BYTES];
     png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
     let encoded = base64::engine::general_purpose::STANDARD.encode(png);
     let body = serde_json::to_vec(&json!({"content": [
@@ -134,7 +134,7 @@ async fn rich_prompt_http_body_limit_accepts_encoded_media_and_rejects_oversize(
     ]}))
     .unwrap();
     assert!(body.len() > 2 * 1024 * 1024);
-    assert!(body.len() < pueblo_hub::content::MAX_RICH_PROMPT_HTTP_BYTES);
+    assert!(body.len() < batey::content::MAX_RICH_PROMPT_HTTP_BYTES);
     let accepted = app
         .clone()
         .oneshot(
@@ -159,7 +159,7 @@ async fn rich_prompt_http_body_limit_accepts_encoded_media_and_rejects_oversize(
                 .header("content-type", "application/json")
                 .body(Body::from(vec![
                     b'x';
-                    pueblo_hub::content::MAX_RICH_PROMPT_HTTP_BYTES
+                    batey::content::MAX_RICH_PROMPT_HTTP_BYTES
                         + 1
                 ]))
                 .unwrap(),
@@ -304,7 +304,7 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     assert_eq!(db.chats().unwrap().len(), 2);
     assert_eq!(
         one.process_state().await,
-        pueblo_hub::state::ProcessState::Stopped
+        batey::state::ProcessState::Stopped
     );
     mgr.shutdown_all().await;
     drop(one);
@@ -315,8 +315,8 @@ async fn independent_sessions_resume_config_permission_and_idle_cleanup() {
     let result = one.ask("after restart".into(), None).await.unwrap();
     assert_eq!(result, format!("{sid}:4:large"));
     let history = match mgr.event_log().replay_from(0) {
-        pueblo_hub::events::ReplayResult::Complete(e)
-        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        batey::events::ReplayResult::Complete(e)
+        | batey::events::ReplayResult::Partial { events: e, .. } => e,
     };
     assert!(!history.iter().any(
         |e| matches!(&e.payload, EventPayload::MessageChunk { text, .. } if text == "REPLAY")
@@ -341,26 +341,26 @@ async fn unsupported_resume_never_creates_another_conversation() {
     mgr.reap_idle().await;
     assert_eq!(
         s.process_state().await,
-        pueblo_hub::state::ProcessState::Running,
+        batey::state::ProcessState::Running,
         "a non-resumable chat must not be made unusable by idle reaping"
     );
     s.edit_metadata(None, Some(true), None).await.unwrap();
     assert_eq!(
         s.process_state().await,
-        pueblo_hub::state::ProcessState::Running,
+        batey::state::ProcessState::Running,
         "archiving a live chat must not terminate its process"
     );
     s.edit_metadata(None, Some(false), None).await.unwrap();
     assert_eq!(
         s.process_state().await,
-        pueblo_hub::state::ProcessState::Running,
+        batey::state::ProcessState::Running,
         "unarchiving a live chat must preserve its process"
     );
     let error = s.change_connection_config(|_| Ok(())).await.unwrap_err();
     assert!(error.to_string().contains("require a new chat"));
     assert_eq!(
         s.process_state().await,
-        pueblo_hub::state::ProcessState::Running,
+        batey::state::ProcessState::Running,
         "a rejected connection edit must not strand a non-resumable chat"
     );
     assert_eq!(db.chat(&chat.id).unwrap().acp_session_id, saved);
@@ -491,7 +491,7 @@ async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
     let connection = rusqlite::Connection::open(tmp.path().join("hub.db")).unwrap();
     let transaction = connection.unchecked_transaction().unwrap();
     for index in 0..20_050 {
-        let event = pueblo_hub::events::SessionEvent {
+        let event = batey::events::SessionEvent {
             seq: index + 1,
             timestamp: chrono::Utc::now(),
             session_id: if index % 2 == 0 {
@@ -723,9 +723,9 @@ fn generic_configuration_is_validated() {
     assert!(parse_agents(r#"{"bad":{"command":""}}"#).is_err());
     assert!(parse_agents(r#"{"bad":{"command":"acp","unknown":true}}"#).is_err());
     let options = json!([{"id":"model","type":"select","options":[{"group":"provider","options":[{"value":"x"}]}]},{"id":"fast","type":"boolean"}]);
-    assert!(pueblo_hub::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
-    assert!(pueblo_hub::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
-    assert!(pueblo_hub::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
+    assert!(batey::acp::validate_config_value(&options, "model", &json!("x")).is_ok());
+    assert!(batey::acp::validate_config_value(&options, "fast", &json!(true)).is_ok());
+    assert!(batey::acp::validate_config_value(&options, "fast", &json!("true")).is_err());
 }
 
 #[tokio::test]
@@ -816,12 +816,12 @@ async fn folder_browsing_and_security() {
 
 #[tokio::test]
 async fn git_clone_validation_and_behavior() {
-    use pueblo_hub::web::{derive_repo_name, sanitize_credentials, validate_git_url};
+    use batey::web::{derive_repo_name, sanitize_credentials, validate_git_url};
 
     // Validation unit checks
-    assert!(validate_git_url("https://github.com/JuanDelPueblo/pueblo-hub.git").is_ok());
-    assert!(validate_git_url("git@github.com:JuanDelPueblo/pueblo-hub.git").is_ok());
-    assert!(validate_git_url("ssh://git@github.com/JuanDelPueblo/pueblo-hub.git").is_ok());
+    assert!(validate_git_url("https://github.com/JuanDelPueblo/batey.git").is_ok());
+    assert!(validate_git_url("git@github.com:JuanDelPueblo/batey.git").is_ok());
+    assert!(validate_git_url("ssh://git@github.com/JuanDelPueblo/batey.git").is_ok());
     assert!(validate_git_url("file:///etc/passwd").is_err());
     assert!(validate_git_url("/tmp/repo").is_err());
     assert!(validate_git_url("./local-repo").is_err());
@@ -829,10 +829,10 @@ async fn git_clone_validation_and_behavior() {
     assert!(validate_git_url("").is_err());
 
     // Plain HTTP sends credentials without encryption. Reject it.
-    assert!(validate_git_url("http://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
-    assert!(validate_git_url("HTTP://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
+    assert!(validate_git_url("http://github.com/JuanDelPueblo/batey.git").is_err());
+    assert!(validate_git_url("HTTP://github.com/JuanDelPueblo/batey.git").is_err());
     assert!(validate_git_url("http://user:pw@github.com/org/repo.git").is_err());
-    assert!(validate_git_url("git://github.com/JuanDelPueblo/pueblo-hub.git").is_err());
+    assert!(validate_git_url("git://github.com/JuanDelPueblo/batey.git").is_err());
 
     // Credential sanitization must remove the complete userinfo.
     assert_eq!(
@@ -867,12 +867,12 @@ async fn git_clone_validation_and_behavior() {
 
     // Name derivation
     assert_eq!(
-        derive_repo_name("https://github.com/JuanDelPueblo/pueblo-hub.git").as_deref(),
-        Some("pueblo-hub")
+        derive_repo_name("https://github.com/JuanDelPueblo/batey.git").as_deref(),
+        Some("batey")
     );
     assert_eq!(
-        derive_repo_name("git@github.com:JuanDelPueblo/pueblo-hub.git").as_deref(),
-        Some("pueblo-hub")
+        derive_repo_name("git@github.com:JuanDelPueblo/batey.git").as_deref(),
+        Some("batey")
     );
     assert_eq!(
         derive_repo_name("https://github.com/JuanDelPueblo/my-project/").as_deref(),
@@ -961,7 +961,7 @@ async fn git_clone_validation_and_behavior() {
     assert_eq!(count_before, count_after);
 
     // 5. Destination name traversal validation unit checks
-    use pueblo_hub::web::validate_clone_destination_name;
+    use batey::web::validate_clone_destination_name;
     assert!(validate_clone_destination_name("valid-name").is_ok());
     assert!(validate_clone_destination_name("my_repo_123").is_ok());
     assert!(validate_clone_destination_name("../outside").is_err());
@@ -1034,12 +1034,9 @@ async fn git_clone_validation_and_behavior() {
     std::fs::create_dir_all(&dest_dir).unwrap();
     assert!(dest_dir.exists());
 
-    let res = pueblo_hub::web::run_command_with_timeout(
-        child,
-        Duration::from_millis(50),
-        Some(&dest_dir),
-    )
-    .await;
+    let res =
+        batey::web::run_command_with_timeout(child, Duration::from_millis(50), Some(&dest_dir))
+            .await;
     assert!(res.is_err());
     assert!(!dest_dir.exists());
     assert_eq!(
@@ -1162,8 +1159,8 @@ async fn acp_titles_and_lifecycle() {
 
     // 8. Verify MetadataChanged was emitted
     let history = match mgr.event_log().replay_from(0) {
-        pueblo_hub::events::ReplayResult::Complete(e)
-        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        batey::events::ReplayResult::Complete(e)
+        | batey::events::ReplayResult::Partial { events: e, .. } => e,
     };
     let meta_events: Vec<_> = history
         .iter()
@@ -1289,8 +1286,8 @@ async fn deleting_a_chat_removes_only_its_events_across_restart() {
     let reopened = Arc::new(Store::open(&tmp.path().join("hub.db")).unwrap());
     let log = EventLog::persistent(reopened.clone()).unwrap();
     let replayed = match log.replay_from(0) {
-        pueblo_hub::events::ReplayResult::Complete(e)
-        | pueblo_hub::events::ReplayResult::Partial { events: e, .. } => e,
+        batey::events::ReplayResult::Complete(e)
+        | batey::events::ReplayResult::Partial { events: e, .. } => e,
     };
     assert!(
         replayed.iter().all(|e| e.session_id != doomed.id),

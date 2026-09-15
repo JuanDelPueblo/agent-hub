@@ -13,7 +13,7 @@ describe('ProjectPageComponent chat status', () => {
 
   beforeEach(async () => {
     const mockState = {
-      projects: signal([{ id: 'proj-1', name: 'Pueblo Hub', path: '/work' }]),
+      projects: signal([{ id: 'proj-1', name: 'Batey', path: '/work' }]),
       agents: signal(['claude', 'codex', 'opencode']),
       chatsByProject: signal({
         'proj-1': [

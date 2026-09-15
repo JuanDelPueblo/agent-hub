@@ -41,7 +41,7 @@ pub struct HttpsFetch {
 impl HttpsFetch {
     pub fn new() -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
-            .user_agent(concat!("pueblo-hub/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("batey/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(600))
             .redirect(reqwest::redirect::Policy::limited(5))

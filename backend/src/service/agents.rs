@@ -121,7 +121,7 @@ impl HubService {
         Ok(summary)
     }
 
-    /// Edits one Pueblo-managed definition. A live session keeps the runtime
+    /// Edits one Batey-managed definition. A live session keeps the runtime
     /// handle it started with; the edit reaches the next session.
     pub async fn edit_custom_agent(
         &self,

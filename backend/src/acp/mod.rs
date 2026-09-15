@@ -354,7 +354,7 @@ impl AcpClient {
     }
 
     pub async fn initialize(&self, _cwd: &Path) -> anyhow::Result<InitializeResponse> {
-        // Advertise only stable v1 capabilities Pueblo actually implements:
+        // Advertise only stable v1 capabilities Batey actually implements:
         // filesystem read/write, terminal, boolean session config, and form
         // plus URL elicitation. Never advertise partial capabilities.
         let caps = agent_client_protocol_schema::ClientCapabilities::new()
@@ -384,7 +384,7 @@ impl AcpClient {
             );
         let req = InitializeRequest::new(ProtocolVersion::LATEST)
             .client_info(agent_client_protocol_schema::Implementation::new(
-                "pueblo-hub",
+                "batey",
                 env!("CARGO_PKG_VERSION"),
             ))
             .client_capabilities(caps);
@@ -459,7 +459,7 @@ impl AcpClient {
     /// Runs the capability-gated stable `logout` method.
     ///
     /// The request goes out only when the agent advertised
-    /// `agentCapabilities.auth.logout`. Pueblo Hub never sends it
+    /// `agentCapabilities.auth.logout`. Batey never sends it
     /// speculatively.
     pub async fn logout(&self) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(
@@ -685,7 +685,7 @@ impl AcpClient {
     }
 
     /// Capability-gated `session/delete` for agent-owned remote history.
-    /// Pueblo's own chat deletion stays separate; this only removes the
+    /// Batey's own chat deletion stays separate; this only removes the
     /// agent's remote session record.
     pub async fn delete_remote_session(&self, session_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -772,7 +772,7 @@ impl AcpClient {
         user_message_id: &str,
     ) -> anyhow::Result<PromptResponse> {
         // Stable v1 has no dedicated user-message-id field, so the identity
-        // travels on the generic `_meta` extension point under Pueblo Hub's
+        // travels on the generic `_meta` extension point under Batey's
         // own namespace. Agents that do not understand it ignore it, as the
         // spec requires; agents that echo it let the turn correlate the
         // response with the durable user message.
@@ -880,7 +880,7 @@ fn validate_prompt_capabilities(
     Ok(())
 }
 
-/// Converts Pueblo's typed durable records into the stable-v1 wire variants.
+/// Converts Batey's typed durable records into the stable-v1 wire variants.
 /// ACP-over-ACP is deliberately absent: it is not stable v1.
 pub fn configured_mcp_servers(
     values: &[crate::store::McpServerConfig],
@@ -972,7 +972,7 @@ impl Drop for AcpClient {
         //   can't acquire the child lock — extremely rare since tasks are
         //   aborted right above — the killpg never fires from here and we fall
         //   back to whatever the inner Child does on drop (direct-child kill).
-        //   Force-killing pueblo-hub itself on Unix (no Drop runs) is a known
+        //   Force-killing batey itself on Unix (no Drop runs) is a known
         //   limitation; we have no JobObject equivalent.
         self.connected.store(false, Ordering::SeqCst);
         if let Ok(mut handle) = self.writer_handle.try_lock() {
@@ -1363,11 +1363,11 @@ async fn reader_task(
     .await;
 }
 
-/// Namespace for Pueblo Hub's generic `_meta` extensions. Extension keys
+/// Namespace for Batey's generic `_meta` extensions. Extension keys
 /// never drive protocol behavior; agents that do not understand them must
 /// ignore them per the ACP extensibility rules.
-pub const PUEBLO_META_KEY: &str = "puebloHub";
-/// User-message identity key inside Pueblo Hub's `_meta` namespace.
+pub const BATEY_META_KEY: &str = "batey";
+/// User-message identity key inside Batey's `_meta` namespace.
 pub const USER_MESSAGE_ID_META_KEY: &str = "userMessageId";
 
 /// Builds the generic `_meta` carrying one user-message identity.
@@ -1378,10 +1378,7 @@ pub fn user_message_meta(user_message_id: &str) -> agent_client_protocol_schema:
         serde_json::Value::String(user_message_id.to_string()),
     );
     let mut meta = agent_client_protocol_schema::Meta::new();
-    meta.insert(
-        PUEBLO_META_KEY.to_string(),
-        serde_json::Value::Object(inner),
-    );
+    meta.insert(BATEY_META_KEY.to_string(), serde_json::Value::Object(inner));
     meta
 }
 
@@ -1390,7 +1387,7 @@ pub fn user_message_meta(user_message_id: &str) -> agent_client_protocol_schema:
 /// normal operation must always tolerate.
 pub fn echoed_user_message_id(meta: &Option<agent_client_protocol_schema::Meta>) -> Option<String> {
     meta.as_ref()?
-        .get(PUEBLO_META_KEY)?
+        .get(BATEY_META_KEY)?
         .get(USER_MESSAGE_ID_META_KEY)?
         .as_str()
         .map(|s| s.to_string())
@@ -1588,7 +1585,7 @@ async fn handle_session_update(
             }
         }
         SessionUpdate::UserMessageChunk(_) => {
-            // Agent-reflected user chunks must not duplicate Pueblo's
+            // Agent-reflected user chunks must not duplicate Batey's
             // locally persisted UserMessage during replay/resume. The local
             // echo in admit_turn is authoritative; drop the reflection.
             return Ok(());
@@ -2001,7 +1998,7 @@ mod tests {
                 "summary",
             )))),
             ToolCallContent::Content(Content::new(ContentBlock::ResourceLink(ResourceLink::new(
-                "Pueblo",
+                "Batey",
                 "https://example.test/tool",
             )))),
             ToolCallContent::Content(Content::new(ContentBlock::Image(ImageContent::new(
@@ -2246,7 +2243,7 @@ mod tests {
     fn test_user_message_meta_round_trip_and_omission() {
         let meta = user_message_meta("msg-123");
         let wire = serde_json::to_value(&meta).unwrap();
-        assert_eq!(wire["puebloHub"]["userMessageId"], "msg-123");
+        assert_eq!(wire["batey"]["userMessageId"], "msg-123");
         assert_eq!(
             echoed_user_message_id(&Some(meta)),
             Some("msg-123".to_string())
