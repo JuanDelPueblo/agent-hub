@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, computed, effect, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { TextFieldModule } from '@angular/cdk/text-field';
@@ -10,6 +10,24 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import type { AvailableCommand, ConfigOption, ConfigOptionSelectGroup, ConfigOptionSelectValue, RichContentBlock, TurnState } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+const AUDIO_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm'] as const;
+const RESOURCE_TYPES = ['text/plain', 'text/markdown', 'application/json'] as const;
+const ATTACHMENT_ACCEPT = [...IMAGE_TYPES, ...AUDIO_TYPES, ...RESOURCE_TYPES, '.txt', '.md', '.json'].join(',');
+const MAX_RESOURCE_BYTES = 512 * 1024;
+const MAX_BINARY_BYTES = 2 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+
+type AttachmentKind = 'image' | 'audio' | 'resource';
+
+function resolveAttachmentKind(type: string): AttachmentKind | null {
+  const normalized = type.toLowerCase();
+  if ((IMAGE_TYPES as readonly string[]).includes(normalized)) return 'image';
+  if ((AUDIO_TYPES as readonly string[]).includes(normalized)) return 'audio';
+  if ((RESOURCE_TYPES as readonly string[]).includes(normalized)) return 'resource';
+  return null;
+}
 
 @Component({
   selector: 'hub-chat-composer',
@@ -27,28 +45,44 @@ export class ChatComposerComponent {
   readonly message = new FormControl('', { nonNullable: true });
   readonly attachments = signal<RichContentBlock[]>([]);
   readonly attachmentError = signal<string | null>(null);
-  readonly attachmentAccept = signal('image/png,image/jpeg,image/gif,image/webp');
-  private attachmentKind: 'image' | 'audio' | 'resource' = 'image';
+  readonly attachmentAccept = ATTACHMENT_ACCEPT;
   private readonly state = inject(AppStateService);
   private readonly text = toSignal(this.message.valueChanges, { initialValue: this.message.value });
+  private readonly messageInput = viewChild<ElementRef<HTMLTextAreaElement>>('messageInput');
+  private readonly highlightedIndex = signal(0);
+  private readonly dismissedQuery = signal<string | null>(null);
 
   readonly prompting = computed(() => this.turnState() === 'PROMPTING');
   readonly cancelling = computed(() => this.turnState() === 'CANCELLING');
   readonly canConfigure = computed(() => !this.disabled() && this.turnState() === 'IDLE');
   readonly modelOption = computed(() => this.findOption('model', 'model', 'model'));
   readonly reasoningOption = computed(() => this.findOption('reasoning_effort', 'reasoning effort', 'thought_level'));
+
+  readonly commandQuery = computed<string | null>(() => {
+    const match = /^\/(\S*)$/.exec(this.text());
+    return match ? match[1].toLowerCase() : null;
+  });
   readonly filteredCommands = computed(() => {
-    const text = this.text();
-    if (!text.startsWith('/')) return [];
-    const query = text.slice(1).split(/\s/)[0].toLowerCase();
+    const query = this.commandQuery();
+    if (query === null) return [];
     return this.commands()
       .filter((c) => !query || c.name.toLowerCase().startsWith(query))
       .slice(0, 6);
   });
-  readonly showCommands = computed(() => this.filteredCommands().length > 0 && !this.unavailable());
   readonly unavailable = computed(
     () => this.disabled() || this.prompting() || this.cancelling(),
   );
+  readonly showCommands = computed(
+    () =>
+      this.filteredCommands().length > 0 &&
+      this.commandQuery() !== this.dismissedQuery() &&
+      !this.unavailable(),
+  );
+  readonly highlightedCommand = computed(() => {
+    const list = this.filteredCommands();
+    if (!list.length) return null;
+    return list[Math.min(this.highlightedIndex(), list.length - 1)];
+  });
   readonly canSend = computed(() => !this.unavailable() && (this.text().trim().length > 0 || this.attachments().length > 0));
   readonly placeholder = computed(() => {
     if (this.disabled()) return 'Waiting for the agent connection…';
@@ -57,12 +91,15 @@ export class ChatComposerComponent {
     return 'Type a message…';
   });
 
-
   constructor() {
     effect(() => {
       const locked = this.unavailable();
       if (locked && this.message.enabled) this.message.disable({ emitEvent: false });
       else if (!locked && this.message.disabled) this.message.enable({ emitEvent: false });
+    });
+    effect(() => {
+      this.commandQuery();
+      this.highlightedIndex.set(0);
     });
   }
 
@@ -72,6 +109,33 @@ export class ChatComposerComponent {
       event.preventDefault();
       this.insertNewline(event);
       return;
+    }
+    if (this.showCommands()) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        this.moveHighlight(1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        this.moveHighlight(-1);
+        return;
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        this.completeHighlighted();
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        this.completeHighlighted();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.dismissedQuery.set(this.commandQuery());
+        return;
+      }
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -91,6 +155,30 @@ export class ChatComposerComponent {
     });
   }
 
+  private moveHighlight(delta: number): void {
+    const count = this.filteredCommands().length;
+    if (!count) return;
+    this.highlightedIndex.update((index) => (index + delta + count) % count);
+  }
+
+  private completeHighlighted(): void {
+    const command = this.highlightedCommand();
+    if (command) this.completeCommand(command);
+  }
+
+  completeCommand(command: AvailableCommand): void {
+    // Invoke a slash command as ordinary prompt text, never via a command RPC.
+    // Insert only the command token so a hint never becomes a fake argument.
+    this.message.setValue(`/${command.name} `);
+    const textarea = this.messageInput()?.nativeElement;
+    const end = this.message.value.length;
+    queueMicrotask(() => {
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(end, end);
+    });
+  }
+
   async send(): Promise<void> {
     const value = this.message.value.trim();
     if ((!value && !this.attachments().length) || !this.canSend()) return;
@@ -106,12 +194,8 @@ export class ChatComposerComponent {
     }
   }
 
-  chooseAttachment(kind: 'image' | 'audio' | 'resource', input: HTMLInputElement): void {
-    this.attachmentKind = kind;
+  chooseAttachment(input: HTMLInputElement): void {
     this.attachmentError.set(null);
-    this.attachmentAccept.set(kind === 'image'
-      ? 'image/png,image/jpeg,image/gif,image/webp'
-      : kind === 'audio' ? 'audio/mpeg,audio/wav,audio/ogg,audio/webm' : 'text/plain,text/markdown,application/json,.txt,.md,.json');
     input.value = '';
     input.click();
   }
@@ -119,33 +203,29 @@ export class ChatComposerComponent {
   async addAttachment(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
-    const max = this.attachmentKind === 'resource' ? 512 * 1024 : 2 * 1024 * 1024;
-    if (file.size > max) {
-      this.attachmentError.set(`${this.attachmentKind === 'resource' ? 'Resource' : 'Attachment'} exceeds ${max / 1024 / 1024} MB`);
-      return;
-    }
     const type = file.type.toLowerCase();
-    const allowed = this.attachmentKind === 'image'
-      ? ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-      : this.attachmentKind === 'audio'
-        ? ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm']
-        : ['text/plain', 'text/markdown', 'application/json'];
-    if (!allowed.includes(type)) {
+    const kind = resolveAttachmentKind(type);
+    if (!kind) {
       this.attachmentError.set('This file type is not supported');
       return;
     }
-    if (this.attachmentKind !== 'resource' && !(await this.matchesMime(file, type))) {
+    const max = kind === 'resource' ? MAX_RESOURCE_BYTES : MAX_BINARY_BYTES;
+    if (file.size > max) {
+      this.attachmentError.set(`${kind === 'resource' ? 'Resource' : 'Attachment'} exceeds ${max / 1024 / 1024} MB`);
+      return;
+    }
+    if (kind !== 'resource' && !(await this.matchesMime(file, type))) {
       this.attachmentError.set('The attachment data does not match its declared type');
       return;
     }
     const data = await this.fileBase64(file);
     const uri = `attachment://${encodeURIComponent(file.name)}`;
-    const block: RichContentBlock = this.attachmentKind === 'image'
+    const block: RichContentBlock = kind === 'image'
       ? { type: 'image', data, mimeType: type as Extract<RichContentBlock, { type: 'image' }>['mimeType'], uri }
-      : this.attachmentKind === 'audio'
+      : kind === 'audio'
         ? { type: 'audio', data, mimeType: type as Extract<RichContentBlock, { type: 'audio' }>['mimeType'] }
         : { type: 'resource', resource: { text: await file.text(), uri, mimeType: type } };
-    if (this.attachments().reduce((total, item) => total + this.blockBytes(item), 0) + file.size > 4 * 1024 * 1024) {
+    if (this.attachments().reduce((total, item) => total + this.blockBytes(item), 0) + file.size > MAX_TOTAL_BYTES) {
       this.attachmentError.set('Attachments together exceed 4 MB');
       return;
     }
@@ -206,12 +286,6 @@ export class ChatComposerComponent {
     } catch (error) {
       console.error(`Failed to update ${option.name}`, error);
     }
-  }
-
-  selectCommand(command: AvailableCommand): void {
-    // Invoke a slash command as ordinary prompt text, never via a command RPC.
-    const hint = command.input?.hint ? ` ${command.input.hint}` : ' ';
-    this.message.setValue(`/${command.name}${hint}`);
   }
 
   private findOption(id: string, name: string, category?: string): ConfigOption | null {

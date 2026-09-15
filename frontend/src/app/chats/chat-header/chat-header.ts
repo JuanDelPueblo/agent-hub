@@ -38,15 +38,35 @@ export class ChatHeaderComponent {
     if (!value) return value;
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
   }
-  usageLabel(): string | null {
+  contextLabel(): string | null {
     const usage = this.usage();
     if (!usage || !usage.size) return null;
     const pct = Math.round((usage.used / usage.size) * 100);
-    const cost = usage.cost_amount != null ? ` · ${usage.cost_amount.toFixed(3)} ${usage.cost_currency ?? ''}`.trim() : '';
-    return `${usage.used.toLocaleString()}/${usage.size.toLocaleString()} (${pct}%)${cost ? ` ${cost}` : ''}`;
+    return `Context ${pct}%`;
+  }
+  contextTooltip(): string | null {
+    const usage = this.usage();
+    if (!usage || !usage.size) return null;
+    return `${usage.used.toLocaleString()} / ${usage.size.toLocaleString()} tokens`;
+  }
+  costLabel(): string | null {
+    const usage = this.usage();
+    if (!usage || usage.cost_amount == null) return null;
+    const amount = usage.cost_amount;
+    const currency = (usage.cost_currency ?? '').trim();
+    if (!currency || currency.toUpperCase() === 'USD') return `$${amount.toFixed(3)}`;
+    return `${amount.toFixed(3)} ${currency}`;
   }
   workspaceTooltip(workspace: NonNullable<Chat['workspace']>): string {
     return `${workspace.branch ?? ''} — ${workspace.mode === 'managed_worktree' ? 'Isolated worktree' : 'Project checkout'}`;
+  }
+  async copyBranch(branch: string | null | undefined): Promise<void> {
+    if (!branch) return;
+    try {
+      await navigator.clipboard?.writeText(branch);
+    } catch (error) {
+      console.error('Failed to copy branch name', error);
+    }
   }
   formatDateTime(value: string): string { return formatLocalDateTime(value); }
   private readonly dialog = inject(MatDialog);

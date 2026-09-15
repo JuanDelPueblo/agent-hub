@@ -14,7 +14,8 @@
 .chat-timestamps time { color: inherit; }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--mat-sys-corner-full); background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
 .badge.agent { background: var(--mat-sys-secondary-container); color: var(--mat-sys-on-secondary-container); text-transform: capitalize; }
-.workspace-badge { min-width: 0; max-width: min(42vw, 320px); }
+.workspace-badge { min-width: 0; max-width: min(42vw, 320px); min-height: 0; height: auto; padding: 3px 8px; border: 0; line-height: normal; cursor: pointer; text-transform: none; }
+.workspace-badge:hover { background: var(--mat-sys-surface-container-highest); }
 .workspace-badge mat-icon { font-size: 16px; width: 16px; height: 16px; }
 .workspace-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-button { display: none; }

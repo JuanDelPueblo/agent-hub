@@ -1,17 +1,18 @@
 <div class="composer-column">
   @if (showCommands()) {
-    <div class="command-list" role="listbox" aria-label="Available slash commands">
+    <div class="command-list" role="listbox" aria-label="Slash command suggestions">
       @for (command of filteredCommands(); track command.name) {
-        <button mat-button type="button" role="option" (click)="selectCommand(command)" [attr.aria-label]="'Insert command ' + command.name">
-          <strong>/{{ command.name }}</strong><span class="command-desc">{{ command.description }}</span>
+        <button type="button" class="command-option" role="option" [class.active]="highlightedCommand() === command" [attr.aria-selected]="highlightedCommand() === command" [attr.data-command]="command.name" (click)="completeCommand(command)">
+          <span class="command-name">/{{ command.name }}</span><span class="command-desc">{{ command.description }}</span>
           @if (command.input?.hint) { <span class="command-hint">{{ command.input!.hint }}</span> }
         </button>
       }
     </div>
   }
   <form class="composer" (submit)="$event.preventDefault(); send()">
-    <input #attachmentInput class="attachment-input" type="file" [accept]="attachmentAccept()" (change)="addAttachment($event)" aria-label="Choose attachment" />
+    <input #attachmentInput class="attachment-input" type="file" [accept]="attachmentAccept" (change)="addAttachment($event)" aria-label="Choose attachment" />
     <textarea
+      #messageInput
       class="message-input"
       [formControl]="message"
       cdkTextareaAutosize
@@ -23,9 +24,7 @@
     ></textarea>
     <div class="composer-footer">
       <div class="selectors">
-        <button mat-icon-button type="button" aria-label="Attach image" matTooltip="Attach image" [disabled]="unavailable()" (click)="chooseAttachment('image', attachmentInput)"><mat-icon>image</mat-icon></button>
-        <button mat-icon-button type="button" aria-label="Attach audio" matTooltip="Attach audio" [disabled]="unavailable()" (click)="chooseAttachment('audio', attachmentInput)"><mat-icon>audio_file</mat-icon></button>
-        <button mat-icon-button type="button" aria-label="Attach text resource" matTooltip="Attach text resource" [disabled]="unavailable()" (click)="chooseAttachment('resource', attachmentInput)"><mat-icon>attach_file</mat-icon></button>
+        <button mat-icon-button type="button" aria-label="Attach file" matTooltip="Attach file" [disabled]="unavailable()" (click)="chooseAttachment(attachmentInput)"><mat-icon>attach_file</mat-icon></button>
         @if (modelOption(); as model) {
           <button mat-button class="selector" type="button" [matMenuTriggerFor]="modelMenu" [disabled]="!canConfigure()" [attr.aria-label]="'Model: ' + optionLabel(model)">
             <span>{{ optionLabel(model) }}</span><mat-icon>expand_more</mat-icon>

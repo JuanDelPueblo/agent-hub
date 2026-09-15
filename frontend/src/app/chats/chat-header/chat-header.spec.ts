@@ -148,6 +148,56 @@ describe('ChatHeaderComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.tasks-badge')).toBeNull();
   });
+
+  it('shows context and cost as separate compact indicators', () => {
+    fixture.componentRef.setInput('usage', { used: 1200, size: 200000, cost_amount: 0.012, cost_currency: 'USD' });
+    fixture.detectChanges();
+
+    const context = fixture.nativeElement.querySelector('.context-badge') as HTMLElement;
+    const cost = fixture.nativeElement.querySelector('.cost-badge') as HTMLElement;
+    expect(context.textContent.trim()).toBe('Context 1%');
+    expect(cost.textContent.trim()).toBe('$0.012');
+    expect(fixture.nativeElement.textContent).not.toContain('1,200/200,000 (1%)');
+
+    const tooltip = fixture.componentInstance.contextTooltip() ?? '';
+    expect(tooltip).toContain('1,200');
+    expect(tooltip).toContain('200,000');
+    expect(tooltip).toContain('tokens');
+    expect(context.getAttribute('aria-label')).toContain('tokens');
+    expect(cost.getAttribute('aria-label')).toContain('Reported cost');
+  });
+
+  it('handles context-only, cost-only, and absent usage independently', () => {
+    fixture.componentRef.setInput('usage', { used: 1200, size: 200000, cost_amount: null, cost_currency: null });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.context-badge')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('.cost-badge')).toBeNull();
+
+    fixture.componentRef.setInput('usage', { used: 0, size: 0, cost_amount: 0.5, cost_currency: 'EUR' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.context-badge')).toBeNull();
+    expect((fixture.nativeElement.querySelector('.cost-badge') as HTMLElement).textContent.trim()).toBe('0.500 EUR');
+
+    fixture.componentRef.setInput('usage', null);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.context-badge')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.cost-badge')).toBeNull();
+  });
+
+  it('copies the branch name when the workspace tag is clicked', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const branch = 'pueblo-hub/chat/chat-1';
+    fixture.componentRef.setInput('chat', { ...mockChat, workspace: {
+      mode: 'managed_worktree', branch, base_commit: 'abcdef1234567890',
+    } });
+    fixture.detectChanges();
+
+    const badge = fixture.nativeElement.querySelector('.workspace-badge') as HTMLButtonElement;
+    badge.click();
+    await fixture.whenStable();
+    expect(writeText).toHaveBeenCalledWith(branch);
+  });
 });
 
 describe('ChatHeaderComponent working duration', () => {

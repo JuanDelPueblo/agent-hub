@@ -144,25 +144,160 @@ describe('ChatComposerComponent', () => {
     expect(textarea.value).toBe('failed prompt text');
   });
 
-  it('accepts verified audio attachments and reports rejected types before send', async () => {
+  it('accepts image, audio, and text attachments from one file picker', async () => {
     const input = document.createElement('input');
     vi.spyOn(input, 'click');
-    component.chooseAttachment('audio', input);
-    const audio = new File([new Uint8Array([73, 68, 51])], 'note.mp3', { type: 'audio/mpeg' });
-    Object.defineProperty(input, 'files', { value: [audio] });
-    await component.addAttachment({ target: input } as unknown as Event);
-    expect(component.attachmentError()).toBeNull();
-    expect(component.attachments()).toEqual([
-      expect.objectContaining({ type: 'audio', mimeType: 'audio/mpeg' }),
-    ]);
+    component.chooseAttachment(input);
+    expect(input.click).toHaveBeenCalled();
+    expect(component.attachmentAccept).toContain('image/png');
+    expect(component.attachmentAccept).toContain('audio/mpeg');
+    expect(component.attachmentAccept).toContain('text/markdown');
 
-    const rejectedInput = document.createElement('input');
-    vi.spyOn(rejectedInput, 'click');
-    component.chooseAttachment('image', rejectedInput);
+    const png = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], 'pic.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [png], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachments()[0]).toEqual(expect.objectContaining({ type: 'image', mimeType: 'image/png' }));
+
+    const mp3 = new File([new Uint8Array([73, 68, 51])], 'note.mp3', { type: 'audio/mpeg' });
+    Object.defineProperty(input, 'files', { value: [mp3], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachments()[1]).toEqual(expect.objectContaining({ type: 'audio', mimeType: 'audio/mpeg' }));
+
+    const md = new File(['# Title'], 'notes.md', { type: 'text/markdown' });
+    Object.defineProperty(input, 'files', { value: [md], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachments()[2]).toEqual(expect.objectContaining({ type: 'resource' }));
+    expect(component.attachmentError()).toBeNull();
+  });
+
+  it('reports one clear error for unsupported files', async () => {
+    const input = document.createElement('input');
     const executable = new File(['not an image'], 'bad.exe', { type: 'application/octet-stream' });
-    Object.defineProperty(rejectedInput, 'files', { value: [executable] });
-    await component.addAttachment({ target: rejectedInput } as unknown as Event);
+    Object.defineProperty(input, 'files', { value: [executable], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
     expect(component.attachmentError()).toBe('This file type is not supported');
-    expect(component.attachments()).toHaveLength(1);
+    expect(component.attachments()).toHaveLength(0);
+  });
+
+  it('rejects binary data that does not match its declared type', async () => {
+    const input = document.createElement('input');
+    const fake = new File(['not really a png'], 'fake.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [fake], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachmentError()).toBe('The attachment data does not match its declared type');
+    expect(component.attachments()).toHaveLength(0);
+  });
+
+  it('keeps the resource and binary size limits', async () => {
+    const input = document.createElement('input');
+    const bigResource = new File([new Uint8Array(600 * 1024)], 'big.txt', { type: 'text/plain' });
+    Object.defineProperty(input, 'files', { value: [bigResource], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachmentError()).toBe('Resource exceeds 0.5 MB');
+    expect(component.attachments()).toHaveLength(0);
+
+    const bigImage = new File([new Uint8Array(3 * 1024 * 1024)], 'big.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [bigImage], configurable: true });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachmentError()).toBe('Attachment exceeds 2 MB');
+    expect(component.attachments()).toHaveLength(0);
+  });
+
+  function setCommands(): void {
+    fixture.componentRef.setInput('commands', [
+      { name: 'help', description: 'Show help', input: { hint: 'topic' } },
+      { name: 'clear', description: 'Clear the chat' },
+    ]);
+    fixture.detectChanges();
+  }
+
+  function type(value: string): void {
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = value;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+  }
+
+  function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+    textarea.dispatchEvent(event);
+    fixture.detectChanges();
+    return event;
+  }
+
+  function options(): NodeListOf<HTMLButtonElement> {
+    return fixture.nativeElement.querySelectorAll('.command-option');
+  }
+
+  it('renders an autocomplete menu and filters commands as the user types', () => {
+    setCommands();
+    type('/');
+    expect(options()).toHaveLength(2);
+    const first = options()[0];
+    expect(first.textContent).toContain('/help');
+    expect(first.textContent).toContain('Show help');
+    expect(first.textContent).toContain('topic');
+
+    type('/he');
+    expect(options()).toHaveLength(1);
+    expect(options()[0].textContent).toContain('/help');
+  });
+
+  it('moves the highlighted suggestion with arrow keys', () => {
+    setCommands();
+    type('/');
+    expect(component.highlightedCommand()?.name).toBe('help');
+    press('ArrowDown');
+    expect(component.highlightedCommand()?.name).toBe('clear');
+    press('ArrowUp');
+    expect(component.highlightedCommand()?.name).toBe('help');
+  });
+
+  it('completes the highlighted command on Tab without inserting the hint or sending', () => {
+    setCommands();
+    type('/he');
+    const event = press('Tab');
+    expect(event.defaultPrevented).toBe(true);
+    expect(component.message.value).toBe('/help ');
+    expect(component.message.value).not.toContain('topic');
+    expect(sent).toEqual([]);
+  });
+
+  it('completes the highlighted command on Enter rather than sending', () => {
+    setCommands();
+    type('/');
+    press('ArrowDown');
+    const event = press('Enter');
+    expect(event.defaultPrevented).toBe(true);
+    expect(component.message.value).toBe('/clear ');
+    expect(sent).toEqual([]);
+  });
+
+  it('completes a command on mouse click without sending', () => {
+    setCommands();
+    type('/');
+    options()[1].click();
+    fixture.detectChanges();
+    expect(component.message.value).toBe('/clear ');
+    expect(sent).toEqual([]);
+  });
+
+  it('closes suggestions on Escape and keeps the typed query', () => {
+    setCommands();
+    type('/he');
+    press('Escape');
+    expect(options()).toHaveLength(0);
+    expect(component.message.value).toBe('/he');
+  });
+
+  it('sends the completed command as ordinary prompt text on the next Enter', async () => {
+    setCommands();
+    type('/he');
+    press('Tab');
+    const event = press('Enter');
+    await fixture.whenStable();
+    expect(event.defaultPrevented).toBe(true);
+    expect(sent).toEqual(['/help']);
   });
 });
