@@ -1301,15 +1301,10 @@ impl SessionManager {
             sessions.get(session_id).cloned()
         };
         if let Some(session) = existing {
-            // A stopped materialized chat has no ACP process and may safely
-            // be rebuilt from the current catalog. This makes edits/updates
-            // apply to the next launch while a starting/running session keeps
-            // its stable runtime handle.
-            if session.process_state().await.can_start() {
-                self.remove_session(session_id).await;
-            } else {
-                return Some(session);
-            }
+            // Lookup is deliberately observational. In particular, a
+            // stopped session may already be shared by callers that are about
+            // to start it, so replacing it here would split its startup lock.
+            return Some(session);
         }
         let store = self.store.as_ref()?;
         let chat = store.chat(session_id).ok()?;
@@ -1515,6 +1510,51 @@ impl SessionManager {
         ids.sort();
         ids.dedup();
         ids
+    }
+
+    /// Retire materialized sessions whose agent definition changed. A
+    /// session with a process already starting or running retains its runtime
+    /// handle until it stops; only the next launch of a stopped session gets
+    /// a fresh definition from the catalog.
+    pub async fn invalidate_stopped_sessions_for_agent(&self, agent_id: &str) {
+        let sessions: Vec<Arc<AcpSession>> = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .filter(|session| session.key.agent == agent_id)
+            .cloned()
+            .collect();
+
+        for session in sessions {
+            self.remove_stopped_session_if(&session).await;
+        }
+    }
+
+    async fn remove_stopped_session_if(&self, expected: &Arc<AcpSession>) {
+        // Serialize the state check with startup. Otherwise a session could
+        // pass the STOPPED check and reach STARTING before the map removal.
+        let _startup_guard = expected.startup_lock.lock().await;
+        if !expected.process_state().await.can_start() {
+            return;
+        }
+
+        let key = &expected.id;
+        let session = {
+            let mut sessions = self.sessions.write().await;
+            if sessions
+                .get(&expected.id)
+                .is_some_and(|current| Arc::ptr_eq(current, expected))
+            {
+                sessions.remove(key)
+            } else {
+                None
+            }
+        };
+        if let Some(session) = session {
+            self.sessions_by_id.write().await.remove(&session.id);
+            self.task_tracker.forget_chat(&session.id).await;
+        }
     }
 
     pub async fn remove_session(&self, key: &str) -> Option<Arc<AcpSession>> {
