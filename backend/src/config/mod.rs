@@ -1,6 +1,7 @@
 use crate::agents::{
+    builtin_agents,
     registry::{default_fetch, HttpFetch, RegistryClient, DEFAULT_REGISTRY_URL},
-    AgentCatalog, AgentDefinition, AgentManager,
+    AgentCatalog, AgentDefinition, AgentManager, HostRuntimeProbe,
 };
 use std::{
     env,
@@ -198,12 +199,7 @@ impl Default for Config {
         Self {
             paths: BateyPaths::from_environment(PathOverrides::default()),
             server: ServerConfig::default(),
-            agents: Arc::new(AgentCatalog::new([
-                AgentDefinition::codex_default(),
-                AgentDefinition::antigravity_default(),
-                AgentDefinition::opencode_default(),
-                AgentDefinition::claudecode_default(),
-            ])),
+            agents: Arc::new(AgentCatalog::new(builtin_agents(&HostRuntimeProbe))),
             agent_manager: None,
             agent_auth: None,
             registry: RegistryConfig::default(),
@@ -263,10 +259,7 @@ mod tests {
     #[test]
     fn default_config() {
         let config = Config::default();
-        assert_eq!(
-            config.agents.ids(),
-            vec!["antigravity", "claude", "codex", "opencode"]
-        );
+        assert!(config.agents.ids().iter().all(|id| id == "opencode"));
         assert_eq!(config.server.port, 8765);
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.timeouts.prompt, None);
@@ -276,10 +269,7 @@ mod tests {
     #[test]
     fn get_agent() {
         let config = Config::default();
-        assert_eq!(
-            config.get_agent("codex").unwrap().launch.command,
-            "codex-acp"
-        );
+        assert!(config.get_agent("codex").is_none());
         assert!(config.get_agent("nonexistent").is_none());
     }
 

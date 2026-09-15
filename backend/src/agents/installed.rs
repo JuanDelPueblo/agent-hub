@@ -258,17 +258,34 @@ pub fn which_in(program: &str, search_path: &std::ffi::OsStr) -> Option<PathBuf>
             continue;
         }
         let direct = directory.join(program);
-        if direct.is_file() {
+        if is_executable_file(&direct) {
             return Some(direct);
         }
         for extension in executable_extensions() {
             let with_extension = directory.join(format!("{program}{extension}"));
-            if with_extension.is_file() {
+            if is_executable_file(&with_extension) {
                 return Some(with_extension);
             }
         }
     }
     None
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn executable_extensions() -> Vec<String> {
@@ -480,11 +497,25 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let program = tmp.path().join("batey-test-program");
         std::fs::write(&program, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
         let search_path = tmp.path().as_os_str();
 
         assert_eq!(which_in("batey-test-program", search_path), Some(program));
         assert_eq!(which_in("batey-test-absent", search_path), None);
         assert_eq!(which_in("", search_path), None);
+    }
+
+    #[test]
+    fn which_ignores_non_executable_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = tmp.path().join("opencode");
+        std::fs::write(&program, "not executable").unwrap();
+        assert_eq!(which_in("opencode", tmp.path().as_os_str()), None);
     }
 
     /// An explicit path is checked directly, never searched for on `PATH`.
@@ -493,6 +524,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let program = tmp.path().join("agent-acp");
         std::fs::write(&program, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
         let empty = std::ffi::OsStr::new("");
         assert_eq!(
             which_in(&program.display().to_string(), empty),

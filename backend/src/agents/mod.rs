@@ -235,35 +235,72 @@ impl FromIterator<AgentDefinition> for AgentCatalog {
 /// New code should use `AgentCatalog`.
 pub type AgentRegistry = AgentCatalog;
 
+/// Detect the small, explicit set of local ACP agents supported by Batey.
+pub fn builtin_agents(probe: &dyn RuntimeProbe) -> Vec<AgentDefinition> {
+    if probe.on_path("opencode") {
+        vec![AgentDefinition::opencode_default()]
+    } else {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn registry() -> AgentCatalog {
-        AgentCatalog::new([
-            AgentDefinition::opencode_default(),
-            AgentDefinition::codex_default(),
-            AgentDefinition::claudecode_default(),
-        ])
+        AgentCatalog::new([AgentDefinition::opencode_default()])
+    }
+
+    struct FakeProbe(bool);
+
+    impl RuntimeProbe for FakeProbe {
+        fn on_path(&self, program: &str) -> bool {
+            self.0 && program == "opencode"
+        }
+
+        fn is_file(&self, _path: &std::path::Path) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn builtins_are_empty_without_opencode() {
+        assert!(builtin_agents(&FakeProbe(false)).is_empty());
+    }
+
+    #[test]
+    fn builtins_include_only_opencode_when_present() {
+        let builtins = builtin_agents(&FakeProbe(true));
+        assert_eq!(
+            builtins
+                .iter()
+                .map(|agent| agent.id.as_str())
+                .collect::<Vec<_>>(),
+            ["opencode"]
+        );
+        assert_eq!(builtins[0].launch.command, "opencode");
+        assert_eq!(builtins[0].launch.args, ["acp"]);
+        assert_eq!(builtins[0].source, AgentSource::Builtin);
     }
 
     #[test]
     fn ids_are_sorted() {
-        assert_eq!(registry().ids(), vec!["claude", "codex", "opencode"]);
+        assert_eq!(registry().ids(), vec!["opencode"]);
     }
 
     #[test]
     fn lookup_by_id() {
         let registry = registry();
-        assert!(registry.contains("codex"));
+        assert!(registry.contains("opencode"));
         assert!(!registry.contains("gemini"));
-        assert_eq!(registry.definition("codex").unwrap().id, "codex");
+        assert_eq!(registry.definition("opencode").unwrap().id, "opencode");
         assert_eq!(
-            registry.runtime("codex").unwrap().launch.command,
-            "codex-acp"
+            registry.runtime("opencode").unwrap().launch.command,
+            "opencode"
         );
         assert!(registry.runtime("gemini").is_none());
-        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.len(), 1);
         assert!(!registry.is_empty());
         assert!(AgentCatalog::default().is_empty());
     }

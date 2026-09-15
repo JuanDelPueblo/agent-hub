@@ -118,10 +118,7 @@ Agent definitions live in a JSON file that `--agents-file` names:
 
 ```json
 {
-  "codex": { "command": "codex-acp" },
-  "claude": { "command": "claude-agent-acp" },
-  "opencode": { "command": "opencode", "args": ["acp"] },
-  "antigravity": { "command": "agy_acp_server.par", "args": ["--uid="] }
+  "opencode": { "command": "opencode", "args": ["acp"] }
 }
 ```
 
@@ -136,6 +133,12 @@ Optional fields per agent:
 - `metadata`: Free-form object. Batey stores it and does not read it yet.
 
 The file rejects an unknown field, so a typo fails at startup.
+
+Batey's built-in catalog currently contains only local OpenCode when an
+executable named `opencode` exists on Batey's runtime `PATH`. Codex ACP and
+Claude ACP enter through the ACP Registry, a Batey-managed definition, or a
+file or declarative definition. Batey does not detect ordinary Codex or Claude
+commands, Antigravity, or other possible ACP commands.
 
 Batey-managed custom agents and ACP Registry installs share the runtime
 catalog with these declarative definitions. Their durable records live in

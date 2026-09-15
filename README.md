@@ -17,6 +17,11 @@ No more shuffling around various tmux sessions or relying on each agent's propri
 - **Terminal Task Supervision**: Long-running ACP terminal commands are tracked as first-class background tasks. Users can monitor active tasks, view bounded UTF-8 output logs, and stop tasks directly from the web interface.
 - **One interface for your agents** - Connect ACP-compatible agents and manage them from the same place instead of jumping between terminals and separate remote interfaces. Batey currently works with agents such as Codex, Claude Code, and OpenCode.
 
+Batey's built-in catalog currently contains only local OpenCode when Batey
+finds an executable named `opencode` on its runtime `PATH`. Codex ACP and
+Claude ACP require a Registry install, a Batey-managed definition, or a file
+or declarative definition.
+
 - **Persistent projects and chats** - Organize chats under projects and come back to them later without having to recreate your setup. Batey keeps the agent process and session management behind the scenes so you can focus on the conversation.
 
 - **Parallel worktrees** - Run multiple agents against the same Git project without making them fight over a working directory. Isolated chats get their own worktree and branch by default, allowing agents to work independently while keeping your main checkout alone.
@@ -208,16 +213,10 @@ history.
 
 ## Configuration
 
-Agents are configured in `agents.json`:
+Agents from a file are configured in `agents.json`:
 
 ```json
 {
-  "codex": {
-    "command": "codex-acp"
-  },
-  "claude": {
-    "command": "claude-agent-acp"
-  },
   "opencode": {
     "command": "opencode",
     "args": ["acp"]
