@@ -8,10 +8,60 @@ import uuid
 
 root = pathlib.Path(sys.argv[1])
 mode = sys.argv[2] if len(sys.argv) >= 3 else "load"
+
+# Terminal authentication runs this same program with the arguments the agent
+# advertised, so the interactive branch lives here rather than in a second
+# script. The backend appends the advertised arguments after the base ones.
+if len(sys.argv) > 3 and sys.argv[3] == "terminal-auth":
+    import signal
+
+    out = pathlib.Path(sys.argv[4])
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "invocation.json").write_text(json.dumps({
+        "argv": sys.argv,
+        "cwd": os.getcwd(),
+        "env": dict(os.environ),
+        "isatty": sys.stdin.isatty(),
+    }))
+
+    def report_size(*_):
+        size = os.get_terminal_size(sys.stdin.fileno())
+        print(f"size:{size.columns}x{size.lines}", flush=True)
+
+    signal.signal(signal.SIGWINCH, report_size)
+    # A descendant that only dies with the whole process tree.
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    (out / "child.pid").write_text(str(child.pid))
+    print("ready", flush=True)
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            sys.exit(7)
+        command = line.strip()
+        if command == "ok":
+            # The login stored credentials. Later initializes read this file
+            # and advertise the post-login state, so a test can prove that a
+            # read after a success is fresh.
+            (out / "authenticated").write_text("1")
+            # A last line just before the exit, so a test can prove the
+            # client still receives it.
+            print("login-complete", flush=True)
+            sys.exit(0)
+        if command == "fail":
+            sys.exit(3)
+        if command == "size":
+            report_size()
+        if command == "flood":
+            # More output than the retained scrollback, to prove the bound.
+            for index in range(4000):
+                print(f"flood-{index:06d}-" + "x" * 64, flush=True)
+        print(f"echo:{command}", flush=True)
+
 can_load = mode != "no-load"
 rich_capabilities = mode not in ("no-rich", "null-rich", "object-rich")
 reject_config = mode == "reject-config"
-slow_startup = mode == "slow-startup"
+slow_startup = mode == "slow-startup" or mode == "auth-slow"
 # Snapshot the received process environment beside the session file, so tests
 # can prove exactly which variables one agent process observed.
 dump_env = mode == "dump-env"
@@ -19,6 +69,13 @@ dump_env = mode == "dump-env"
 # the authoritative `configOptions`, so the backend must treat it as a retryable
 # connection/start failure rather than a saved-config rejection.
 transient_config = mode == "transient-config"
+# Authentication modes. `auth` advertises one agent method, one terminal
+# method, and one method type this client cannot know. `auth-no-logout` drops
+# the logout capability. `auth-required` answers session/new with the stable
+# `auth_required` error code.
+auth_mode = mode.startswith("auth")
+supports_logout = mode in ("auth", "auth-required")
+requires_auth = mode == "auth-required"
 current = None
 pending_prompt = None
 model = "small"
@@ -49,6 +106,31 @@ def update(update_kind, **fields):
     send({"method": "session/update", "params": {"sessionId": current, "update": {"sessionUpdate": update_kind, **fields}}})
 
 
+def auth_methods():
+    methods = [
+        {"id": "api-key", "name": "API key", "description": "Paste an API key"},
+        {"id": "api-key-broken", "name": "Broken API key", "type": "agent"},
+        {"id": "tui", "name": "Terminal login", "type": "terminal",
+         "args": ["terminal-auth", str(root)],
+         "env": {"PUEBLO_TEST_METHOD_ENV": "from-method", "PUEBLO_TEST_SHARED_ENV": "from-method"}},
+        {"id": "future", "name": "Future scheme", "type": "browser-popup"},
+    ]
+    if (root / "authenticated").exists():
+        # The terminal login stored credentials, so the agent stops
+        # advertising the terminal method. A test proves that a read after a
+        # terminal success observes this change and not a stale snapshot.
+        return [method for method in methods if method["id"] != "tui"]
+    return methods
+
+
+def record(name, payload):
+    """Appends one observed request, so a test can prove what was sent."""
+    path = root / name
+    seen = json.loads(path.read_text()) if path.exists() else []
+    seen.append(payload)
+    path.write_text(json.dumps(seen))
+
+
 for line in sys.stdin:
     msg = json.loads(line)
     method, p, id = msg.get("method"), msg.get("params", {}), msg.get("id")
@@ -69,8 +151,32 @@ for line in sys.stdin:
             # coverage: objects must not be mistaken for true booleans.
             agent_capabilities["promptCapabilities"] = {
                 "image": {}, "audio": {}, "embeddedContext": {}}
+        if supports_logout:
+            agent_capabilities["auth"] = {"logout": {}}
+        if auth_mode:
+            record("initialize.json", p.get("clientCapabilities", {}))
+            # Authentication helpers print credentials to stderr. This marker
+            # stands in for such a line, so a test can prove what the
+            # authentication path logs and what an ordinary chat agent logs.
+            print(f"PUEBLO_TEST_STDERR_SECRET cwd={os.getcwd()}", file=sys.stderr, flush=True)
+            # The environment this authentication process received, so a test
+            # can prove per-agent secret isolation on the probe path too.
+            (root / "probe-env.json").write_text(json.dumps(dict(os.environ)))
         reply(id, {"protocolVersion": 1, "agentCapabilities": agent_capabilities,
-                   "agentInfo": {"name": "fake-acp", "version": "1.0.0"}, "authMethods": []})
+                   "agentInfo": {"name": "fake-acp", "version": "1.0.0"},
+                   "authMethods": auth_methods() if auth_mode else []})
+    elif method == "authenticate":
+        record("authenticate.json", p)
+        if p.get("methodId") == "api-key-broken":
+            send({"id": id, "error": {"code": -32603, "message": "Key rejected"}})
+        else:
+            reply(id, {})
+    elif method == "logout":
+        record("logout.json", p)
+        reply(id, {})
+    elif method == "session/new" and requires_auth:
+        record("session-new.json", p)
+        send({"id": id, "error": {"code": -32000, "message": "Log in first, friend"}})
     elif method == "session/new":
         if slow_startup:
             time.sleep(1.0)

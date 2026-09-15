@@ -11,12 +11,14 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
+import { FakeAgentAuth } from './agent-auth.mjs';
 import { upgrade } from './websocket.mjs';
 import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions, validateCustomInput } from './state.mjs';
 import { answerElicitation, answerPermission, cancel, isRunning, listPendingElicitations, startTurn } from './turns.mjs';
 
 const options = parseArgs(process.argv.slice(2));
 const state = new FakeState();
+const agentAuthState = new FakeAgentAuth();
 
 // ---------------------------------------------------------------- routing
 
@@ -70,6 +72,12 @@ const routes = [
   ['POST', /^\/api\/agents\/registry\/refresh$/, refreshRegistry],
   ['POST', /^\/api\/agents\/registry\/install$/, installRegistryAgent],
   ['POST', /^\/api\/agents\/([^/]+)\/update$/, updateRegistryAgent],
+  ['GET', /^\/api\/agents\/([^/]+)\/auth$/, agentAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/terminal\/([^/]+)$/, startTerminalAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/([^/]+)$/, authenticateAgent],
+  ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgent],
+  ['GET', /^\/api\/agent-auth\/([^/]+)$/, terminalAuthFlow],
+  ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelTerminalAuth],
   ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
   ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
   ['GET', /^\/api\/status$/, getStatus],
@@ -112,6 +120,11 @@ const server = createServer(async (request, response) => {
 
 server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, 'http://localhost');
+  const flowMatch = /^\/api\/agent-auth\/([^/]+)\/ws$/.exec(url.pathname);
+  if (flowMatch) {
+    handleFlowSocket(request, socket, head, decodeURIComponent(flowMatch[1]));
+    return;
+  }
   if (url.pathname !== '/ws') {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
     return;
@@ -172,7 +185,98 @@ function handleWebSocket(request, rawSocket, head) {
   socket.onClose = () => unsubscribe?.();
 }
 
+/** The terminal socket of one authentication flow. */
+function handleFlowSocket(request, rawSocket, head, flowId) {
+  const flow = agentAuthState.get(flowId);
+  if (!flow) {
+    rawSocket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+    return;
+  }
+  const socket = upgrade(request, rawSocket, head);
+  if (!socket) return;
+
+  const listener = (message) => socket.send(JSON.stringify(message));
+  flow.listeners.add(listener);
+  // The retained tail first, then the current lifecycle state.
+  socket.send(JSON.stringify({ type: 'output', data: flow.scrollback }));
+  socket.send(JSON.stringify({ type: 'state', ...agentAuthState.flowView(flow) }));
+
+  socket.onMessage = (text) => {
+    let message;
+    try {
+      message = JSON.parse(text);
+    } catch {
+      return; // A malformed frame cannot change state.
+    }
+    agentAuthState.handleMessage(flow, message);
+  };
+  socket.onClose = () => flow.listeners.delete(listener);
+}
+
 // --------------------------------------------------------------- handlers
+
+// ------------------------------------------------- agent authentication
+
+function agentAuth({ params: [agentId] }) {
+  const view = agentAuthState.agentView(agentId);
+  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
+  return json(view);
+}
+
+function authenticateAgent({ params: [agentId, methodId] }) {
+  const view = agentAuthState.agentView(agentId);
+  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
+  const method = agentAuthState.method(agentId, methodId);
+  if (!method) {
+    throw httpError(404, `Agent '${agentId}' does not advertise the authentication method '${methodId}'`);
+  }
+  if (method.type === 'terminal') {
+    throw httpError(400, `Authentication method '${methodId}' runs in a terminal. Start a terminal authentication flow instead.`);
+  }
+  if (method.type !== 'agent') {
+    throw httpError(400, `Authentication method '${methodId}' uses the unsupported type '${method.type}'`);
+  }
+  agentAuthState.authenticated.add(agentId);
+  return json(view);
+}
+
+function logoutAgent({ params: [agentId] }) {
+  const view = agentAuthState.agentView(agentId);
+  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
+  if (!view.logout_supported) {
+    throw httpError(409, `Agent '${agentId}' does not support logout`);
+  }
+  agentAuthState.authenticated.delete(agentId);
+  return json(view);
+}
+
+function startTerminalAuth({ params: [agentId, methodId] }) {
+  const view = agentAuthState.agentView(agentId);
+  if (!view) throw httpError(404, `Unknown agent '${agentId}'`);
+  const method = agentAuthState.method(agentId, methodId);
+  if (!method) {
+    throw httpError(404, `Agent '${agentId}' does not advertise the authentication method '${methodId}'`);
+  }
+  if (method.type !== 'terminal') {
+    throw httpError(400, `Authentication method '${methodId}' is not a terminal method`);
+  }
+  const { flow, error } = agentAuthState.startFlow(agentId, methodId);
+  if (error) throw httpError(409, error);
+  return json(agentAuthState.flowView(flow));
+}
+
+function terminalAuthFlow({ params: [flowId] }) {
+  const flow = agentAuthState.get(flowId);
+  if (!flow) throw httpError(404, 'Authentication flow not found');
+  return json(agentAuthState.flowView(flow));
+}
+
+function cancelTerminalAuth({ params: [flowId] }) {
+  const flow = agentAuthState.get(flowId);
+  if (!flow) throw httpError(404, 'Authentication flow not found');
+  agentAuthState.cancel(flow);
+  return json(agentAuthState.flowView(flow));
+}
 
 function createProject({ body }) {
   const name = requireString(body, 'name');

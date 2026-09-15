@@ -620,7 +620,7 @@ fn observed_cancels(log: &std::path::Path) -> Vec<String> {
 
 #[tokio::test]
 async fn timed_out_requests_emit_cancel_request() {
-    use pueblo_hub::acp::{callbacks::CallbackPolicy, AcpClient, RequestTimedOut};
+    use pueblo_hub::acp::{callbacks::CallbackPolicy, AcpClient, RequestTimedOut, StderrPolicy};
 
     let tmp = tempfile::tempdir().unwrap();
     let script = tmp.path().join("hang_peer.py");
@@ -644,6 +644,8 @@ async fn timed_out_requests_emit_cancel_request() {
         None,
         tracker,
         vec![tmp.path().canonicalize().unwrap()],
+        // An ordinary protocol peer: its stderr stays diagnostic material.
+        StderrPolicy::Log,
     )
     .await
     .unwrap();

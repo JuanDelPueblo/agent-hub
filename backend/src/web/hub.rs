@@ -43,6 +43,7 @@ impl From<ServiceError> for ApiError {
             ServiceError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             ServiceError::SavedConfigRejected { .. } => StatusCode::CONFLICT,
             ServiceError::EnvrcBlocked { .. } => StatusCode::CONFLICT,
+            ServiceError::AuthRequired { .. } => StatusCode::CONFLICT,
             ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let details = match &e {
@@ -56,6 +57,12 @@ impl From<ServiceError> for ApiError {
                     "path": path.to_string_lossy(),
                     "message": message,
                 }
+            })),
+            // A recoverable state, not a lost chat: the client offers the
+            // authentication flow for this agent and retries afterwards.
+            ServiceError::AuthRequired { agent_id, .. } => Some(json!({
+                "code": "auth_required",
+                "details": { "agent_id": agent_id }
             })),
             _ => None,
         };
