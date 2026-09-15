@@ -288,7 +288,10 @@ services.pueblo-hub.package = pueblo-hub.packages.${system}.pueblo-hub;
 }
 ```
 
-That is the whole thing for a standard deployment. Add network options only
+That is the whole thing for a standard deployment. Importing
+`pueblo-hub.nixosModules.default` also installs the Pueblo overlay, so the
+default `services.pueblo-hub.package` resolves with nothing else to set;
+override it only when you want a different build. Add network options only
 when you need them, such as `services.pueblo-hub.host`, `.port`, or
 `.publicOrigin`. The module also exposes typed options for prompt timeout,
 registry URL, data/state/config/log/worktree locations, runtime packages,
@@ -323,7 +326,11 @@ and gives it a stable HOME at `/var/lib/pueblo-hub`. Agent authentication
 and configuration stored there survives restarts and package upgrades.
 Persistent Pueblo state lives under systemd directory management
 (`StateDirectory=pueblo-hub`), with deterministic `--data-dir`,
-`--state-dir`, and `--config-dir` instead of root's HOME.
+`--state-dir`, and `--config-dir` instead of root's HOME. Redirecting them
+needs no manual setup either: the module creates and chowns every
+Pueblo-owned directory through tmpfiles, so `dataDir = "/srv/pueblo-data"`
+just works. Project roots are the exception on purpose — they hold your
+data, so the service never takes ownership of them.
 
 To run as an existing account instead:
 
@@ -380,6 +387,15 @@ services.pueblo-hub.agents.my-agent.passEnv = [ "MY_AGENT_TOKEN" ];
 
 Where `/run/secrets/pueblo-hub.env` holds `MY_AGENT_TOKEN=...`. Use
 `services.pueblo-hub.environment` only for non-secret values.
+
+The boundary is real, not advisory. At startup Pueblo moves every listed
+secret name out of its own environment into a stash, so the inherited
+workspace environment that all agents share never carries them. Each value
+is then injected only into the agents whose `passEnv` names it. An agent
+that names nothing — including every web-managed custom agent — receives
+no secret, and one agent never sees another agent's token. Names that
+should be stripped but injected nowhere belong in
+`services.pueblo-hub.secretEnvVars`.
 
 ### Containers
 

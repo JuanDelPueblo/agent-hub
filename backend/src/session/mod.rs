@@ -8,7 +8,7 @@ use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
 use agent_client_protocol_schema::{PromptResponse, StopReason};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
@@ -47,6 +47,11 @@ pub struct AcpSession {
     startup_lock: Mutex<()>,
     task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
     cached_env: RwLock<Option<HashMap<String, String>>>,
+    /// Secret values taken out of the process environment at startup. Sessions
+    /// read this instead of the process environment, so a secret reaches only
+    /// the agents whose `pass_env` names it. Shared with the session manager,
+    /// which fills it once before any session starts.
+    secret_env: Arc<StdRwLock<HashMap<String, String>>>,
 }
 
 impl AcpSession {
@@ -57,6 +62,7 @@ impl AcpSession {
         event_log: Arc<EventLog>,
         checkout_guard: Option<Arc<Mutex<()>>>,
         task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
+        secret_env: Arc<StdRwLock<HashMap<String, String>>>,
     ) -> Self {
         Self {
             store: None,
@@ -76,6 +82,7 @@ impl AcpSession {
             startup_lock: Mutex::new(()),
             task_tracker,
             cached_env: RwLock::new(None),
+            secret_env,
         }
     }
 
@@ -225,10 +232,21 @@ impl AcpSession {
                 },
             }
         };
-        let merged =
-            crate::workspace_env::merge_launch_env(&workspace_env, &self.runtime.launch.env);
-        let agent_env = crate::workspace_env::apply_pass_env(merged, &self.runtime.launch.pass_env);
-
+        // Scrub every stashed secret name first, then inject only this
+        // agent's pass_env. Without the scrub, a secret that reached the
+        // workspace base (for example through an environment file) would leak
+        // to every agent and to web-managed definitions.
+        let secrets = self
+            .secret_env
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        let agent_env = crate::workspace_env::resolve_agent_env(
+            &workspace_env,
+            &self.runtime.launch.env,
+            &self.runtime.launch.pass_env,
+            &secrets,
+        );
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy
         } else {
@@ -1220,6 +1238,10 @@ pub struct SessionManager {
     checkout_guards: StdMutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     pub store: Option<Arc<crate::store::Store>>,
     task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
+    /// Secret values taken out of the process environment at startup, shared
+    /// with every session this manager creates. Empty unless startup filled
+    /// it through `set_secret_env`.
+    secret_env: Arc<StdRwLock<HashMap<String, String>>>,
 }
 
 impl SessionManager {
@@ -1240,6 +1262,7 @@ impl SessionManager {
             event_log,
             checkout_guards: StdMutex::new(HashMap::new()),
             task_tracker: Arc::new(crate::tasks::TerminalTaskTracker::default()),
+            secret_env: Arc::new(StdRwLock::new(HashMap::new())),
         });
 
         let weak = Arc::downgrade(&mgr);
@@ -1252,6 +1275,15 @@ impl SessionManager {
         });
 
         mgr
+    }
+
+    /// Fills the secret stash that sessions inject per-agent `pass_env` from.
+    /// Startup calls this once with the values it took out of the process
+    /// environment, before any session starts.
+    pub fn set_secret_env(&self, secrets: HashMap<String, String>) {
+        if let Ok(mut guard) = self.secret_env.write() {
+            *guard = secrets;
+        }
     }
 
     pub async fn get_or_create(&self, agent: &str, cwd: &Path) -> anyhow::Result<Arc<AcpSession>> {
@@ -1288,6 +1320,7 @@ impl SessionManager {
             self.event_log.clone(),
             None,
             self.task_tracker.clone(),
+            self.secret_env.clone(),
         ));
         let mut by_id = self.sessions_by_id.write().await;
         sessions.insert(session.id.clone(), session.clone());
@@ -1350,6 +1383,7 @@ impl SessionManager {
             self.event_log.clone(),
             checkout_guard,
             self.task_tracker.clone(),
+            self.secret_env.clone(),
         );
         session.id = chat.id;
         session.store = Some(store.clone());

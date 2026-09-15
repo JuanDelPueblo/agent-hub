@@ -1,7 +1,9 @@
 # Small evaluation checks for the NixOS module.
-# Covers package override, custom user/group, declarative generation, and
-# error cases. Runs in `nix flake check` without booting a VM.
-{ pkgs, pueblo-hub, module }:
+# Covers default package resolution through the wrapper-installed overlay,
+# package override, custom user/group, declarative generation, secret redaction,
+# managed directories, and error cases. Runs in `nix flake check` without
+# booting a VM.
+{ pkgs, crane, pueblo-hub, module }:
 let
   lib = pkgs.lib;
   stub = { lib, ... }: {
@@ -17,6 +19,14 @@ let
       type = lib.types.attrsOf lib.types.anything;
       default = { };
     };
+    options.systemd.tmpfiles.rules = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+    };
+    options.nixpkgs.overlays = lib.mkOption {
+      type = lib.types.listOf lib.types.anything;
+      default = [ ];
+    };
     options.assertions = lib.mkOption {
       type = lib.types.listOf lib.types.anything;
       default = [ ];
@@ -31,6 +41,18 @@ let
     package = pueblo-hub;
     projectRoots = [ "/srv/projects" ];
   };
+
+  # The wrapper module must install exactly the Pueblo overlay, so importing
+  # only `nixosModules.default` makes `pkgs.pueblo-hub` exist for the package
+  # default. The overlay is referenced here directly from the same file the
+  # wrapper points at; the VM test proves the real NixOS path end to end by
+  # starting the service with no explicit `package`.
+  wrapperOverlayCount = builtins.length
+    ((lib.evalModules {
+      modules = [ module stub ];
+      specialArgs = { inherit pkgs; };
+    }).config.nixpkgs.overlays);
+  overlayExtended = pkgs.extend (import ./overlay.nix { inherit crane; });
 
   customPackage = pkgs.runCommand "pueblo-hub-custom" { } "mkdir -p $out/bin; echo hi > $out/bin/pueblo-hub; chmod +x $out/bin/pueblo-hub";
 
@@ -79,6 +101,30 @@ let
     agents.empty = { };
   });
 
+  # Secrets: the union of every declared agent's passEnv plus the explicit
+  # redaction list must reach `--secret-env-vars` as names only.
+  evalSecrets = evalWith (base // {
+    secretEnvVars = [ "EXTRA_REDACTED" ];
+    agents = {
+      a = {
+        command = "a-acp";
+        passEnv = [ "AAA_TOKEN" ];
+      };
+      b = {
+        npx.package = "pkg@1.2.3";
+        passEnv = [ "BBB_TOKEN" ];
+      };
+    };
+  });
+
+  # Redirected state must be managed: tmpfiles rules cover every Pueblo-owned
+  # directory including overrides and the database parent.
+  evalTmpfiles = evalWith (base // {
+    dataDir = "/srv/pueblo-data";
+    worktreesDir = "/srv/pueblo-trees";
+    database = "/srv/pueblo-db/hub.sqlite3";
+  });
+
   # `lib.evalModules` collects assertions without enforcing them, so a bad
   # config is one with a false assertion entry.
   hasFailedAssertion = eval:
@@ -114,6 +160,15 @@ pkgs.runCommand "pueblo-hub-eval-checks" {
   declOk=${if hasFailedAssertion evalDeclarative then "no" else "yes"}
   defaultHasNode=${if builtins.elem pkgs.nodejs evalDefault.config.services.pueblo-hub.runtimePackages then "yes" else "no"}
   defaultHasUv=${if builtins.elem pkgs.uv evalDefault.config.services.pueblo-hub.runtimePackages then "yes" else "no"}
+  secretsExec='${evalSecrets.config.systemd.services.pueblo-hub.serviceConfig.ExecStart}'
+  secretsOk=${if hasFailedAssertion evalSecrets then "no" else "yes"}
+  tmpfilesRules='${lib.concatStringsSep "\n" evalTmpfiles.config.systemd.tmpfiles.rules}'
+  tmpfilesOk=${if hasFailedAssertion evalTmpfiles then "no" else "yes"}
+  defaultPkgPath='${overlayExtended.pueblo-hub}'
+  defaultPkgExpected='${pueblo-hub}'
+  defaultPkgVersion='${overlayExtended.pueblo-hub.version}'
+  defaultPkgExpectedVersion='${pueblo-hub.version}'
+  wrapperOverlayCount=${builtins.toString wrapperOverlayCount}
 
   [ "$defaultUser" = pueblo-hub ] || fail "default user is $defaultUser"
   [ "$hasDefaultUser" = yes ] || fail "default system user was not created"
@@ -133,6 +188,27 @@ pkgs.runCommand "pueblo-hub-eval-checks" {
   [ "$floatingNpxFailed" = yes ] || fail "floating npx package was accepted"
   [ "$floatingUvxFailed" = yes ] || fail "floating uvx package was accepted"
   [ "$noLaunchFailed" = yes ] || fail "agent without launch was accepted"
+
+  # The wrapper-installed overlay provides the default package with no
+  # explicit `package` and no separately imported overlay.
+  [ "$wrapperOverlayCount" = 1 ] || fail "wrapper must install exactly one overlay"
+  [ "$defaultPkgPath" = "$defaultPkgExpected" ] \
+    || fail "overlay package is not the canonical package: $defaultPkgPath"
+  [ "$defaultPkgVersion" = "$defaultPkgExpectedVersion" ] \
+    || fail "overlay package version drifted: $defaultPkgVersion"
+
+  # Secret names (only names) reach `--secret-env-vars`.
+  [ "$secretsOk" = yes ] || fail "secrets config trips an assertion"
+  case "$secretsExec" in
+    *--secret-env-vars*AAA_TOKEN*BBB_TOKEN*EXTRA_REDACTED*) ;;
+    *) fail "secret names missing from ExecStart: $secretsExec" ;;
+  esac
+
+  # Redirected state stays managed through tmpfiles.
+  [ "$tmpfilesOk" = yes ] || fail "tmpfiles config trips an assertion"
+  echo "$tmpfilesRules" | grep -q '^d /srv/pueblo-data ' || fail "dataDir override not managed: $tmpfilesRules"
+  echo "$tmpfilesRules" | grep -q '^d /srv/pueblo-trees ' || fail "worktreesDir override not managed"
+  echo "$tmpfilesRules" | grep -q '^d /srv/pueblo-db ' || fail "database parent not managed"
 
   # --- Declarative JSON content (build-time, reads the store file) ---
   # Extract the declarative file path from ExecStart.

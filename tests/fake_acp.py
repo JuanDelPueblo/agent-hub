@@ -1,5 +1,6 @@
 """Deterministic ACP peer for transport/lifecycle tests; no model or network calls."""
 import json
+import os
 import pathlib
 import sys
 import time
@@ -10,6 +11,9 @@ mode = sys.argv[2] if len(sys.argv) >= 3 else "load"
 can_load = mode != "no-load"
 reject_config = mode == "reject-config"
 slow_startup = mode == "slow-startup"
+# Snapshot the received process environment beside the session file, so tests
+# can prove exactly which variables one agent process observed.
+dump_env = mode == "dump-env"
 # Deterministic transient failure: succeeds at the transport level but omits
 # the authoritative `configOptions`, so the backend must treat it as a retryable
 # connection/start failure rather than a saved-config rejection.
@@ -49,6 +53,8 @@ for line in sys.stdin:
             time.sleep(1.0)
         current = str(uuid.uuid4())
         (root / current).write_text("0")
+        if dump_env:
+            (root / f"{current}.env.json").write_text(json.dumps(dict(os.environ)))
         reply(id, {"sessionId": current, "configOptions": options()})
     elif method == "session/load":
         if slow_startup:

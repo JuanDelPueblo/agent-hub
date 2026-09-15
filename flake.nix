@@ -122,7 +122,13 @@
 
       overlays.default = import ./nix/overlay.nix { inherit crane; };
 
-      nixosModules.pueblo-hub = import ./nix/nixos-module.nix;
+      # The exported module installs the Pueblo overlay itself, so the
+      # default `services.pueblo-hub.package = pkgs.pueblo-hub` resolves with
+      # only `nixosModules.default` imported. Overriding `package` still wins.
+      nixosModules.pueblo-hub = {
+        imports = [ ./nix/nixos-module.nix ];
+        nixpkgs.overlays = [ (import ./nix/overlay.nix { inherit crane; }) ];
+      };
       nixosModules.default = self.nixosModules.pueblo-hub;
 
       checks = eachSystem (system:
@@ -136,9 +142,9 @@
             overlays = [ self.overlays.default ];
           };
         in {
-          eval-checks = import ./nix/eval-checks.nix { inherit pkgs pueblo-hub module; };
+          eval-checks = import ./nix/eval-checks.nix { inherit pkgs crane pueblo-hub module; };
           oci-config = import ./nix/oci-check.nix { inherit pkgs pueblo-hub pueblo-hub-oci; };
-          vm-test = import ./nix/vm-test.nix { inherit pkgs pueblo-hub module; };
+          vm-test = import ./nix/vm-test.nix { inherit pkgs module; };
           overlay-provides-package = pkgs.runCommand "pueblo-hub-overlay-check" { } ''
             [ -x ${overlaid.pueblo-hub}/bin/pueblo-hub ] \
               || (echo "overlay does not provide pkgs.pueblo-hub" >&2; exit 1)

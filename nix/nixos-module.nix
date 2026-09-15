@@ -76,6 +76,25 @@ let
 
   declarativeFile = pkgs.writeText "pueblo-declarative-agents.json" (builtins.toJSON declarativeJson);
 
+  # Every name Pueblo must treat as a secret: all passEnv names of declared
+  # agents plus the explicit redaction list. Only names travel on the command
+  # line; values stay in runtime environment files.
+  secretVars = lib.unique
+    (lib.concatMap (agent: agent.passEnv) (builtins.attrValues cfg.agents)
+      ++ cfg.secretEnvVars);
+
+  # State Pueblo owns. Each directory is created and chowned through
+  # tmpfiles, so overrides such as `dataDir = "/srv/pueblo-data"` work
+  # without manual mkdir/chown. The database contributes its parent
+  # directory. HOME is covered when the module manages the account; an
+  # explicitly selected existing account keeps its own home.
+  managedDirs =
+    [ cfg.dataDir cfg.stateDir cfg.configDir ]
+    ++ lib.optionals (cfg.logDir != null) [ cfg.logDir ]
+    ++ lib.optionals (cfg.worktreesDir != null) [ cfg.worktreesDir ]
+    ++ lib.optionals (cfg.database != null) [ (builtins.dirOf cfg.database) ]
+    ++ lib.optionals (cfg.user == "pueblo-hub" && cfg.home != "/var/lib/pueblo-hub") [ cfg.home ];
+
   argsList =
     [ "--host" cfg.host "--port" (toString cfg.port) ]
     ++ lib.optionals (cfg.publicOrigin != null) [ "--public-origin" cfg.publicOrigin ]
@@ -86,6 +105,7 @@ let
     ++ lib.optionals (cfg.worktreesDir != null) [ "--worktrees-dir" cfg.worktreesDir ]
     ++ lib.optionals (cfg.database != null) [ "--database" cfg.database ]
     ++ [ "--declarative-agents-file" declarativeFile ]
+    ++ lib.optionals (secretVars != [ ]) [ "--secret-env-vars" (lib.concatStringsSep "," secretVars) ]
     ++ lib.concatMap (root: [ "--project-root" root ]) cfg.projectRoots;
 
   execStart = "${lib.getExe cfg.package} " + lib.escapeShellArgs argsList;
@@ -144,25 +164,36 @@ in
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/pueblo-hub/data";
-      description = "Pueblo Hub data directory (database, worktrees, registry cache).";
+      description = ''
+        Pueblo Hub data directory (database, worktrees, registry cache).
+        Created and chowned to the service user automatically, so overrides
+        such as `/srv/pueblo-data` need no manual setup.
+      '';
     };
 
     stateDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/pueblo-hub/state";
-      description = "Pueblo Hub state directory.";
+      description = ''
+        Pueblo Hub state directory. Created and chowned automatically.
+      '';
     };
 
     configDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/pueblo-hub/config";
-      description = "Pueblo Hub configuration directory.";
+      description = ''
+        Pueblo Hub configuration directory. Created and chowned automatically.
+      '';
     };
 
     logDir = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Pueblo Hub log directory. Null derives `stateDir/logs`.";
+      description = ''
+        Pueblo Hub log directory. Null derives `stateDir/logs`.
+        A set value is created and chowned automatically.
+      '';
     };
 
     worktreesDir = lib.mkOption {
@@ -170,6 +201,7 @@ in
       default = null;
       description = ''
         Managed worktree root. Null derives it from the database location.
+        A set value is created and chowned automatically.
       '';
     };
 
@@ -236,6 +268,23 @@ in
       description = ''
         Runtime environment files (systemd `EnvironmentFile`) for secrets.
         Declarative agents reference these values by name through `passEnv`.
+        At startup Pueblo moves every `passEnv` and `secretEnvVars` name out
+        of its own environment into a stash, so the inherited workspace
+        environment every agent shares never carries them. Each value is then
+        injected only into the agents naming it. An agent that names nothing
+        receives no secret.
+      '';
+    };
+
+    secretEnvVars = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = ''
+        Extra environment variable names treated as secrets. They are
+        stripped from the inherited workspace environment even when no
+        declarative agent references them, and never injected anywhere.
+        Useful for secrets present in `environmentFiles` that no agent
+        should receive.
       '';
     };
 
@@ -288,9 +337,12 @@ in
             type = lib.types.listOf lib.types.str;
             default = [ ];
             description = ''
-              Environment variable names inherited from the service process
-              at session start. Values come from `environment` or
-              `environmentFiles` at runtime and never enter the Nix store.
+              Environment variable names injected into this agent at session
+              start. Values come from `environment` or `environmentFiles` at
+              runtime and never enter the Nix store. Pueblo removes these
+              names from the shared inherited environment first, so this
+              agent receives exactly the names it lists and no other agent's
+              secrets.
             '';
           };
 
@@ -448,6 +500,14 @@ in
     users.groups = lib.mkIf (cfg.group == "pueblo-hub") {
       pueblo-hub = { };
     };
+
+    # Pueblo-owned state directories, including any operator overrides.
+    # systemd-tmpfiles creates and chowns them before the service starts, so
+    # a redirected `dataDir` works with no manual provisioning. Project roots
+    # are deliberately excluded: they hold user data the service must not own.
+    systemd.tmpfiles.rules = map
+      (dir: "d ${dir} 0750 ${cfg.user} ${cfg.group} -")
+      managedDirs;
 
     systemd.services.pueblo-hub = {
       description = "Pueblo Hub persistent ACP project and chat supervisor";
