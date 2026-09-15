@@ -91,7 +91,22 @@ impl AcpProcess {
     }
 }
 
-pub async fn drain_stderr(stderr: ChildStderr, agent_name: String) {
+/// What one ACP process may write to the server log through stderr.
+///
+/// Ordinary chat agents use `Log`, because their diagnostics help an
+/// operator. Authentication processes use `Discard`: their stderr frequently
+/// carries device codes, URLs, tokens, or other credentials, and that
+/// material must never reach the log. `Discard` keeps draining the pipe, so
+/// the child never blocks on a full stderr buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StderrPolicy {
+    /// Log every non-empty stderr line at warning level.
+    Log,
+    /// Drain stderr but never log a line from it.
+    Discard,
+}
+
+pub async fn drain_stderr(stderr: ChildStderr, agent_name: String, policy: StderrPolicy) {
     let mut reader = BufReader::new(stderr);
     let mut line = String::new();
     loop {
@@ -100,8 +115,15 @@ pub async fn drain_stderr(stderr: ChildStderr, agent_name: String) {
             Ok(0) => break,
             Ok(_) => {
                 let trimmed = line.trim_end();
-                if !trimmed.is_empty() {
-                    tracing::warn!(agent = %agent_name, "stderr: {}", trimmed);
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match policy {
+                    StderrPolicy::Log => {
+                        tracing::warn!(agent = %agent_name, "stderr: {}", trimmed);
+                    }
+                    // The line may be a credential. Drop it entirely.
+                    StderrPolicy::Discard => {}
                 }
             }
             Err(e) => {
@@ -109,5 +131,92 @@ pub async fn drain_stderr(stderr: ChildStderr, agent_name: String) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod stderr_policy_tests {
+    use super::*;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+
+    /// A shared in-memory sink for tracing events.
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = LogBuffer;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Writes one secret marker to stderr, then one more line so the marker
+    /// is never the final buffered tail, and runs the drain to completion.
+    fn drain_marker_stderr(policy: StderrPolicy, marker: &str) -> String {
+        let script = format!("echo {marker} >&2; echo after-secret >&2");
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(buffer.clone())
+            .finish();
+        // The drain runs inline on this thread, so a scoped subscriber
+        // captures exactly what this policy emits.
+        tracing::subscriber::with_default(subscriber, || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime for the drain");
+            runtime.block_on(async {
+                let mut child = tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(script)
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .expect("a process that writes stderr");
+                let stderr = child.stderr.take().expect("stderr was piped");
+                drain_stderr(stderr, "policy-probe".to_owned(), policy).await;
+                child.wait().await.expect("the stderr writer exited");
+            });
+        });
+        let captured = buffer.0.lock().expect("log buffer lock").clone();
+        String::from_utf8(captured).expect("the log buffer is valid UTF-8")
+    }
+
+    /// Authentication stderr may carry credentials. The discard policy keeps
+    /// draining it, but nothing from it reaches the log.
+    #[test]
+    fn discarded_stderr_never_reaches_the_log() {
+        const SECRET: &str = "DEVICE-CODE-SECRET-7f3a";
+        let logged = drain_marker_stderr(StderrPolicy::Discard, SECRET);
+        assert!(
+            !logged.contains(SECRET),
+            "discarded stderr reached the log: {logged}"
+        );
+    }
+
+    /// Ordinary chat-agent stderr keeps reaching the log, so the discard
+    /// policy must never silently become the default.
+    #[test]
+    fn logged_stderr_still_reaches_the_log() {
+        const DIAGNOSTIC: &str = "CHAT-AGENT-DIAGNOSTIC-2b9d";
+        let logged = drain_marker_stderr(StderrPolicy::Log, DIAGNOSTIC);
+        assert!(
+            logged.contains(DIAGNOSTIC),
+            "ordinary agent stderr stopped being logged: {logged}"
+        );
     }
 }

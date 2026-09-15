@@ -40,6 +40,10 @@ if len(sys.argv) > 3 and sys.argv[3] == "terminal-auth":
             sys.exit(7)
         command = line.strip()
         if command == "ok":
+            # The login stored credentials. Later initializes read this file
+            # and advertise the post-login state, so a test can prove that a
+            # read after a success is fresh.
+            (out / "authenticated").write_text("1")
             # A last line just before the exit, so a test can prove the
             # client still receives it.
             print("login-complete", flush=True)
@@ -56,7 +60,7 @@ if len(sys.argv) > 3 and sys.argv[3] == "terminal-auth":
 
 can_load = mode != "no-load"
 reject_config = mode == "reject-config"
-slow_startup = mode == "slow-startup"
+slow_startup = mode == "slow-startup" or mode == "auth-slow"
 # Snapshot the received process environment beside the session file, so tests
 # can prove exactly which variables one agent process observed.
 dump_env = mode == "dump-env"
@@ -102,7 +106,7 @@ def update(update_kind, **fields):
 
 
 def auth_methods():
-    return [
+    methods = [
         {"id": "api-key", "name": "API key", "description": "Paste an API key"},
         {"id": "api-key-broken", "name": "Broken API key", "type": "agent"},
         {"id": "tui", "name": "Terminal login", "type": "terminal",
@@ -110,6 +114,12 @@ def auth_methods():
          "env": {"PUEBLO_TEST_METHOD_ENV": "from-method", "PUEBLO_TEST_SHARED_ENV": "from-method"}},
         {"id": "future", "name": "Future scheme", "type": "browser-popup"},
     ]
+    if (root / "authenticated").exists():
+        # The terminal login stored credentials, so the agent stops
+        # advertising the terminal method. A test proves that a read after a
+        # terminal success observes this change and not a stale snapshot.
+        return [method for method in methods if method["id"] != "tui"]
+    return methods
 
 
 def record(name, payload):
@@ -132,6 +142,10 @@ for line in sys.stdin:
             capabilities["auth"] = {"logout": {}}
         if auth_mode:
             record("initialize.json", p.get("clientCapabilities", {}))
+            # Authentication helpers print credentials to stderr. This marker
+            # stands in for such a line, so a test can prove what the
+            # authentication path logs and what an ordinary chat agent logs.
+            print(f"PUEBLO_TEST_STDERR_SECRET cwd={os.getcwd()}", file=sys.stderr, flush=True)
             # The environment this authentication process received, so a test
             # can prove per-agent secret isolation on the probe path too.
             (root / "probe-env.json").write_text(json.dumps(dict(os.environ)))

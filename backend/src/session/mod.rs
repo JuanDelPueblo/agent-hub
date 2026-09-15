@@ -282,6 +282,9 @@ impl AcpSession {
             self.event_log.clone(),
             self.store.clone(),
             self.task_tracker.clone(),
+            // Chat-agent diagnostics belong in the log. Authentication
+            // processes opt out at their own spawn site.
+            crate::acp::process::StderrPolicy::Log,
         )
         .await
         {

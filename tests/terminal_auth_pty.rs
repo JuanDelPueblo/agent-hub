@@ -438,6 +438,58 @@ async fn zero_exit_succeeds_and_reinitializes_without_authenticate() {
     harness.sessions.shutdown_all().await;
 }
 
+/// Observing `succeeded` guarantees the next authentication read is fresh.
+///
+/// Starting a flow force-probes and caches the pre-login state. The success
+/// must drop that entry inside the transition, so a browser that reacts to
+/// the success immediately never receives the stale pre-login methods.
+///
+/// The agent initializes slowly, so the post-success refresh probe cannot
+/// finish first. A read that hits the stale cache would answer instantly
+/// with the pre-login methods and fail this test.
+#[tokio::test]
+async fn observing_succeeded_guarantees_a_fresh_auth_read() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let root = root_dir.path();
+    let history = root.join("demo");
+    std::fs::create_dir_all(&history).unwrap();
+    let agent = AgentDefinition::new("demo", "python3").with_args(vec![
+        format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+        history.display().to_string(),
+        "auth-slow".into(),
+    ]);
+    let harness = Harness::start(root, vec![agent]).await;
+    let advertises_terminal = |methods: &Value| {
+        methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method["id"] == "tui")
+    };
+
+    // The pre-login view advertises the terminal method.
+    let (status, view) = harness.request("GET", "/api/agents/demo/auth").await;
+    assert_eq!(status, 200, "{view}");
+    assert!(advertises_terminal(&view["methods"]), "{view}");
+
+    let flow_id = harness.start_flow("demo").await;
+    let mut socket = harness.connect(&flow_id).await;
+    wait_for_output(&mut socket, "ready").await;
+    send(&mut socket, json!({"type": "input", "data": "ok\n"})).await;
+    wait_for_state(&mut socket, "succeeded").await;
+
+    // The browser reacts to the success immediately. The stored credentials
+    // changed, so the agent no longer advertises the terminal method.
+    let (status, view) = harness.request("GET", "/api/agents/demo/auth").await;
+    assert_eq!(status, 200, "{view}");
+    assert!(
+        !advertises_terminal(&view["methods"]),
+        "a read after success received the stale pre-login methods: {view}"
+    );
+    harness.auth.shutdown();
+    harness.sessions.shutdown_all().await;
+}
+
 /// A non-zero exit status is a failure, and it is reported as one.
 #[tokio::test]
 async fn non_zero_exit_fails() {

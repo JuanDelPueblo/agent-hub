@@ -25,6 +25,7 @@ use tokio::task::JoinHandle;
 use crate::events::{EventLog, EventPayload};
 
 use self::callbacks::{CallbackHandler, CallbackPolicy};
+pub use self::process::StderrPolicy;
 use self::process::{drain_stderr, AcpProcess};
 use self::protocol::{
     IncomingKind, IncomingMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
@@ -178,6 +179,7 @@ impl AcpClient {
         event_log: Arc<EventLog>,
         store: Option<Arc<crate::store::Store>>,
         task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
+        stderr_policy: StderrPolicy,
     ) -> anyhow::Result<Self> {
         let proc = AcpProcess::spawn(command, args, env_vars, cwd)?;
 
@@ -207,7 +209,8 @@ impl AcpClient {
             child_root_pid,
         ));
 
-        let stderr_handle = tokio::spawn(drain_stderr(proc.stderr, agent_name.clone()));
+        let stderr_handle =
+            tokio::spawn(drain_stderr(proc.stderr, agent_name.clone(), stderr_policy));
 
         let config_options = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
         let available_commands = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));

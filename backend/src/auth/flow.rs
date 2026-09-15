@@ -84,6 +84,13 @@ pub struct FlowAttachment {
     pub status: watch::Receiver<()>,
 }
 
+/// A synchronous hook that runs exactly once when a flow succeeds.
+///
+/// It runs inside the transition to `succeeded`, before any client can
+/// observe that state. A hook must be cheap, because it holds up the
+/// transition.
+pub type SuccessHook = Arc<dyn Fn() + Send + Sync>;
+
 struct OutputBuffer {
     scrollback: VecDeque<u8>,
     sender: broadcast::Sender<Arc<Vec<u8>>>,
@@ -102,6 +109,7 @@ pub struct TerminalAuthFlow {
     handle: Arc<PtyHandle>,
     attached: AtomicUsize,
     last_detached: StdMutex<Instant>,
+    on_success: Option<SuccessHook>,
 }
 
 impl TerminalAuthFlow {
@@ -193,6 +201,14 @@ impl TerminalAuthFlow {
             status.completed_at = Some(Utc::now());
         }
         self.handle.kill_tree();
+        // The hook runs before the transition becomes observable, so a
+        // client that reacts to `succeeded` can never read a state the
+        // success has not yet invalidated.
+        if state == TerminalFlowState::Succeeded {
+            if let Some(hook) = &self.on_success {
+                hook();
+            }
+        }
         // A send failure only means nobody is watching.
         let _ = self.status_tx.send(());
         tracing::info!(
@@ -276,12 +292,14 @@ impl TerminalAuthFlows {
     /// Starts one flow for one prepared command.
     ///
     /// The caller has already derived the command from the installed runtime
-    /// and from the advertised authentication method.
+    /// and from the advertised authentication method. `on_success`, when
+    /// given, runs once inside the transition to `succeeded`.
     pub fn start(
         self: &Arc<Self>,
         agent_id: &str,
         method_id: &str,
         command: &PtyCommand,
+        on_success: Option<SuccessHook>,
     ) -> anyhow::Result<Arc<TerminalAuthFlow>> {
         anyhow::ensure!(
             pty::TERMINAL_AUTH_SUPPORTED,
@@ -313,6 +331,7 @@ impl TerminalAuthFlows {
             handle: spawned.handle,
             attached: AtomicUsize::new(0),
             last_detached: StdMutex::new(Instant::now()),
+            on_success,
         });
 
         {
@@ -516,7 +535,9 @@ mod tests {
             Duration::from_millis(50),
             MAX_FLOW_LIFETIME,
         ));
-        let flow = flows.start("demo", "tui", &waiting_command()).unwrap();
+        let flow = flows
+            .start("demo", "tui", &waiting_command(), None)
+            .unwrap();
         let state = tokio::time::timeout(Duration::from_secs(20), flow.wait_finished())
             .await
             .expect("the abandoned flow never ended");
@@ -532,7 +553,9 @@ mod tests {
             IDLE_TIMEOUT,
             Duration::from_millis(200),
         ));
-        let flow = flows.start("demo", "tui", &waiting_command()).unwrap();
+        let flow = flows
+            .start("demo", "tui", &waiting_command(), None)
+            .unwrap();
         let _attachment = flow.attach().await;
         let state = tokio::time::timeout(Duration::from_secs(20), flow.wait_finished())
             .await
@@ -549,12 +572,12 @@ mod tests {
         for index in 0..MAX_ACTIVE_FLOWS {
             started.push(
                 flows
-                    .start(&format!("agent-{index}"), "tui", &waiting_command())
+                    .start(&format!("agent-{index}"), "tui", &waiting_command(), None)
                     .expect("a flow inside the bound was refused"),
             );
         }
         let refused = flows
-            .start("agent-extra", "tui", &waiting_command())
+            .start("agent-extra", "tui", &waiting_command(), None)
             .err()
             .expect("the global bound did not hold");
         assert!(refused.to_string().contains("Too many"));

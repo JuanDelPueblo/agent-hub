@@ -8,20 +8,21 @@
 //! Every process it starts uses the installed catalog runtime, a Pueblo-owned
 //! working directory, and the sanitized per-agent environment. It never reads
 //! a project `.envrc`, because an agent-level login has no project.
-use super::flow::{TerminalAuthFlow, TerminalAuthFlowView, TerminalAuthFlows, TerminalFlowState};
+use super::flow::{
+    SuccessHook, TerminalAuthFlow, TerminalAuthFlowView, TerminalAuthFlows, TerminalFlowState,
+};
 use super::pty::{PtyCommand, TERMINAL_AUTH_SUPPORTED};
 use crate::acp::auth::{AgentAuthState, AuthMethodKind, TerminalAuthMethod};
 use crate::acp::callbacks::CallbackPolicy;
-use crate::acp::AcpClient;
+use crate::acp::{AcpClient, StderrPolicy};
 use crate::agents::{AgentCatalog, AgentRuntime};
 use crate::events::EventLog;
 use crate::session::SessionManager;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 /// How long a probe result answers a read before Pueblo Hub probes again.
 /// Every probe starts an agent process, so repeated reads must not start one
@@ -115,7 +116,14 @@ pub struct AgentAuthService {
     /// to Pueblo Hub, so no browser path and no project workspace is involved.
     work_dir: PathBuf,
     flows: Arc<TerminalAuthFlows>,
+    /// Probe results per agent. A plain `RwLock` keeps invalidation
+    /// synchronous, so a terminal success can drop its entry inside the
+    /// transition to `succeeded`.
     cache: RwLock<HashMap<String, CachedState>>,
+    /// When the cache of an agent was last dropped because authentication
+    /// may have changed. A probe that finished before that instant may carry
+    /// the pre-change state, so it must not re-cache.
+    invalidated_at: RwLock<HashMap<String, Instant>>,
     /// Serializes probes, so a burst of reads cannot start a burst of agent
     /// processes.
     probe_lock: tokio::sync::Mutex<()>,
@@ -146,6 +154,7 @@ impl AgentAuthService {
             work_dir,
             flows: Arc::new(TerminalAuthFlows::new()),
             cache: RwLock::new(HashMap::new()),
+            invalidated_at: RwLock::new(HashMap::new()),
             probe_lock: tokio::sync::Mutex::new(()),
             events: Arc::new(EventLog::new(PROBE_EVENT_CAPACITY)),
             tasks: Arc::new(crate::tasks::TerminalTaskTracker::default()),
@@ -255,9 +264,22 @@ impl AgentAuthService {
 
         let cwd = self.work_dir()?;
         let command = terminal_command(&runtime, terminal, &self.agent_env(&runtime), &cwd);
+        // A successful terminal command changes the agent's stored
+        // credentials. The hook drops the cached pre-login state inside the
+        // transition to `succeeded`, so a client that reacts to the success
+        // always reads fresh state and never the stale 15-second entry.
+        let on_success: SuccessHook = {
+            let service = Arc::downgrade(self);
+            let agent_id = agent_id.to_owned();
+            Arc::new(move || {
+                if let Some(service) = service.upgrade() {
+                    service.invalidate_auth_cache(&agent_id);
+                }
+            })
+        };
         let flow = self
             .flows
-            .start(agent_id, method_id, &command)
+            .start(agent_id, method_id, &command, Some(on_success))
             .map_err(|error| AgentAuthError::Conflict(error.to_string()))?;
         self.watch_terminal_flow(flow.clone());
         Ok(flow.view())
@@ -319,10 +341,31 @@ impl AgentAuthService {
         });
     }
 
+    /// Drops the cached state of one agent and records when it happened.
+    ///
+    /// A terminal success calls this inside the transition to `succeeded`.
+    /// The recorded instant keeps a probe that started before it from
+    /// re-caching the state it read.
+    fn invalidate_auth_cache(&self, agent_id: &str) {
+        self.cache
+            .write()
+            .expect("agent auth cache lock poisoned")
+            .remove(agent_id);
+        self.invalidated_at
+            .write()
+            .expect("agent auth invalidation lock poisoned")
+            .insert(agent_id.to_owned(), Instant::now());
+    }
+
     /// The typed authentication state, from the cache or from a fresh probe.
     async fn state(&self, agent_id: &str, force: bool) -> AuthResult<AgentAuthState> {
         if !force {
-            if let Some(cached) = self.cache.read().await.get(agent_id) {
+            if let Some(cached) = self
+                .cache
+                .read()
+                .expect("agent auth cache lock poisoned")
+                .get(agent_id)
+            {
                 if cached.read_at.elapsed() < AUTH_CACHE_TTL {
                     return Ok(cached.state.clone());
                 }
@@ -330,22 +373,43 @@ impl AgentAuthService {
         }
         let _probe_guard = self.probe_lock.lock().await;
         if !force {
-            if let Some(cached) = self.cache.read().await.get(agent_id) {
+            if let Some(cached) = self
+                .cache
+                .read()
+                .expect("agent auth cache lock poisoned")
+                .get(agent_id)
+            {
                 if cached.read_at.elapsed() < AUTH_CACHE_TTL {
                     return Ok(cached.state.clone());
                 }
             }
         }
+        // A probe that started before the last invalidation may have read
+        // the state that the invalidation exists to forget. Keep it out of
+        // the cache, so the next read probes again. A probe that started
+        // after it read nothing older than the change.
+        let started_at = Instant::now();
         let client = self.connect(agent_id).await?;
         let state = client.auth_state().await;
         client.shutdown().await;
-        self.cache.write().await.insert(
-            agent_id.to_owned(),
-            CachedState {
-                state: state.clone(),
-                read_at: Instant::now(),
-            },
-        );
+        let superseded = self
+            .invalidated_at
+            .read()
+            .expect("agent auth invalidation lock poisoned")
+            .get(agent_id)
+            .is_some_and(|invalidated_at| started_at <= *invalidated_at);
+        if !superseded {
+            self.cache
+                .write()
+                .expect("agent auth cache lock poisoned")
+                .insert(
+                    agent_id.to_owned(),
+                    CachedState {
+                        state: state.clone(),
+                        read_at: Instant::now(),
+                    },
+                );
+        }
         Ok(state)
     }
 
@@ -372,6 +436,10 @@ impl AgentAuthService {
                 self.events.clone(),
                 None,
                 self.tasks.clone(),
+                // Authentication helpers print device codes, URLs, and
+                // tokens to stderr. Discard it all, so no credential line
+                // ever reaches the log.
+                StderrPolicy::Discard,
             ),
         )
         .await

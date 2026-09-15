@@ -24,11 +24,61 @@ use std::sync::Arc;
 /// What the browser may send on a flow socket.
 ///
 /// Keystrokes and a window size, and nothing else.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+///
+/// The message is strict: an unknown field or an unknown type makes it
+/// invalid. A tagged enum cannot express that with serde, so each variant is
+/// a plain struct with `deny_unknown_fields`, and the tag is checked first.
+/// Nothing in a message can therefore name a command, arguments, a working
+/// directory, or an environment value.
+#[derive(Debug)]
 enum FlowClientMessage {
     Input { data: String },
     Resize { cols: u16, rows: u16 },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowInputMessage {
+    data: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowResizeMessage {
+    cols: u16,
+    rows: u16,
+}
+
+impl<'de> Deserialize<'de> for FlowClientMessage {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("a flow message must be a JSON object"))?;
+        let kind = object.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            serde::de::Error::custom("a flow message needs a string 'type' field")
+        })?;
+        let mut fields = object.clone();
+        fields.remove("type");
+        let fields = serde_json::Value::Object(fields);
+        match kind {
+            "input" => serde_json::from_value::<FlowInputMessage>(fields)
+                .map(|message| Self::Input { data: message.data })
+                .map_err(serde::de::Error::custom),
+            "resize" => serde_json::from_value::<FlowResizeMessage>(fields)
+                .map(|message| Self::Resize {
+                    cols: message.cols,
+                    rows: message.rows,
+                })
+                .map_err(serde::de::Error::custom),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown flow message type '{other}'"
+            ))),
+        }
+    }
 }
 
 pub async fn agent_auth(
@@ -311,12 +361,28 @@ mod tests {
                 rows: 30
             }
         ));
-        // No message may name a command, a path, or an environment value.
-        assert!(
-            serde_json::from_str::<FlowClientMessage>(r#"{"type":"exec","command":"sh"}"#).is_err()
-        );
-        assert!(
-            serde_json::from_str::<FlowClientMessage>(r#"{"type":"input","cwd":"/etc"}"#).is_err()
-        );
+    }
+
+    /// The socket messages are strict. Any field beyond the ones a variant
+    /// defines, and any unknown type, is a rejection. A message therefore can
+    /// never grow a command, argument, path, or environment surface.
+    #[test]
+    fn client_messages_reject_unknown_fields_and_types() {
+        let rejected = [
+            r#"{"type":"exec","command":"sh"}"#,
+            r#"{"type":"input"}"#,
+            r#"{"type":"input","data":"ok","command":"sh"}"#,
+            r#"{"type":"input","data":"ok","args":["-c","sh"]}"#,
+            r#"{"type":"input","data":"ok","cwd":"/etc"}"#,
+            r#"{"type":"input","data":"ok","env":{"PATH":"/no"}}"#,
+            r#"{"type":"resize","cols":100,"rows":30,"cwd":"/etc"}"#,
+            r#"{"type":"resize","cols":100,"rows":30,"command":"sh"}"#,
+        ];
+        for message in rejected {
+            assert!(
+                serde_json::from_str::<FlowClientMessage>(message).is_err(),
+                "the flow socket accepted {message}"
+            );
+        }
     }
 }

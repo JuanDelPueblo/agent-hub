@@ -19,8 +19,9 @@ mod pty;
 mod service;
 
 pub use flow::{
-    TerminalAuthFlow, TerminalAuthFlowView, TerminalAuthFlows, TerminalFlowState, IDLE_TIMEOUT,
-    MAX_ACTIVE_FLOWS, MAX_ACTIVE_FLOWS_PER_AGENT, MAX_FLOW_LIFETIME, MAX_SCROLLBACK_BYTES,
+    SuccessHook, TerminalAuthFlow, TerminalAuthFlowView, TerminalAuthFlows, TerminalFlowState,
+    IDLE_TIMEOUT, MAX_ACTIVE_FLOWS, MAX_ACTIVE_FLOWS_PER_AGENT, MAX_FLOW_LIFETIME,
+    MAX_SCROLLBACK_BYTES,
 };
 pub use pty::{PtyCommand, PtyWindow, TERMINAL_AUTH_SUPPORTED};
 pub use service::{

@@ -16,7 +16,11 @@ use pueblo_hub::{
     web::{router, AppState},
 };
 use serde_json::Value;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, Once, OnceLock},
+    time::Duration,
+};
 use tower::ServiceExt;
 
 /// An agent whose ACP process is the fake peer in one of its auth modes.
@@ -303,6 +307,113 @@ async fn auth_required_is_structured_and_keeps_durable_chat_data() {
     let (status, auth) = harness.request("GET", "/api/agents/gated/auth").await;
     assert_eq!(status, 200, "{auth}");
     assert!(!auth["methods"].as_array().unwrap().is_empty());
+    harness.sessions.shutdown_all().await;
+}
+
+/// A shared in-memory sink that captures every tracing event, so a test can
+/// prove what Pueblo Hub logs and what it never logs.
+fn log_capture() -> &'static std::sync::Mutex<Vec<u8>> {
+    static BUFFER: OnceLock<std::sync::Mutex<Vec<u8>>> = OnceLock::new();
+    static SUBSCRIBER: Once = Once::new();
+    let buffer = BUFFER.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    SUBSCRIBER.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(Capture(buffer))
+                .finish(),
+        );
+    });
+    buffer
+}
+
+struct Capture(&'static std::sync::Mutex<Vec<u8>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Capture;
+    fn make_writer(&'a self) -> Self::Writer {
+        Capture(self.0)
+    }
+}
+
+/// The captured log lines that carry the fake agent's stderr marker.
+fn stderr_marker_lines() -> Vec<String> {
+    let buffer = log_capture();
+    String::from_utf8_lossy(&buffer.lock().unwrap())
+        .lines()
+        .filter(|line| line.contains("PUEBLO_TEST_STDERR_SECRET"))
+        .map(|line| line.to_owned())
+        .collect()
+}
+
+/// A secret line on authentication stderr never reaches the log, while the
+/// same line from an ordinary chat agent does. Both processes run the same
+/// fake agent, so the difference proves the per-process stderr policy.
+#[tokio::test]
+async fn authentication_stderr_is_discarded_but_chat_stderr_is_logged() {
+    // Installs the capturing subscriber before any child can log.
+    log_capture();
+    let harness = Harness::new(&[("full", "auth")]);
+
+    // The ordinary chat path. The same helper prints the marker at
+    // `initialize`, and chat-agent stderr is diagnostic material.
+    let project = harness
+        .hub
+        .create_project("demo".into(), harness.root.path().display().to_string())
+        .unwrap();
+    let chat = harness
+        .hub
+        .create_chat(&project.id, "full", None)
+        .await
+        .unwrap();
+    let (status, body) = harness
+        .request("POST", &format!("/api/chats/{}/resume", chat.chat.id))
+        .await;
+    assert_eq!(status, 200, "{body}");
+
+    // The chat agent's marker must appear. This proves the capture works
+    // before the absence assertion below means anything.
+    let mut logged_somewhere = false;
+    for _ in 0..200 {
+        if !stderr_marker_lines().is_empty() {
+            logged_somewhere = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        logged_somewhere,
+        "no chat agent stderr reached the log at all"
+    );
+
+    // The authentication probe path. The same stderr line must stay out of
+    // the log entirely.
+    let (status, body) = harness.request("GET", "/api/agents/full/auth").await;
+    assert_eq!(status, 200, "{body}");
+
+    // Re-check for a bounded window, so a hypothetical late drain task that
+    // still logged would be caught.
+    for _ in 0..40 {
+        let leaked: Vec<String> = stderr_marker_lines()
+            .into_iter()
+            .filter(|line| line.contains("agent-auth"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "authentication stderr reached the log: {leaked:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
     harness.sessions.shutdown_all().await;
 }
 
