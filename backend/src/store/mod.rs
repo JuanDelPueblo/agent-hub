@@ -17,7 +17,7 @@ pub use chats::Chat;
 pub use projects::Project;
 pub use session_config::{
     AdditionalRoot, McpServerConfig, McpServerInput, McpServerView, McpTransport, SecretEdit,
-    SecretField,
+    SecretField, SecretInput,
 };
 pub use validation::{validate_name, validate_project_path};
 pub use workspaces::{ChatWorkspace, WorkspaceMode};

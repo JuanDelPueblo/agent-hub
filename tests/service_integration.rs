@@ -8,7 +8,7 @@ use pueblo_hub::{
     events::{EventLog, EventPayload},
     service::{ChatEdit, HubService, ServiceError},
     session::SessionManager,
-    store::Store,
+    store::{McpServerInput, McpTransport, SecretEdit, SecretInput, Store},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -746,6 +746,173 @@ async fn concurrent_wait_admission_and_rejected_second_prompt() {
         .collect();
     assert_eq!(completions.len(), 1);
 
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn mcp_secret_edits_are_redacted_and_keep_replace_remove_are_exact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+    let input = McpServerInput {
+        name: "tools".into(),
+        transport: McpTransport::Stdio,
+        url: None,
+        command: Some("/bin/echo".into()),
+        args: vec!["one".into(), "two".into()],
+        secrets: vec![SecretInput {
+            name: "TOKEN".into(),
+            value: Some("initial-secret".into()),
+            action: SecretEdit::Replace,
+        }],
+    };
+    let created = service
+        .create_mcp_server(&chat.chat.id, input)
+        .await
+        .unwrap();
+    assert_eq!(created[0].args, ["one", "two"]);
+    assert!(created[0].secrets[0].present);
+    assert!(!serde_json::to_string(&created)
+        .unwrap()
+        .contains("initial-secret"));
+    let id = created[0].id.clone();
+
+    let edit = |action, value: Option<&str>| McpServerInput {
+        name: "tools".into(),
+        transport: McpTransport::Stdio,
+        url: None,
+        command: Some("/bin/echo".into()),
+        args: vec!["package".into(), "subcommand".into()],
+        secrets: vec![SecretInput {
+            name: "TOKEN".into(),
+            value: value.map(str::to_string),
+            action,
+        }],
+    };
+    service
+        .edit_mcp_server(&chat.chat.id, &id, edit(SecretEdit::Keep, None))
+        .await
+        .unwrap();
+    let raw = Store::open(&tmp.path().join("hub.db"))
+        .unwrap()
+        .mcp_server(&chat.chat.id, &id)
+        .unwrap();
+    assert_eq!(raw.secrets[0].value, "initial-secret");
+    assert_eq!(raw.args, ["package", "subcommand"]);
+
+    let redacted = service
+        .edit_mcp_server(
+            &chat.chat.id,
+            &id,
+            edit(SecretEdit::Replace, Some("replacement-secret")),
+        )
+        .await
+        .unwrap();
+    assert!(redacted[0].secrets[0].present);
+    assert!(!serde_json::to_string(&redacted)
+        .unwrap()
+        .contains("replacement-secret"));
+    let raw = Store::open(&tmp.path().join("hub.db"))
+        .unwrap()
+        .mcp_server(&chat.chat.id, &id)
+        .unwrap();
+    assert_eq!(raw.secrets[0].value, "replacement-secret");
+
+    let removed = service
+        .edit_mcp_server(&chat.chat.id, &id, edit(SecretEdit::Remove, None))
+        .await
+        .unwrap();
+    assert!(removed[0].secrets.is_empty());
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn active_turn_rejects_mcp_connection_config_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+    let mut events = sessions.event_log().subscribe();
+    service
+        .prompt_chat(&chat.chat.id, "wait".into())
+        .await
+        .unwrap();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.session_id == chat.chat.id
+            && matches!(event.payload, EventPayload::UserMessage { ref text, .. } if text == "wait")
+        {
+            break;
+        }
+    }
+    let error = service
+        .create_mcp_server(
+            &chat.chat.id,
+            McpServerInput {
+                name: "tools".into(),
+                transport: McpTransport::Stdio,
+                url: None,
+                command: Some("/bin/echo".into()),
+                args: vec![],
+                secrets: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("active turn"));
+    assert!(service.mcp_servers(&chat.chat.id).unwrap().is_empty());
+    service.cancel_chat(&chat.chat.id).await.unwrap();
+    sessions.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn additional_root_project_deletion_and_stale_path_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let primary_path = tmp.path().join("primary");
+    let additional_path = tmp.path().join("additional");
+    std::fs::create_dir_all(&primary_path).unwrap();
+    std::fs::create_dir_all(&additional_path).unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let primary = service
+        .create_project("primary".into(), primary_path.display().to_string())
+        .unwrap();
+    let additional = service
+        .create_project("additional".into(), additional_path.display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&primary.id, "codex", None)
+        .await
+        .unwrap();
+    service
+        .set_additional_roots(&chat.chat.id, vec![additional.id.clone()])
+        .await
+        .unwrap();
+
+    let conflict = service.delete_project(&additional.id).unwrap_err();
+    assert!(
+        matches!(conflict, ServiceError::Conflict(message) if message.contains("additional workspace roots"))
+    );
+
+    std::fs::rename(&additional_path, tmp.path().join("moved-additional")).unwrap();
+    let error = service
+        .prompt_chat(&chat.chat.id, "hello".into())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("no longer exists"));
     sessions.shutdown_all().await;
 }
 

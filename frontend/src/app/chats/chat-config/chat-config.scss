@@ -11,3 +11,6 @@
 .root-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
 .root-row mat-form-field { flex: 1; }
 .mcp-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: center; }
+.secret-editor { grid-column: 1 / -1; display: grid; gap: 8px; }
+.secret-row { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(7rem, auto) minmax(10rem, 1fr) auto; gap: 8px; align-items: center; }
+@media (max-width: 599px) { .secret-row { grid-template-columns: 1fr; } }

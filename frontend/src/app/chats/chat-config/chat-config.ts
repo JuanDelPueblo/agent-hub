@@ -10,6 +10,8 @@ import type { AdditionalRoot, Chat, ConfigOption, ConfigOptionSelectGroup, McpSe
 import { AppStateService } from '../../state/app-state.service';
 import { ApiService } from '../../core/api/api.service';
 
+interface McpSecretDraft { name: string; action: 'keep' | 'replace' | 'remove'; value: string; }
+
 @Component({
   selector: 'hub-chat-config',
   imports: [MatButtonModule, MatDividerModule, MatFormFieldModule, MatIconModule, MatInputModule, MatSelectModule, MatSlideToggleModule],
@@ -36,6 +38,14 @@ export class ChatConfigComponent {
   readonly projects = signal<Project[]>([]);
   readonly selectedRoot = signal<string>('');
   readonly editingMcp = signal<string | null>(null);
+  readonly editingServer = computed(() => this.mcpServers().find((server) => server.id === this.editingMcp()) ?? null);
+  readonly editName = signal('');
+  readonly editTransport = signal<McpServer['transport']>('stdio');
+  readonly editUrl = signal('');
+  readonly editCommand = signal('');
+  readonly editArgs = signal('');
+  readonly editSecrets = signal<McpSecretDraft[]>([]);
+  readonly createArgs = signal('');
   private readonly state = inject(AppStateService);
   private readonly api = inject(ApiService);
 
@@ -43,14 +53,18 @@ export class ChatConfigComponent {
 
   private async loadConnectionConfig(chatId: string): Promise<void> { try { const [mcp, roots, projects] = await Promise.all([this.api.fetchMcpServers(chatId), this.api.fetchAdditionalRoots(chatId), this.api.fetchProjects()]); this.mcpServers.set(mcp); this.additionalRoots.set(roots); this.projects.set(projects); } catch { /* ordinary config remains usable offline */ } }
   projectName(id: string): string { return this.projects().find((project) => project.id === id)?.name ?? id; }
-  beginMcpEdit(id: string): void { this.editingMcp.set(id); }
+  beginMcpEdit(id: string): void { const server = this.mcpServers().find((candidate) => candidate.id === id); if (!server) return; this.editingMcp.set(id); this.editName.set(server.name); this.editTransport.set(server.transport); this.editUrl.set(server.url ?? ''); this.editCommand.set(server.command ?? ''); this.editArgs.set(server.args.join('\n')); this.editSecrets.set(server.secrets.map((secret) => ({ name: secret.name, action: 'keep', value: '' }))); }
+  setSecret(index: number, field: keyof McpSecretDraft, value: string): void { this.editSecrets.update((secrets) => secrets.map((secret, current) => current === index ? { ...secret, [field]: value } : secret)); }
+  addSecret(): void { this.editSecrets.update((secrets) => [...secrets, { name: '', action: 'replace', value: '' }]); }
+  removeSecret(index: number): void { this.editSecrets.update((secrets) => secrets.filter((_, current) => current !== index)); }
+  parseArgs(value: string): string[] { return value.split('\n').map((arg) => arg.trim()).filter(Boolean); }
   rootSelected(id: string): void { this.selectedRoot.set(id); }
   async addRoot(): Promise<void> { const chat=this.chat(); const id=this.selectedRoot(); if (!chat || !id) return; try { const ids=[...this.additionalRoots().map((root)=>root.project_id),id]; this.additionalRoots.set(await this.api.setAdditionalRoots(chat.id, ids)); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to save additional workspace roots'); } }
   async removeRoot(id: string): Promise<void> { const chat=this.chat(); if (!chat) return; try { this.additionalRoots.set(await this.api.setAdditionalRoots(chat.id, this.additionalRoots().filter((root)=>root.project_id!==id).map((root)=>root.project_id))); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update additional workspace roots'); } }
-  async addMcp(name: string, transport: string, url: string, command: string, secretName: string, secretValue: string): Promise<void> { const chat=this.chat(); if (!chat || !name.trim()) return; try { this.mcpServers.set(await this.api.createMcpServer(chat.id, { name, transport: transport as McpServer['transport'], ...(url.trim() ? { url } : {}), ...(command.trim() ? { command } : {}), ...(secretName.trim() ? { secrets: [{ name: secretName, value: secretValue }] } : {}) })); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to save MCP server'); } }
+  async addMcp(name: string, transport: string, url: string, command: string, secretName: string, secretValue: string): Promise<void> { const chat=this.chat(); if (!chat || !name.trim()) return; try { this.mcpServers.set(await this.api.createMcpServer(chat.id, { name, transport: transport as McpServer['transport'], ...(url.trim() ? { url } : {}), ...(command.trim() ? { command } : {}), args: this.parseArgs(this.createArgs()), ...(secretName.trim() ? { secrets: [{ name: secretName, value: secretValue }] } : {}) })); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to save MCP server'); } }
   async removeMcp(id: string): Promise<void> { const chat=this.chat(); if (!chat) return; try { await this.api.deleteMcpServer(chat.id, id); this.mcpServers.set(this.mcpServers().filter((server) => server.id !== id)); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to remove MCP server'); } }
   async moveMcp(id: string, delta: number): Promise<void> { const chat=this.chat(); const values=[...this.mcpServers()]; const index=values.findIndex((server)=>server.id===id); if(!chat || index < 0 || index + delta < 0 || index + delta >= values.length) return; [values[index], values[index + delta]] = [values[index + delta], values[index]]; try { this.mcpServers.set(await this.api.orderMcpServers(chat.id, values.map((server) => server.id))); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to reorder MCP servers'); } }
-  async saveMcp(server: McpServer, name: string, transport: string, url: string, command: string, secretName: string, secretAction: string, secretValue: string): Promise<void> { const chat=this.chat(); if(!chat) return; try { const secrets = secretName.trim() ? [{ name: secretName, action: secretAction as 'keep' | 'replace' | 'remove', ...(secretAction === 'replace' ? { value: secretValue } : {}) }] : []; this.mcpServers.set(await this.api.editMcpServer(chat.id, server.id, { name, transport: transport as McpServer['transport'], ...(url.trim() ? {url} : {}), ...(command.trim() ? {command} : {}), args: server.args, secrets })); this.editingMcp.set(null); await this.state.retryConnection(chat.id); } catch(error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update MCP server'); } }
+  async saveAdvancedMcp(): Promise<void> { const chat=this.chat(); const server=this.editingServer(); if (!chat || !server) return; try { const secrets = this.editSecrets().filter((secret) => secret.name.trim()).map((secret) => ({ name: secret.name.trim(), action: secret.action, ...(secret.action === 'replace' ? { value: secret.value } : {}) })); this.mcpServers.set(await this.api.editMcpServer(chat.id, server.id, { name: this.editName().trim(), transport: this.editTransport(), ...(this.editUrl().trim() ? { url: this.editUrl().trim() } : {}), ...(this.editCommand().trim() ? { command: this.editCommand().trim() } : {}), args: this.parseArgs(this.editArgs()), secrets })); this.editingMcp.set(null); await this.state.retryConnection(chat.id); } catch (error: unknown) { this.errorMessage.set(error instanceof Error ? error.message : 'Failed to update MCP server'); } }
 
   isGroup(value: NonNullable<ConfigOption['options']>[number]): value is ConfigOptionSelectGroup {
     return 'options' in value;

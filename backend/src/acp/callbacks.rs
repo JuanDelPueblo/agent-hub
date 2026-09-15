@@ -1369,6 +1369,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn additional_roots_are_independently_authorized_and_symlink_escapes_are_rejected() {
+        let primary = tempfile::tempdir().unwrap();
+        let additional = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
+        let handler = CallbackHandler::new_with_roots(
+            CallbackPolicy::AutoApprove,
+            "test-session".into(),
+            "test-agent".into(),
+            event_log,
+            primary.path().to_path_buf(),
+            vec![
+                primary.path().canonicalize().unwrap(),
+                additional.path().canonicalize().unwrap(),
+            ],
+            Arc::new(std::env::vars().collect()),
+            tracker,
+        );
+        let additional_file = additional.path().join("shared.txt");
+        std::fs::write(&additional_file, "shared").unwrap();
+
+        let read = handler
+            .handle_read_file(ReadTextFileRequest::new("s1", additional_file.clone()))
+            .await
+            .unwrap();
+        assert_eq!(read.content, "shared");
+        handler
+            .handle_write_file(WriteTextFileRequest::new(
+                "s1",
+                additional_file.clone(),
+                "updated",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&additional_file).unwrap(),
+            "updated"
+        );
+
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, "outside").unwrap();
+        assert!(handler
+            .handle_read_file(ReadTextFileRequest::new("s1", outside_file.clone()))
+            .await
+            .is_err());
+
+        #[cfg(unix)]
+        {
+            let escape = additional.path().join("escape");
+            std::os::unix::fs::symlink(outside.path(), &escape).unwrap();
+            assert!(handler
+                .handle_read_file(ReadTextFileRequest::new("s1", escape.join("outside.txt")))
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn test_auto_approve_prefers_allow_once_over_allow_always() {
         let handler = make_handler(CallbackPolicy::AutoApprove);
 
