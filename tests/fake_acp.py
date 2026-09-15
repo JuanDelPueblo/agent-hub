@@ -17,6 +17,7 @@ transient_config = mode == "transient-config"
 current = None
 pending_prompt = None
 model = "small"
+current_mode = "ask"
 
 
 def send(obj):
@@ -29,7 +30,14 @@ def reply(id, result):
 
 def options():
     return [{"id": "model", "name": "Model", "type": "select", "currentValue": model,
-             "options": [{"value": "small", "name": "Small"}, {"value": "large", "name": "Large"}]}]
+             "options": [{"value": "small", "name": "Small"}, {"value": "large", "name": "Large"}]},
+            {"id": "web_search", "name": "Web search", "type": "boolean", "currentValue": False,
+             "description": "Let the agent read pages from the web."}]
+
+
+def modes():
+    return {"currentModeId": current_mode,
+            "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "act", "name": "Act"}]}
 
 
 def update(kind, **fields):
@@ -43,13 +51,14 @@ for line in sys.stdin:
         if slow_startup:
             time.sleep(1.0)
         reply(id, {"protocolVersion": 1, "agentCapabilities": {"loadSession": can_load,
-                   "sessionCapabilities": {"list": {}, "close": {}}}})
+                   "sessionCapabilities": {"list": {}, "close": {}, "delete": {}}},
+                   "agentInfo": {"name": "fake-acp", "version": "1.0.0"}, "authMethods": []})
     elif method == "session/new":
         if slow_startup:
             time.sleep(1.0)
         current = str(uuid.uuid4())
         (root / current).write_text("0")
-        reply(id, {"sessionId": current, "configOptions": options()})
+        reply(id, {"sessionId": current, "configOptions": options(), "modes": modes()})
     elif method == "session/load":
         if slow_startup:
             time.sleep(1.0)
@@ -58,7 +67,7 @@ for line in sys.stdin:
             send({"id": id, "error": {"code": -32001, "message": "Missing history"}})
         else:
             update("agent_message_chunk", content={"type": "text", "text": "REPLAY"})
-            reply(id, {"configOptions": options()})
+            reply(id, {"configOptions": options(), "modes": modes()})
     elif method == "session/set_config_option":
         if reject_config:
             send({"id": id, "error": {"code": -32002, "message": "Rejected saved option"}})
@@ -66,12 +75,28 @@ for line in sys.stdin:
             # No `configOptions`: the backend reports a transient reapply failure.
             reply(id, {"unexpected": True})
         else:
-            model = p["value"]
+            # Boolean options carry `type: boolean`; select options are bare ids.
+            if isinstance(p.get("value"), str):
+                model = p["value"]
             reply(id, {"configOptions": options()})
     elif method == "session/list":
         reply(id, {"sessions": [{"sessionId": f.name, "cwd": str(root)} for f in root.iterdir() if f.is_file()]})
     elif method == "session/close":
         reply(id, {})
+    elif method == "session/delete":
+        target = p.get("sessionId")
+        try:
+            (root / target).unlink(missing_ok=True)
+        except Exception:
+            pass
+        reply(id, {})
+    elif method == "session/set_mode":
+        global current_mode
+        current_mode = p.get("modeId", current_mode)
+        reply(id, {})
+    elif method == "$/cancel_request":
+        # Protocol-level cancellation is advisory; ignore per spec.
+        pass
     elif method == "session/cancel":
         if pending_prompt is not None:
             reply(pending_prompt, {"stopReason": "cancelled"})
@@ -102,6 +127,35 @@ for line in sys.stdin:
         elif text == "title-oversized":
             update("session_info_update", title="x" * 500)
             update("agent_message_chunk", content={"type": "text", "text": "oversized-title-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "commands":
+            update("available_commands_update", availableCommands=[
+                {"name": "plan", "description": "Make a plan", "input": {"hint": "goal"}},
+                {"name": "review", "description": "Review changes"}])
+            update("agent_message_chunk", content={"type": "text", "text": "commands-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "modes":
+            update("current_mode_update", currentModeId="act")
+            update("agent_message_chunk", content={"type": "text", "text": "mode-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "usage":
+            update("usage_update", used=100, size=2000, cost={"amount": 0.5, "currency": "USD"})
+            update("agent_message_chunk", content={"type": "text", "text": "usage-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "message-id":
+            update("agent_message_chunk", content={"type": "text", "text": "part-1 "}, messageId="m1")
+            update("agent_message_chunk", content={"type": "text", "text": "part-2"}, messageId="m1")
+            update("agent_message_chunk", content={"type": "text", "text": "next"}, messageId="m2")
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "user-chunk":
+            # Agent-reflected user chunk must not duplicate local history.
+            update("user_message_chunk", content={"type": "text", "text": text})
+            update("agent_message_chunk", content={"type": "text", "text": "user-chunk-sent"})
+            reply(id, {"stopReason": "end_turn"})
+        elif text == "tool-loc":
+            update("tool_call", toolCallId="t1", title="Edit", kind="edit",
+                   locations=[{"path": "/tmp/a.rs", "line": 3}])
+            update("agent_message_chunk", content={"type": "text", "text": "loc-sent"})
             reply(id, {"stopReason": "end_turn"})
         else:
             update("agent_message_chunk", content={"type": "text", "text": f"{current}:{count}:{model}"})

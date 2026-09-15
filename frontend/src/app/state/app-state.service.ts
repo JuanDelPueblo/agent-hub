@@ -27,6 +27,10 @@ export class AppStateService {
   readonly chatsByProject = this.chatStore.chatsByProject;
   readonly configOptionsByChat = this.chatStore.configOptionsByChat;
   readonly configLoadedByChat = this.chatStore.configLoadedByChat;
+  readonly commandsByChat = this.chatStore.commandsByChat;
+  readonly modesByChat = this.chatStore.modesByChat;
+  readonly usageByChat = this.chatStore.usageByChat;
+  readonly elicitationsByChat = this.chatStore.elicitationsByChat;
   readonly reducersByChat = this.chatStore.reducersByChat;
   readonly loadingChats = this.chatStore.loadingChats;
   readonly connectingChats = this.chatStore.connectingChats;
@@ -133,6 +137,17 @@ export class AppStateService {
 
   respondPermission(chatId: string, requestId: string, granted: boolean): Promise<void> {
     return this.chatStore.respondPermission(chatId, requestId, granted);
+  }
+
+  loadChatCommands(chatId: string): Promise<void> { return this.chatStore.loadChatCommands(chatId); }
+  loadChatModes(chatId: string): Promise<void> { return this.chatStore.loadChatModes(chatId); }
+  setChatMode(chatId: string, modeId: string): Promise<void> { return this.chatStore.setChatMode(chatId, modeId); }
+  loadChatUsage(chatId: string): Promise<void> { return this.chatStore.loadChatUsage(chatId); }
+  respondElicitation(chatId: string, id: string, action: string, content?: unknown): Promise<void> {
+    return this.chatStore.respondElicitation(chatId, id, action, content);
+  }
+  deleteRemoteSession(chatId: string, remoteId: string): Promise<void> {
+    return this.chatStore.deleteRemoteSession(chatId, remoteId);
   }
 
   private async initialize(): Promise<void> {

@@ -606,13 +606,13 @@ mod tests {
         log.append(
             &doomed.id,
             "codex",
-            EventPayload::MessageChunk { text: "a".into() },
+            EventPayload::MessageChunk { message_id: None, text: "a".into() },
         )
         .unwrap();
         log.append(
             &kept.id,
             "codex",
-            EventPayload::MessageChunk { text: "b".into() },
+            EventPayload::MessageChunk { message_id: None, text: "b".into() },
         )
         .unwrap();
 
@@ -644,6 +644,7 @@ mod tests {
                 },
                 agent: "codex".into(),
                 payload: EventPayload::MessageChunk {
+                    message_id: None,
                     text: index.to_string(),
                 },
             };

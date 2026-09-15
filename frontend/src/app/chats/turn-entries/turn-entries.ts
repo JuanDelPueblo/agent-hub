@@ -4,13 +4,14 @@ import { MatIconModule } from '@angular/material/icon';
 import type { TurnEntry } from '../../core/api/types';
 import { PermissionCardComponent } from '../../permissions/permission-card/permission-card';
 import { MarkdownComponent } from '../../shared/markdown/markdown.component';
+import { ElicitationCardComponent } from '../elicitation-card/elicitation-card';
 import { PlanViewComponent } from '../plan-view/plan-view';
 import { ToolCallComponent } from '../tool-call/tool-call';
 
 /** Renders the ordered, streaming entries inside one agent turn. */
 @Component({
   selector: 'hub-turn-entries',
-  imports: [MatExpansionModule, MatIconModule, MarkdownComponent, PermissionCardComponent, PlanViewComponent, ToolCallComponent],
+  imports: [ElicitationCardComponent, MatExpansionModule, MatIconModule, MarkdownComponent, PermissionCardComponent, PlanViewComponent, ToolCallComponent],
   templateUrl: './turn-entries.html',
   styleUrl: './turn-entries.scss',
 })

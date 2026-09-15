@@ -29,6 +29,9 @@ export class ChatWorkspaceComponent {
   readonly chat = computed<Chat | null>(() => this.chatId() ? this.state.findChat(this.chatId()) : null);
   readonly items = computed(() => (this.chatId() ? this.state.reducersByChat()[this.chatId()]?.items() ?? [] : []));
   readonly options = computed(() => this.chatId() ? this.state.configOptionsByChat()[this.chatId()] ?? [] : []);
+  readonly commands = computed(() => this.chatId() ? this.state.commandsByChat()[this.chatId()] ?? [] : []);
+  readonly modes = computed(() => this.chatId() ? this.state.modesByChat()[this.chatId()] ?? null : null);
+  readonly usage = computed(() => this.chatId() ? this.state.usageByChat()[this.chatId()] ?? null : null);
   readonly connecting = computed(() => this.chatId() ? this.state.connectingChats().has(this.chatId()) : false);
   readonly connectError = computed(() => this.chatId() ? this.state.connectErrors()[this.chatId()] ?? '' : '');
   readonly rejectedConfig = computed(() => this.chatId() ? this.state.rejectedConfigByChat()[this.chatId()] ?? '' : '');

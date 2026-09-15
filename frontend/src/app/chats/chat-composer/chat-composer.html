@@ -1,4 +1,14 @@
 <div class="composer-column">
+  @if (showCommands()) {
+    <div class="command-list" role="listbox" aria-label="Available slash commands">
+      @for (command of filteredCommands(); track command.name) {
+        <button mat-button type="button" role="option" (click)="selectCommand(command)" [attr.aria-label]="'Insert command ' + command.name">
+          <strong>/{{ command.name }}</strong><span class="command-desc">{{ command.description }}</span>
+          @if (command.input?.hint) { <span class="command-hint">{{ command.input!.hint }}</span> }
+        </button>
+      }
+    </div>
+  }
   <form class="composer" (submit)="$event.preventDefault(); send()">
     <textarea
       class="message-input"

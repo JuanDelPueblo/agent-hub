@@ -18,6 +18,12 @@ export function scenarioFor(text) {
   if (lower.includes('error')) return 'error';
   if (lower.includes('plan-approve')) return 'plan-approve';
   if (lower.includes('permission')) return 'permission';
+  if (lower.includes('elicit-url')) return 'elicit-url';
+  if (lower.includes('elicit')) return 'elicit-form';
+  if (lower.includes('commands')) return 'commands';
+  if (lower.includes('modes')) return 'modes';
+  if (lower.includes('usage')) return 'usage';
+  if (lower.includes('message-id')) return 'message-id';
   if (lower.includes('plan')) return 'plan';
   if (lower.includes('tool')) return 'tools';
   if (lower.includes('long')) return 'long';
@@ -29,12 +35,16 @@ export function isRunning(chatId) {
   return active.has(chatId);
 }
 
-/** Marks the turn for cancellation. The turn stops at its next step. */
+/** Marks the turn for cancellation. Cancellation resolves pending
+ *  permission/elicitation as cancelled, never as denial. */
 export function cancel(chatId) {
   const turn = active.get(chatId);
   if (!turn) return false;
   turn.cancelled = true;
-  turn.resolvePermission?.(false);
+  // None/feigned cancel: resolve with null so the turn records `cancelled`,
+  // not a user denial.
+  turn.resolvePermission?.(null);
+  turn.resolveElicitation?.({ action: 'cancel' });
   return true;
 }
 
@@ -44,6 +54,31 @@ export function answerPermission(chatId, requestId, granted) {
   if (!turn || turn.permissionId !== requestId) return false;
   turn.resolvePermission?.(granted);
   return true;
+}
+
+const pendingElicitations = new Map();
+
+export function listPendingElicitations(chatId) {
+  const byChat = pendingElicitations.get(chatId);
+  return byChat ? [...byChat.values()].map(({ info }) => info) : [];
+}
+
+export function answerElicitation(chatId, id, action, content) {
+  const byChat = pendingElicitations.get(chatId);
+  const pending = byChat?.get(id);
+  if (!pending) return false;
+  byChat.delete(id);
+  pending.resolve({ action, content });
+  return true;
+}
+
+export function cancelElicitations(chatId) {
+  const byChat = pendingElicitations.get(chatId);
+  if (!byChat) return;
+  for (const [id, pending] of byChat) {
+    pending.resolve({ action: 'cancel' });
+  }
+  byChat.clear();
 }
 
 /**
@@ -130,6 +165,10 @@ async function runTurn(state, chat, text, latency, turn) {
     turn.permissionId = null;
     turn.resolvePermission = null;
 
+    // Cancellation is not a denial: finish as cancelled without recording
+    // a denial response.
+    if (granted === null || turn.cancelled) return finishCancelled(emit);
+
     state.emit(chat.id, chat.agent, {
       type: 'permission_response',
       id: requestId,
@@ -143,6 +182,119 @@ async function runTurn(state, chat, text, latency, turn) {
       return;
     }
     await stream('message_chunk', 'Plan approved! Starting implementation now.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'commands') {
+    const commands = [
+      { name: 'plan', description: 'Create an implementation plan', input: { hint: 'goal for the plan' } },
+      { name: 'review', description: 'Review the current changes' },
+    ];
+    state.commandsByChat.set(chat.id, commands);
+    emit({ type: 'available_commands', commands });
+    await pause(200);
+    await stream('message_chunk', 'Commands are ready. Type / to discover them.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'modes') {
+    const modes = {
+      current_mode_id: 'act',
+      available_modes: [
+        { id: 'ask', name: 'Ask', description: 'Ask before acting' },
+        { id: 'act', name: 'Act', description: 'Act without asking' },
+      ],
+    };
+    state.modesByChat.set(chat.id, modes);
+    emit({ type: 'session_modes', state: modes });
+    await pause(200);
+    await stream('message_chunk', 'Switched to Act mode.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'usage') {
+    const usage = { used: 4500, size: 200000, cost_amount: 0.045, cost_currency: 'USD' };
+    state.usageByChat.set(chat.id, usage);
+    emit({ type: 'usage_update', ...usage });
+    await pause(200);
+    await stream('message_chunk', 'Usage updated for this session.');
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'message-id') {
+    // Same messageId means one message; a change starts a new one.
+    // Old clients that omit IDs still merge by adjacency.
+    emit({ type: 'message_chunk', text: 'First part ', message_id: 'msg-1' });
+    await pause(100);
+    emit({ type: 'message_chunk', text: 'second part.', message_id: 'msg-1' });
+    await pause(100);
+    emit({ type: 'message_chunk', text: 'A new message.', message_id: 'msg-2' });
+    await pause(100);
+    emit({ type: 'turn_complete', stop_reason: 'end_turn' });
+    return;
+  }
+
+  if (scenario === 'elicit-form' || scenario === 'elicit-url') {
+    const isUrl = scenario === 'elicit-url';
+    const eid = randomUUID();
+    const info = isUrl
+      ? {
+          id: eid,
+          mode: 'url',
+          message: 'Sign in to continue',
+          url: 'https://example.invalid/auth',
+          elicitation_id: eid,
+          tool_call_id: null,
+        }
+      : {
+          id: eid,
+          mode: 'form',
+          message: 'Provide details to continue',
+          schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', title: 'Name' },
+              age: { type: 'integer', title: 'Age' },
+            },
+            required: ['name'],
+          },
+          elicitation_id: null,
+          tool_call_id: null,
+        };
+    if (!pendingElicitations.has(chat.id)) pendingElicitations.set(chat.id, new Map());
+    const byChat = pendingElicitations.get(chat.id);
+    const answered = new Promise((resolve) => {
+      byChat.set(eid, { info, resolve });
+      turn.resolveElicitation = (result) => resolve(result);
+    });
+    const list = state.elicitationsByChat.get(chat.id) ?? [];
+    list.push(info);
+    state.elicitationsByChat.set(chat.id, list);
+    emit({ type: 'elicitation_request', ...info });
+    const result = await answered;
+    turn.resolveElicitation = null;
+    byChat.delete(eid);
+    state.elicitationsByChat.set(
+      chat.id,
+      (state.elicitationsByChat.get(chat.id) ?? []).filter((e) => e.id !== eid),
+    );
+    const action = result?.action ?? 'cancel';
+    // Form values never persist; only the action marker is recorded.
+    emit({ type: 'elicitation_response', id: eid, action });
+    if (isUrl && action === 'accept') {
+      emit({ type: 'elicitation_complete', elicitation_id: eid });
+    }
+    if (action === 'cancel' || turn.cancelled) return finishCancelled(emit);
+    if (action === 'decline') {
+      await stream('message_chunk', 'Elicitation declined.');
+      emit({ type: 'turn_complete', stop_reason: 'refusal' });
+      return;
+    }
+    await stream('message_chunk', 'Elicitation accepted. Continuing.');
     emit({ type: 'turn_complete', stop_reason: 'end_turn' });
     return;
   }
@@ -175,13 +327,13 @@ async function runTurn(state, chat, text, latency, turn) {
 
   if (scenario !== 'plan') {
     const reads = [
-      { title: 'Read backend/src/web/mod.rs', kind: 'read', output: '203 lines. The router lists every route.' },
+      { title: 'Read backend/src/web/mod.rs', kind: 'read', output: '203 lines. The router lists every route.', locations: [{ path: 'backend/src/web/mod.rs', line: 82 }] },
       { title: 'Grep "api/chats" backend/src/', kind: 'search', output: '7 matches in backend/src/web/hub.rs' },
     ];
     for (const read of reads) {
       if (turn.cancelled) return finishCancelled(emit);
       const toolId = randomUUID();
-      emit({ type: 'tool_call', id: toolId, title: read.title, kind: read.kind, status: 'in_progress' });
+      emit({ type: 'tool_call', id: toolId, title: read.title, kind: read.kind, status: 'in_progress', locations: read.locations ?? null });
       await pause(500);
       emit({
         type: 'tool_call_update',
@@ -198,7 +350,7 @@ async function runTurn(state, chat, text, latency, turn) {
   if (scenario === 'permission' || scenario === 'full' || scenario === 'long') {
     if (turn.cancelled) return finishCancelled(emit);
     const granted = await requestPermission(state, chat, turn, pause);
-    if (turn.cancelled) return finishCancelled(emit);
+    if (granted === null || turn.cancelled) return finishCancelled(emit);
 
     if (!granted) {
       await stream('message_chunk', 'I stopped, because the edit was denied.');
@@ -265,6 +417,7 @@ async function requestPermission(state, chat, turn, pause) {
   turn.permissionId = null;
   turn.resolvePermission = null;
 
+  if (granted === null || turn.cancelled) return null;
   state.emit(chat.id, chat.agent, {
     type: 'permission_response',
     id: requestId,

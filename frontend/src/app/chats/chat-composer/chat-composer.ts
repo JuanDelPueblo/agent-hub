@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import type { ConfigOption, ConfigOptionSelectGroup, ConfigOptionSelectValue, TurnState } from '../../core/api/types';
+import type { AvailableCommand, ConfigOption, ConfigOptionSelectGroup, ConfigOptionSelectValue, TurnState } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 
 @Component({
@@ -22,6 +22,7 @@ export class ChatComposerComponent {
   readonly turnState = input<TurnState>('IDLE');
   readonly disabled = input(false);
   readonly options = input<ConfigOption[]>([]);
+  readonly commands = input<AvailableCommand[]>([]);
 
   readonly message = new FormControl('', { nonNullable: true });
   private readonly state = inject(AppStateService);
@@ -30,8 +31,17 @@ export class ChatComposerComponent {
   readonly prompting = computed(() => this.turnState() === 'PROMPTING');
   readonly cancelling = computed(() => this.turnState() === 'CANCELLING');
   readonly canConfigure = computed(() => !this.disabled() && this.turnState() === 'IDLE');
-  readonly modelOption = computed(() => this.findOption('model', 'model'));
-  readonly reasoningOption = computed(() => this.findOption('reasoning_effort', 'reasoning effort'));
+  readonly modelOption = computed(() => this.findOption('model', 'model', 'model'));
+  readonly reasoningOption = computed(() => this.findOption('reasoning_effort', 'reasoning effort', 'thought_level'));
+  readonly filteredCommands = computed(() => {
+    const text = this.text();
+    if (!text.startsWith('/')) return [];
+    const query = text.slice(1).split(/\s/)[0].toLowerCase();
+    return this.commands()
+      .filter((c) => !query || c.name.toLowerCase().startsWith(query))
+      .slice(0, 6);
+  });
+  readonly showCommands = computed(() => this.filteredCommands().length > 0 && !this.unavailable());
   private readonly unavailable = computed(
     () => this.disabled() || this.prompting() || this.cancelling(),
   );
@@ -122,7 +132,21 @@ export class ChatComposerComponent {
     }
   }
 
-  private findOption(id: string, name: string): ConfigOption | null {
-    return this.options().find((option) => option.type === 'select' && (option.id === id || option.name.toLowerCase() === name)) ?? null;
+  selectCommand(command: AvailableCommand): void {
+    // Invoke a slash command as ordinary prompt text, never via a command RPC.
+    const hint = command.input?.hint ? ` ${command.input.hint}` : ' ';
+    this.message.setValue(`/${command.name}${hint}`);
+  }
+
+  private findOption(id: string, name: string, category?: string): ConfigOption | null {
+    return (
+      this.options().find(
+        (option) =>
+          option.type === 'select' &&
+          (option.id === id ||
+            option.name.toLowerCase() === name ||
+            (category != null && option.category === category)),
+      ) ?? null
+    );
   }
 }

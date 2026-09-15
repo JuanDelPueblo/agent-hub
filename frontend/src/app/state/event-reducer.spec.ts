@@ -114,4 +114,39 @@ describe('EventReducer', () => {
     });
     expect(reducer.turnStartedAt()).toBeNull();
   });
+
+  it('splits messages on message_id change and keeps old agents merging', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'message_chunk', { text: 'a ', message_id: 'm1' }));
+    reducer.ingest(event(2, 'message_chunk', { text: 'b', message_id: 'm1' }));
+    reducer.ingest(event(3, 'message_chunk', { text: 'c', message_id: 'm2' }));
+    const entries = (reducer.items()[0] as { entries: Array<{ text: string }> }).entries;
+    expect(entries).toHaveLength(2);
+    expect(entries[0].text).toBe('a b');
+    expect(entries[1].text).toBe('c');
+
+    const legacy = new EventReducer();
+    legacy.ingest(event(1, 'message_chunk', { text: 'x ' }));
+    legacy.ingest(event(2, 'message_chunk', { text: 'y' }));
+    expect((legacy.items()[0] as { entries: Array<{ text: string }> }).entries[0].text).toBe('x y');
+  });
+
+  it('preserves tool locations and resolves elicitation distinctly', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'tool_call', { id: 't1', title: 'Edit', status: 'in_progress', locations: [{ path: '/a/b.rs', line: 3 }] }));
+    reducer.ingest(event(2, 'elicitation_request', { id: 'e1', mode: 'form', message: 'Need input' }));
+    reducer.ingest(event(3, 'elicitation_response', { id: 'e1', action: 'accept' }));
+    const entries = (reducer.items()[0] as { entries: Array<Record<string, unknown>> }).entries;
+    expect(entries[0]).toMatchObject({ type: 'tool_call', locations: [{ path: '/a/b.rs', line: 3 }] });
+    expect(entries[1]).toMatchObject({ type: 'elicitation_request', responded: true, decision: 'Accepted' });
+  });
+
+  it('ignores session-level dynamic state for the transcript', () => {
+    const reducer = new EventReducer();
+    reducer.ingest(event(1, 'available_commands', { commands: [] }));
+    reducer.ingest(event(2, 'session_modes', { state: {} }));
+    reducer.ingest(event(3, 'usage_update', { used: 1, size: 2 }));
+    reducer.ingest(event(4, 'session_info', { title: 'Hi' }));
+    expect(reducer.items()).toHaveLength(0);
+  });
 });

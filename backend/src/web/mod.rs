@@ -139,6 +139,22 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(hub::clear_config),
         )
         .route("/api/chats/:id/remote-sessions", get(hub::remote_sessions))
+        .route(
+            "/api/chats/:id/remote-sessions/:remote_id",
+            axum::routing::delete(hub::delete_remote_session),
+        )
+        .route("/api/chats/:id/commands", get(hub::chat_commands))
+        .route(
+            "/api/chats/:id/modes",
+            get(hub::chat_modes).patch(hub::set_chat_mode),
+        )
+        .route("/api/chats/:id/usage", get(hub::chat_usage))
+        .route("/api/chats/:id/session-info", get(hub::chat_session_info))
+        .route("/api/chats/:id/elicitations", get(hub::list_elicitations))
+        .route(
+            "/api/chats/:id/elicitations/:eid/respond",
+            post(hub::respond_elicitation),
+        )
         // The installed-agent catalog. The static `registry` segments come
         // before `:id`, so a browse never matches the per-agent routes.
         .route(

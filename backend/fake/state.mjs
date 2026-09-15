@@ -81,6 +81,27 @@ export function defaultConfigOptions(agent) {
   ];
 }
 
+export function defaultCommands() {
+  return [
+    { name: 'plan', description: 'Create an implementation plan', input: { hint: 'goal for the plan' } },
+    { name: 'review', description: 'Review the current changes', input: null },
+  ];
+}
+
+export function defaultModes() {
+  return {
+    current_mode_id: 'ask',
+    available_modes: [
+      { id: 'ask', name: 'Ask', description: 'Ask before acting' },
+      { id: 'act', name: 'Act', description: 'Act without asking' },
+    ],
+  };
+}
+
+export function defaultUsage() {
+  return { used: 1200, size: 200000, cost_amount: 0.012, cost_currency: 'USD' };
+}
+
 export class FakeState {
   constructor() {
     this.projects = new Map();
@@ -90,6 +111,11 @@ export class FakeState {
     // make a default title available for reuse.
     this.nextChatNumber = 1;
     this.configByChat = new Map();
+    this.commandsByChat = new Map();
+    this.modesByChat = new Map();
+    this.usageByChat = new Map();
+    this.elicitationsByChat = new Map();
+    this.remoteSessionsByChat = new Map();
     this.workspaceOptionsByProject = new Map();
     // Live process state, which the real backend holds in the session manager.
     this.runtime = new Map();
@@ -154,6 +180,12 @@ export class FakeState {
     this.events = this.events.filter((event) => event.session_id !== chatId);
     this.tasksByChat.delete(chatId);
     this.blockedChats.delete(chatId);
+    this.commandsByChat.delete(chatId);
+    this.modesByChat.delete(chatId);
+    this.usageByChat.delete(chatId);
+    this.elicitationsByChat.delete(chatId);
+    this.remoteSessionsByChat.delete(chatId);
+    this.configByChat.delete(chatId);
   }
 
   // -------------------------------------------------------------- projects
@@ -217,6 +249,14 @@ export class FakeState {
     };
     this.chats.set(chat.id, chat);
     this.configByChat.set(chat.id, defaultConfigOptions(agent));
+    this.commandsByChat.set(chat.id, defaultCommands());
+    this.modesByChat.set(chat.id, defaultModes());
+    this.usageByChat.set(chat.id, defaultUsage());
+    this.elicitationsByChat.set(chat.id, []);
+    this.remoteSessionsByChat.set(chat.id, [
+      { sessionId: `acp-${chat.id.slice(0, 8)}`, title: finalTitle },
+      { sessionId: 'acp-older-session', title: 'Earlier conversation' },
+    ]);
     this.runtime.set(chat.id, { process: 'STOPPED', turn: 'IDLE' });
     return chat;
   }

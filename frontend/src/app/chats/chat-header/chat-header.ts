@@ -4,7 +4,7 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import type { Chat } from '../../core/api/types';
+import type { Chat, UsageInfo } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 import type { ChatActivity } from '../../state/chat-activity';
 import { ChatStatusBadgeComponent } from '../../shared/chat-status-badge/chat-status-badge';
@@ -21,6 +21,7 @@ import { formatLocalDateTime } from '../../state/chat-activity';
 })
 export class ChatHeaderComponent {
   readonly chat = input<Chat | null>(null);
+  readonly usage = input<UsageInfo | null>(null);
   readonly configRequested = output<void>();
   readonly state = inject(AppStateService);
   readonly activity = computed<ChatActivity>(() => {
@@ -36,6 +37,13 @@ export class ChatHeaderComponent {
     const value = agent ?? '';
     if (!value) return value;
     return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  }
+  usageLabel(): string | null {
+    const usage = this.usage();
+    if (!usage || !usage.size) return null;
+    const pct = Math.round((usage.used / usage.size) * 100);
+    const cost = usage.cost_amount != null ? ` · ${usage.cost_amount.toFixed(3)} ${usage.cost_currency ?? ''}`.trim() : '';
+    return `${usage.used.toLocaleString()}/${usage.size.toLocaleString()} (${pct}%)${cost ? ` ${cost}` : ''}`;
   }
   workspaceTooltip(workspace: NonNullable<Chat['workspace']>): string {
     return `${workspace.branch ?? ''} — ${workspace.mode === 'managed_worktree' ? 'Isolated worktree' : 'Project checkout'}`;

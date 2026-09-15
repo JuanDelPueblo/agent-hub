@@ -30,7 +30,23 @@ pub enum CallbackPolicy {
 }
 
 pub struct PendingPermission {
-    pub tx: oneshot::Sender<bool>,
+    pub tx: oneshot::Sender<Option<bool>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PendingElicitationInfo {
+    pub id: String,
+    pub mode: String,
+    pub message: String,
+    pub schema: Option<serde_json::Value>,
+    pub url: Option<String>,
+    pub elicitation_id: Option<String>,
+    pub tool_call_id: Option<String>,
+}
+
+struct PendingElicitation {
+    tx: oneshot::Sender<agent_client_protocol_schema::ElicitationAction>,
+    info: PendingElicitationInfo,
 }
 
 pub struct CallbackHandler {
@@ -41,6 +57,7 @@ pub struct CallbackHandler {
     cwd: PathBuf,
     base_env: Arc<HashMap<String, String>>,
     pub pending_permissions: Arc<RwLock<HashMap<String, PendingPermission>>>,
+    pending_elicitations: Arc<RwLock<HashMap<String, PendingElicitation>>>,
     task_tracker: Arc<TerminalTaskTracker>,
     active_terminals: Arc<RwLock<HashSet<String>>>,
 }
@@ -69,6 +86,7 @@ impl CallbackHandler {
             cwd,
             base_env,
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
+            pending_elicitations: Arc::new(RwLock::new(HashMap::new())),
             task_tracker,
             active_terminals: Arc::new(RwLock::new(HashSet::new())),
         }
@@ -188,7 +206,7 @@ impl CallbackHandler {
         description: String,
         title: Option<String>,
         kind: Option<String>,
-    ) -> bool {
+    ) -> Option<bool> {
         let (tx, rx) = oneshot::channel();
         let perm_id = uuid::Uuid::new_v4().to_string();
 
@@ -210,10 +228,12 @@ impl CallbackHandler {
         ) {
             tracing::error!("Failed to emit PermissionRequest event: {}", e);
             self.pending_permissions.write().await.remove(&perm_id);
-            return false;
+            return Some(false);
         }
 
-        rx.await.unwrap_or(false)
+        // None means the turn was cancelled: the caller must answer with
+        // ACP's cancelled outcome, never as a user denial.
+        rx.await.unwrap_or(None)
     }
 
     async fn with_write_permission(
@@ -231,16 +251,22 @@ impl CallbackHandler {
                 "Write operations not allowed in ReadOnly mode",
             )),
             CallbackPolicy::Ask => {
-                let granted = self
+                match self
                     .request_user_permission(tool_name, description, None, None)
-                    .await;
-                if granted {
-                    Ok(())
-                } else {
-                    Err(agent_client_protocol_schema::Error::new(
+                    .await
+                {
+                    Some(true) => Ok(()),
+                    Some(false) => Err(agent_client_protocol_schema::Error::new(
                         -32001,
                         "Permission denied by user",
-                    ))
+                    )),
+                    // Turn cancellation is not a denial. Report the
+                    // protocol cancellation code so the agent can tell them
+                    // apart.
+                    None => Err(agent_client_protocol_schema::Error::new(
+                        -32800,
+                        "Request cancelled",
+                    )),
                 }
             }
             CallbackPolicy::AutoApprove => Ok(()),
@@ -312,20 +338,27 @@ impl CallbackHandler {
             }
             CallbackPolicy::Ask => {
                 let (title, description, kind) = format_permission_tool_call(&req.tool_call);
-                let granted = self
+                match self
                     .request_user_permission("session/request_permission", description, title, kind)
-                    .await;
-
-                if granted {
-                    if let Some(approve_id) = approve_option {
-                        make_response(approve_id)
-                    } else {
-                        RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+                    .await
+                {
+                    // Cancellation must surface as ACP `cancelled`, never as
+                    // a user denial.
+                    None => RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                    Some(true) => {
+                        if let Some(approve_id) = approve_option {
+                            make_response(approve_id)
+                        } else {
+                            RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+                        }
                     }
-                } else if let Some(deny_id) = deny_option {
-                    make_response(deny_id)
-                } else {
-                    RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+                    Some(false) => {
+                        if let Some(deny_id) = deny_option {
+                            make_response(deny_id)
+                        } else {
+                            RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+                        }
+                    }
                 }
             }
             CallbackPolicy::AutoApprove => {
@@ -354,7 +387,12 @@ impl CallbackHandler {
                 let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
                     agent_client_protocol_schema::Error::new(-32002, format!("Read failed: {}", e))
                 })?;
-                Ok(ReadTextFileResponse::new(content))
+                // Honor stable `line` (1-based) and `limit` semantics,
+                // including boundary and error cases.
+                let sliced = apply_read_window(&content, req.line, req.limit).map_err(|message| {
+                    agent_client_protocol_schema::Error::new(-32002, message)
+                })?;
+                Ok(ReadTextFileResponse::new(sliced))
             }
         }
     }
@@ -496,16 +534,227 @@ impl CallbackHandler {
     pub async fn respond_permission(&self, perm_id: &str, granted: bool) -> bool {
         let mut pending = self.pending_permissions.write().await;
         if let Some(p) = pending.remove(perm_id) {
-            return p.tx.send(granted).is_ok();
+            return p.tx.send(Some(granted)).is_ok();
         }
         false
     }
 
-    pub async fn cancel_all_pending(&self) {
+    /// Answer every pending permission with ACP `cancelled`. Used when the
+    /// originating turn is cancelled; never records cancellation as denial.
+    pub async fn cancel_pending_permissions(&self) {
         let mut pending = self.pending_permissions.write().await;
         for (_, p) in pending.drain() {
-            let _ = p.tx.send(false);
+            let _ = p.tx.send(None);
         }
+    }
+
+    pub async fn cancel_all_pending(&self) {
+        self.cancel_pending_permissions().await;
+        self.cancel_pending_elicitations().await;
+    }
+
+    pub async fn list_pending_elicitations(&self) -> Vec<PendingElicitationInfo> {
+        self.pending_elicitations
+            .read()
+            .await
+            .values()
+            .map(|p| p.info.clone())
+            .collect()
+    }
+
+    pub async fn respond_elicitation(
+        &self,
+        id: &str,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> anyhow::Result<bool> {
+        let (tx, info) = {
+            let mut pending = self.pending_elicitations.write().await;
+            match pending.remove(id) {
+                Some(p) => (p.tx, p.info),
+                None => return Ok(false),
+            }
+        };
+        let elic_action = match action {
+            "accept" => {
+                // Form values stay transient: validate the flat shape but
+                // never persist them in the event log. Only the action
+                // marker is recorded.
+                let validated = if info.mode == "form" {
+                    match content {
+                        Some(v) => {
+                            let map: std::collections::BTreeMap<
+                                String,
+                                agent_client_protocol_schema::ElicitationContentValue,
+                            > = serde_json::from_value(v).map_err(|e| {
+                                anyhow::anyhow!("Invalid elicitation content: {e}")
+                            })?;
+                            Some(map)
+                        }
+                        None => None,
+                    }
+                } else {
+                    // URL mode carries no form content; ignore any payload.
+                    None
+                };
+                agent_client_protocol_schema::ElicitationAction::Accept(
+                    agent_client_protocol_schema::ElicitationAcceptAction::new()
+                        .content(validated),
+                )
+            }
+            "decline" => agent_client_protocol_schema::ElicitationAction::Decline,
+            _ => agent_client_protocol_schema::ElicitationAction::Cancel,
+        };
+        let action_str = match &elic_action {
+            agent_client_protocol_schema::ElicitationAction::Accept(_) => "accept",
+            agent_client_protocol_schema::ElicitationAction::Decline => "decline",
+            _ => "cancel",
+        }
+        .to_string();
+        let sent = tx.send(elic_action).is_ok();
+        // Record only the action, never form values or URL secrets.
+        let _ = self.event_log.append(
+            &self.session_id,
+            &self.agent_name,
+            EventPayload::ElicitationResponse {
+                id: id.to_string(),
+                action: action_str,
+            },
+        );
+        Ok(sent)
+    }
+
+    pub async fn cancel_pending_elicitations(&self) {
+        let mut pending = self.pending_elicitations.write().await;
+        for (id, p) in pending.drain() {
+            let _ = p.tx.send(agent_client_protocol_schema::ElicitationAction::Cancel);
+            let _ = self.event_log.append(
+                &self.session_id,
+                &self.agent_name,
+                EventPayload::ElicitationResponse {
+                    id,
+                    action: "cancel".to_string(),
+                },
+            );
+        }
+    }
+
+    pub async fn complete_elicitation(&self, elicitation_id: &str) {
+        // URL completion dismisses pending UI without logging secrets.
+        let removed = {
+            let mut pending = self.pending_elicitations.write().await;
+            // Pending id equals elicitation_id for URL mode.
+            pending.remove(elicitation_id).is_some()
+        };
+        if removed {
+            let _ = self.event_log.append(
+                &self.session_id,
+                &self.agent_name,
+                EventPayload::ElicitationResponse {
+                    id: elicitation_id.to_string(),
+                    action: "cancel".to_string(),
+                },
+            );
+        }
+    }
+
+    /// Stable `elicitation/create` for form and URL modes. Unknown modes are
+    /// preserved generically but answered as cancelled rather than rendered
+    /// as a known mode.
+    pub async fn handle_elicitation(
+        &self,
+        rpc_id: String,
+        req: agent_client_protocol_schema::CreateElicitationRequest,
+    ) -> agent_client_protocol_schema::CreateElicitationResponse {
+        use agent_client_protocol_schema::{ElicitationAction, ElicitationMode};
+        let (mode_str, schema, url, elicitation_id, tool_call_id) = match &req.mode {
+            ElicitationMode::Form(f) => {
+                let schema_val = serde_json::to_value(&f.requested_schema).ok();
+                let tool = match &f.scope {
+                    agent_client_protocol_schema::ElicitationScope::Session(s) => {
+                        s.tool_call_id.as_ref().map(|t| t.to_string())
+                    }
+                    _ => None,
+                };
+                ("form".to_string(), schema_val, None, None, tool)
+            }
+            ElicitationMode::Url(u) => {
+                let tool = match &u.scope {
+                    agent_client_protocol_schema::ElicitationScope::Session(s) => {
+                        s.tool_call_id.as_ref().map(|t| t.to_string())
+                    }
+                    _ => None,
+                };
+                (
+                    "url".to_string(),
+                    None,
+                    Some(u.url.clone()),
+                    Some(u.elicitation_id.to_string()),
+                    tool,
+                )
+            }
+            ElicitationMode::Other(o) => {
+                // Never render unknown modes as known. Record opaquely and
+                // answer cancelled.
+                let _ = self.event_log.append(
+                    &self.session_id,
+                    &self.agent_name,
+                    EventPayload::ElicitationRequest {
+                        id: rpc_id.clone(),
+                        mode: format!("other:{}", o.mode),
+                        message: req.message.clone(),
+                        schema: None,
+                        url: None,
+                        elicitation_id: None,
+                        tool_call_id: None,
+                    },
+                );
+                return agent_client_protocol_schema::CreateElicitationResponse::new(
+                    ElicitationAction::Cancel,
+                );
+            }
+        };
+        // Pending id is the stable elicitation_id for URL, else the RPC id.
+        let pending_id = elicitation_id.clone().unwrap_or_else(|| rpc_id.clone());
+        let info = PendingElicitationInfo {
+            id: pending_id.clone(),
+            mode: mode_str.clone(),
+            message: req.message.clone(),
+            schema: schema.clone(),
+            url: url.clone(),
+            elicitation_id: elicitation_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending_elicitations
+            .write()
+            .await
+            .insert(pending_id.clone(), PendingElicitation { tx, info: info.clone() });
+        if let Err(e) = self.event_log.append(
+            &self.session_id,
+            &self.agent_name,
+            EventPayload::ElicitationRequest {
+                id: pending_id.clone(),
+                mode: mode_str,
+                message: req.message,
+                schema,
+                // Display the URL/host for explicit user action. Never
+                // prefetch or open it here.
+                url,
+                elicitation_id,
+                tool_call_id,
+            },
+        ) {
+            tracing::error!("Failed to emit ElicitationRequest event: {}", e);
+            self.pending_elicitations.write().await.remove(&pending_id);
+            return agent_client_protocol_schema::CreateElicitationResponse::new(
+                ElicitationAction::Cancel,
+            );
+        }
+        // Wait for explicit user action. Cancellation (turn torn down)
+        // resolves as Cancel, never as denial, and never logs secrets.
+        let action = rx.await.unwrap_or(ElicitationAction::Cancel);
+        agent_client_protocol_schema::CreateElicitationResponse::new(action)
     }
 
     pub async fn shutdown(&self) {
@@ -518,6 +767,44 @@ impl CallbackHandler {
             }
         }
     }
+}
+
+fn apply_read_window(
+    content: &str,
+    line: Option<u32>,
+    limit: Option<u32>,
+) -> Result<String, String> {
+    // No window means the whole file. `line` is 1-based; `limit` caps the
+    // number of lines. Boundary errors are explicit, never silent truncation.
+    let start = match line {
+        None => 0,
+        Some(0) => return Err("`line` is 1-based and must be >= 1".to_string()),
+        Some(n) => (n - 1) as usize,
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    if start > lines.len() {
+        return Err(format!(
+            "`line` {} is past end of file with {} lines",
+            start + 1,
+            lines.len()
+        ));
+    }
+    let end = match limit {
+        None => lines.len(),
+        Some(0) => start,
+        Some(n) => start.saturating_add(n as usize).min(lines.len()),
+    };
+    if end < start {
+        return Err("Invalid `limit` for `fs/read_text_file`".to_string());
+    }
+    let mut out = lines[start..end].join("\n");
+    // Preserve trailing newline semantics of the original slice.
+    if !out.is_empty() && end < lines.len() {
+        // Middle slice: lines() stripped newlines, rejoin is exact.
+    } else if !content.is_empty() && end == lines.len() && content.ends_with('\n') && !out.is_empty() {
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 async fn drain_terminal_stream<R>(mut reader: R, task: Arc<ManagedTask>)
@@ -972,11 +1259,11 @@ mod tests {
             pending.insert("perm-1".into(), PendingPermission { tx });
         }
         handler.respond_permission("perm-1", true).await;
-        assert!(rx.await.unwrap());
+        assert_eq!(rx.await.unwrap(), Some(true));
     }
 
     #[tokio::test]
-    async fn test_cancel_all_pending() {
+    async fn test_cancel_all_pending_is_cancel_not_denial() {
         let handler = make_handler(CallbackPolicy::Ask);
         let (tx1, rx1) = tokio::sync::oneshot::channel();
         let (tx2, rx2) = tokio::sync::oneshot::channel();
@@ -986,8 +1273,10 @@ mod tests {
             pending.insert("p2".into(), PendingPermission { tx: tx2 });
         }
         handler.cancel_all_pending().await;
-        assert!(!rx1.await.unwrap());
-        assert!(!rx2.await.unwrap());
+        // Cancellation resolves as None so the permission layer can answer
+        // with ACP `cancelled` instead of recording a denial.
+        assert_eq!(rx1.await.unwrap(), None);
+        assert_eq!(rx2.await.unwrap(), None);
         assert!(handler.pending_permissions.read().await.is_empty());
     }
 
@@ -1041,6 +1330,169 @@ mod tests {
         assert_eq!(title, Some("Run tests".to_string()));
         assert_eq!(description, "Execute command: cargo test --all");
         assert!(kind.is_none());
+    }
+
+    #[test]
+    fn test_apply_read_window_honors_line_and_limit() {
+        let content = "a\nb\nc\nd\n";
+        assert_eq!(apply_read_window(content, None, None).unwrap(), "a\nb\nc\nd\n");
+        assert_eq!(apply_read_window(content, Some(2), None).unwrap(), "b\nc\nd\n");
+        assert_eq!(apply_read_window(content, Some(2), Some(2)).unwrap(), "b\nc");
+        assert_eq!(apply_read_window(content, Some(1), Some(0)).unwrap(), "");
+        assert!(apply_read_window(content, Some(0), None).is_err());
+        assert!(apply_read_window(content, Some(10), None).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_with_line_limit_slices_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("lines.txt");
+        std::fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+        let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
+        let handler = CallbackHandler::new(
+            CallbackPolicy::ReadOnly,
+            "s1".into(),
+            "codex".into(),
+            event_log,
+            temp.path().to_path_buf(),
+            Arc::new(std::collections::HashMap::new()),
+            tracker,
+        );
+        let req = ReadTextFileRequest::new("s1", file.clone()).line(2_u32).limit(2_u32);
+        let resp = handler.handle_read_file(req).await.unwrap();
+        assert_eq!(resp.content, "two\nthree");
+        let bad = ReadTextFileRequest::new("s1", file).line(10_u32);
+        assert!(handler.handle_read_file(bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_permission_cancel_returns_cancelled_not_denial() {
+        let handler = Arc::new(make_handler(CallbackPolicy::Ask));
+        let request = agent_client_protocol_schema::RequestPermissionRequest::new(
+            SchemaSessionId::new("s1"),
+            agent_client_protocol_schema::ToolCallUpdate::new(
+                "tool-1",
+                agent_client_protocol_schema::ToolCallUpdateFields::new(),
+            ),
+            vec![
+                PermissionOption::new(
+                    "allow-1",
+                    "Allow once",
+                    agent_client_protocol_schema::PermissionOptionKind::AllowOnce,
+                ),
+                PermissionOption::new(
+                    "deny-1",
+                    "Reject once",
+                    agent_client_protocol_schema::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        );
+        // Spawn the permission and cancel before the user answers. The
+        // outcome must be Cancelled, never a denial.
+        let h = handler.clone();
+        let handle = tokio::spawn(async move { h.handle_request_permission(request).await });
+        // Wait for pending to appear, then cancel.
+        for _ in 0..50 {
+            if !handler.pending_permissions.read().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        handler.cancel_pending_permissions().await;
+        let resp = handle.await.unwrap();
+        assert!(matches!(
+            resp.outcome,
+            agent_client_protocol_schema::RequestPermissionOutcome::Cancelled
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_elicitation_form_accept_decline_cancel() {
+        let handler = Arc::new(make_handler(CallbackPolicy::Ask));
+        for action in ["accept", "decline", "cancel"] {
+            let schema = agent_client_protocol_schema::ElicitationSchema::new().string("name", true);
+            let scope = agent_client_protocol_schema::ElicitationSessionScope::new("sess-1");
+            let req = agent_client_protocol_schema::CreateElicitationRequest::new(
+                agent_client_protocol_schema::ElicitationFormMode::new(scope, schema),
+                "Provide name",
+            );
+            let rpc_id = format!("rpc-{action}-{}", uuid::Uuid::new_v4());
+            let h = handler.clone();
+            // Run elicitation in background so we can answer it.
+            let handle = tokio::spawn(async move { h.handle_elicitation(rpc_id, req).await });
+            // Wait for pending to appear.
+            let mut pending_id = None;
+            for _ in 0..50 {
+                let list = handler.list_pending_elicitations().await;
+                if let Some(first) = list.first() {
+                    pending_id = Some(first.id.clone());
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let pid = pending_id.expect("elicitation pending");
+            let content = if action == "accept" {
+                Some(serde_json::json!({"name": " Ada "}))
+            } else {
+                None
+            };
+            assert!(handler.respond_elicitation(&pid, action, content).await.unwrap());
+            let resp = handle.await.unwrap();
+            match action {
+                "accept" => assert!(matches!(
+                    resp.action,
+                    agent_client_protocol_schema::ElicitationAction::Accept(_)
+                )),
+                "decline" => assert!(matches!(
+                    resp.action,
+                    agent_client_protocol_schema::ElicitationAction::Decline
+                )),
+                _ => assert!(matches!(
+                    resp.action,
+                    agent_client_protocol_schema::ElicitationAction::Cancel
+                )),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_elicitation_url_does_not_prefetch_and_cancels_cleanly() {
+        let handler = Arc::new(make_handler(CallbackPolicy::Ask));
+        let scope = agent_client_protocol_schema::ElicitationSessionScope::new("sess-1");
+        let req = agent_client_protocol_schema::CreateElicitationRequest::new(
+            agent_client_protocol_schema::ElicitationUrlMode::new(
+                scope,
+                "elic-123",
+                "https://example.invalid/auth",
+            ),
+            "Sign in",
+        );
+        let rpc_id = format!("rpc-url-{}", uuid::Uuid::new_v4());
+        let h = handler.clone();
+        let handle = tokio::spawn(async move { h.handle_elicitation(rpc_id, req).await });
+        let mut pending_id = None;
+        for _ in 0..50 {
+            let list = handler.list_pending_elicitations().await;
+            if let Some(first) = list.first() {
+                pending_id = Some(first.clone());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let info = pending_id.expect("url pending");
+        // URL is exposed for explicit user action; nothing is fetched here.
+        assert_eq!(info.mode, "url");
+        assert_eq!(info.url.as_deref(), Some("https://example.invalid/auth"));
+        assert_eq!(info.elicitation_id.as_deref(), Some("elic-123"));
+        // Cancel while pending resolves as Cancel and records only the action.
+        handler.cancel_pending_elicitations().await;
+        let resp = handle.await.unwrap();
+        assert!(matches!(
+            resp.action,
+            agent_client_protocol_schema::ElicitationAction::Cancel
+        ));
+        assert!(handler.list_pending_elicitations().await.is_empty());
     }
 
     #[cfg(target_os = "linux")]

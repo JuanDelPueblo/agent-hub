@@ -415,6 +415,72 @@ pub async fn remote_sessions(
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.remote_sessions(&id, q.cursor).await?))
 }
+pub async fn delete_remote_session(
+    State(s): State<AppState>,
+    Path((id, remote_id)): Path<(String, String)>,
+) -> Result<Json<Value>> {
+    hub(&s)?.delete_remote_session(&id, &remote_id).await?;
+    Ok(Json(serde_json::json!({"success": true})))
+}
+pub async fn chat_commands(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.chat_commands(&id).await?))
+}
+pub async fn chat_modes(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.chat_modes(&id).await?))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModeEdit {
+    mode_id: String,
+}
+pub async fn set_chat_mode(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(m): Json<ModeEdit>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.set_chat_mode(&id, &m.mode_id).await?))
+}
+pub async fn chat_usage(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.chat_usage(&id).await?))
+}
+pub async fn chat_session_info(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.chat_session_info(&id).await?))
+}
+pub async fn list_elicitations(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(hub(&s)?.list_elicitations(&id).await?))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElicitationAnswer {
+    action: String,
+    #[serde(default)]
+    content: Option<Value>,
+}
+pub async fn respond_elicitation(
+    State(s): State<AppState>,
+    Path((id, eid)): Path<(String, String)>,
+    Json(a): Json<ElicitationAnswer>,
+) -> Result<Json<Value>> {
+    let accepted = hub(&s)?
+        .respond_elicitation(&id, &eid, &a.action, a.content)
+        .await?;
+    Ok(Json(serde_json::json!({"success": accepted})))
+}
 pub async fn authorize_environment(
     State(s): State<AppState>,
     Path(id): Path<String>,

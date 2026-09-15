@@ -63,6 +63,11 @@ pub struct AcpClient {
     replaying: Arc<AtomicBool>,
     pub capabilities: tokio::sync::RwLock<serde_json::Value>,
     pub config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    pub available_commands: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    pub session_modes: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    pub last_usage: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    pub agent_info: tokio::sync::RwLock<serde_json::Value>,
+    pub auth_methods: tokio::sync::RwLock<serde_json::Value>,
     writer_tx: mpsc::Sender<WriterMsg>,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<ResponseResult>>>>,
     next_id: AtomicI64,
@@ -121,6 +126,9 @@ impl AcpClient {
         let stderr_handle = tokio::spawn(drain_stderr(proc.stderr, agent_name.clone()));
 
         let config_options = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
+        let available_commands = Arc::new(tokio::sync::RwLock::new(serde_json::json!([])));
+        let session_modes = Arc::new(tokio::sync::RwLock::new(serde_json::Value::Null));
+        let last_usage = Arc::new(tokio::sync::RwLock::new(serde_json::Value::Null));
         let replaying = Arc::new(AtomicBool::new(false));
         let reader_handle = tokio::spawn(reader_task(
             proc.stdout,
@@ -134,6 +142,9 @@ impl AcpClient {
             session_id,
             agent_name,
             config_options.clone(),
+            available_commands.clone(),
+            session_modes.clone(),
+            last_usage.clone(),
             replaying.clone(),
             store,
         ));
@@ -144,6 +155,11 @@ impl AcpClient {
             replaying,
             capabilities: tokio::sync::RwLock::new(serde_json::json!({})),
             config_options,
+            available_commands,
+            session_modes,
+            last_usage,
+            agent_info: tokio::sync::RwLock::new(serde_json::Value::Null),
+            auth_methods: tokio::sync::RwLock::new(serde_json::json!([])),
             writer_tx,
             pending,
             next_id: AtomicI64::new(1),
@@ -210,15 +226,55 @@ impl AcpClient {
     }
 
     pub async fn initialize(&self, _cwd: &Path) -> anyhow::Result<InitializeResponse> {
-        let req = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
-            agent_client_protocol_schema::Implementation::new("pueblo-hub", "0.2.0"),
-        );
-        let mut req = serde_json::to_value(req)?;
-        req["clientCapabilities"] =
-            serde_json::json!({"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true});
+        // Advertise only stable v1 capabilities Pueblo actually implements:
+        // filesystem read/write, terminal, boolean session config, and form
+        // plus URL elicitation. Never advertise partial capabilities.
+        let caps = agent_client_protocol_schema::ClientCapabilities::new()
+            .fs(
+                agent_client_protocol_schema::FileSystemCapabilities::new()
+                    .read_text_file(true)
+                    .write_text_file(true),
+            )
+            .terminal(true)
+            .session(
+                agent_client_protocol_schema::ClientSessionCapabilities::new().config_options(
+                    agent_client_protocol_schema::SessionConfigOptionsCapabilities::new().boolean(
+                        agent_client_protocol_schema::BooleanConfigOptionCapabilities::new(),
+                    ),
+                ),
+            )
+            .elicitation(
+                agent_client_protocol_schema::ElicitationCapabilities::new()
+                    .form(agent_client_protocol_schema::ElicitationFormCapabilities::new())
+                    .url(agent_client_protocol_schema::ElicitationUrlCapabilities::new()),
+            );
+        let req = InitializeRequest::new(ProtocolVersion::LATEST)
+            .client_info(agent_client_protocol_schema::Implementation::new(
+                "pueblo-hub",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .client_capabilities(caps);
         let result = self.send_request("initialize", req).await?;
-        *self.capabilities.write().await = result["agentCapabilities"].clone();
-        Ok(serde_json::from_value(result)?)
+        let response: InitializeResponse = serde_json::from_value(result.clone())?;
+        // Target stable ACP v1 only. Reject pre-release or future versions
+        // explicitly rather than negotiating silently.
+        anyhow::ensure!(
+            response.protocol_version == ProtocolVersion::LATEST,
+            "Agent negotiated unsupported protocol version {}",
+            response.protocol_version.as_u16()
+        );
+        *self.capabilities.write().await = result
+            .get("agentCapabilities")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+        // Preserve generic agent identity and auth metadata for later use.
+        // T107 owns login/logout; this layer only stores what initialize saw.
+        *self.agent_info.write().await = result.get("agentInfo").cloned().unwrap_or(serde_json::Value::Null);
+        *self.auth_methods.write().await = result
+            .get("authMethods")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+        Ok(response)
     }
 
     pub async fn new_session(&self, cwd: &Path) -> anyhow::Result<NewSessionResponse> {
@@ -256,6 +312,12 @@ impl AcpClient {
             .get("configOptions")
             .cloned()
             .unwrap_or(serde_json::json!([]));
+        // Preserve advertised modes/current mode generically. Absent means
+        // the agent has no legacy mode support.
+        *self.session_modes.write().await = result.get("modes").cloned().unwrap_or(serde_json::Value::Null);
+        // Reset commands and usage on (re)open; live updates repopulate them.
+        *self.available_commands.write().await = serde_json::json!([]);
+        *self.last_usage.write().await = serde_json::Value::Null;
         if let Some(saved) = saved {
             if let Some(returned) = result["sessionId"].as_str() {
                 anyhow::ensure!(
@@ -289,11 +351,24 @@ impl AcpClient {
                 ),
             }));
         }
+        // Stable wire shape: `select` sends a bare value id, `boolean`
+        // requires the `type: "boolean"` discriminator. Build the params
+        // from the advertised option kind so strict agents accept both.
+        let is_boolean = self
+            .config_options
+            .read()
+            .await
+            .as_array()
+            .and_then(|a| a.iter().find(|o| o.get("id").and_then(|v| v.as_str()) == Some(id)))
+            .and_then(|o| o.get("type").and_then(|v| v.as_str()))
+            == Some("boolean");
+        let params = if is_boolean {
+            serde_json::json!({"sessionId":session_id,"configId":id,"type":"boolean","value":value})
+        } else {
+            serde_json::json!({"sessionId":session_id,"configId":id,"value":value})
+        };
         let result = self
-            .send_request(
-                "session/set_config_option",
-                serde_json::json!({"sessionId":session_id,"configId":id,"value":value}),
-            )
+            .send_request("session/set_config_option", params)
             .await
             .map_err(|error| {
                 // Only an agent RPC rejection is a saved-config rejection.
@@ -318,6 +393,83 @@ impl AcpClient {
             .clone();
         *self.config_options.write().await = options.clone();
         Ok(options)
+    }
+
+    pub async fn available_commands_snapshot(&self) -> serde_json::Value {
+        self.available_commands.read().await.clone()
+    }
+
+    pub async fn session_modes_snapshot(&self) -> serde_json::Value {
+        self.session_modes.read().await.clone()
+    }
+
+    pub async fn agent_info_snapshot(&self) -> serde_json::Value {
+        self.agent_info.read().await.clone()
+    }
+
+    pub async fn auth_methods_snapshot(&self) -> serde_json::Value {
+        self.auth_methods.read().await.clone()
+    }
+
+    pub async fn usage_snapshot(&self) -> serde_json::Value {
+        self.last_usage.read().await.clone()
+    }
+
+    /// Capability-gated legacy `session/set_mode`. Fails explicitly when the
+    /// agent never advertised modes instead of sending speculatively.
+    pub async fn set_mode(
+        &self,
+        session_id: &SessionId,
+        mode_id: &str,
+    ) -> anyhow::Result<()> {
+        let has_modes = {
+            let modes = self.session_modes.read().await;
+            match &*modes {
+                serde_json::Value::Null => false,
+                v => v.get("available_modes").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty())
+                    || v.get("availableModes").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty()),
+            }
+        };
+        anyhow::ensure!(has_modes, "Agent does not advertise session modes");
+        self.send_request(
+            "session/set_mode",
+            serde_json::json!({"sessionId":session_id,"modeId":mode_id}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Capability-gated `session/delete` for agent-owned remote history.
+    /// Pueblo's own chat deletion stays separate; this only removes the
+    /// agent's remote session record.
+    pub async fn delete_remote_session(&self, session_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.capabilities
+                .read()
+                .await
+                .pointer("/sessionCapabilities/delete")
+                .is_some_and(|v| v.is_object()),
+            "Agent does not advertise session/delete"
+        );
+        self.send_request(
+            "session/delete",
+            serde_json::json!({"sessionId":session_id}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Generic stable `$/cancel_request` for a single outstanding JSON-RPC
+    /// request. Distinct from `session/cancel`, which cancels a whole turn.
+    /// The receiver may ignore `$`-prefixed notifications; never treat a
+    /// failure here as a turn failure.
+    pub async fn cancel_request(&self, request_id: i64) {
+        let _ = self
+            .send_notification(
+                "$/cancel_request",
+                serde_json::json!({"requestId":request_id}),
+            )
+            .await;
     }
 
     pub async fn close_session(&self, session_id: &SessionId) {
@@ -551,6 +703,9 @@ async fn reader_task(
     session_id: String,
     agent_name: String,
     config_options: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    available_commands: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    session_modes: Arc<tokio::sync::RwLock<serde_json::Value>>,
+    last_usage: Arc<tokio::sync::RwLock<serde_json::Value>>,
     replaying: Arc<AtomicBool>,
     store: Option<Arc<crate::store::Store>>,
 ) {
@@ -593,11 +748,17 @@ async fn reader_task(
                     }
                     IncomingKind::Notification { method, params } => {
                         if method == "session/update" {
-                            if params
+                            // Dynamic snapshots update memory even during ACP
+                            // replay so the state stays queryable after
+                            // reconnect. Events emit only for live updates to
+                            // avoid duplicating durable history, except for
+                            // the authoritative config snapshot which keeps
+                            // its historical behavior.
+                            let kind = params
                                 .pointer("/update/sessionUpdate")
                                 .and_then(|v| v.as_str())
-                                == Some("config_option_update")
-                            {
+                                .unwrap_or("");
+                            if kind == "config_option_update" {
                                 if let Some(options) = params
                                     .pointer("/update/configOptions")
                                     .filter(|v| v.is_array())
@@ -614,6 +775,113 @@ async fn reader_task(
                                         break;
                                     }
                                 }
+                            } else if kind == "available_commands_update" {
+                                if let Ok(notif) =
+                                    serde_json::from_value::<SessionNotification>(params.clone())
+                                {
+                                    if let SessionUpdate::AvailableCommandsUpdate(u) = &notif.update {
+                                        let cmds = serde_json::to_value(&u.available_commands)
+                                            .unwrap_or(serde_json::json!([]));
+                                        *available_commands.write().await = cmds.clone();
+                                        if !replaying.load(Ordering::SeqCst) {
+                                            if let Err(error) = event_log.append(
+                                                &session_id,
+                                                &agent_name,
+                                                EventPayload::AvailableCommands { commands: cmds },
+                                            ) {
+                                                tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if replaying.load(Ordering::SeqCst) {
+                                    continue;
+                                }
+                                // Already handled above; avoid double emit.
+                                continue;
+                            } else if kind == "current_mode_update" {
+                                if let Ok(notif) =
+                                    serde_json::from_value::<SessionNotification>(params.clone())
+                                {
+                                    if let SessionUpdate::CurrentModeUpdate(u) = &notif.update {
+                                        let new_id = u.current_mode_id.to_string();
+                                        // Merge into stored SessionModeState so
+                                        // available modes survive the update.
+                                        let mut guard = session_modes.write().await;
+                                        let mut state = (*guard).clone();
+                                        if state.is_null() {
+                                            state = serde_json::json!({
+                                                "current_mode_id": new_id,
+                                                "available_modes": []
+                                            });
+                                        } else if let Some(obj) = state.as_object_mut() {
+                                            obj.insert(
+                                                "current_mode_id".to_string(),
+                                                serde_json::Value::String(new_id.clone()),
+                                            );
+                                            // Accept both wire casings for the
+                                            // current id when merging.
+                                            obj.insert(
+                                                "currentModeId".to_string(),
+                                                serde_json::Value::String(new_id),
+                                            );
+                                        }
+                                        *guard = state.clone();
+                                        drop(guard);
+                                        if !replaying.load(Ordering::SeqCst) {
+                                            if let Err(error) = event_log.append(
+                                                &session_id,
+                                                &agent_name,
+                                                EventPayload::SessionModes { state },
+                                            ) {
+                                                tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if replaying.load(Ordering::SeqCst) {
+                                    continue;
+                                }
+                                continue;
+                            } else if kind == "usage_update" {
+                                if let Ok(notif) =
+                                    serde_json::from_value::<SessionNotification>(params.clone())
+                                {
+                                    if let SessionUpdate::UsageUpdate(u) = &notif.update {
+                                        let snapshot = serde_json::json!({
+                                            "used": u.used,
+                                            "size": u.size,
+                                            "cost": u.cost,
+                                        });
+                                        *last_usage.write().await = snapshot;
+                                        if !replaying.load(Ordering::SeqCst) {
+                                            let (amount, currency) = u
+                                                .cost
+                                                .as_ref()
+                                                .map(|c| (Some(c.amount), Some(c.currency.clone())))
+                                                .unwrap_or((None, None));
+                                            if let Err(error) = event_log.append(
+                                                &session_id,
+                                                &agent_name,
+                                                EventPayload::UsageUpdate {
+                                                    used: u.used,
+                                                    size: u.size,
+                                                    cost_amount: amount,
+                                                    cost_currency: currency,
+                                                },
+                                            ) {
+                                                tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if replaying.load(Ordering::SeqCst) {
+                                    continue;
+                                }
+                                continue;
                             }
                             if replaying.load(Ordering::SeqCst) {
                                 continue;
@@ -626,6 +894,9 @@ async fn reader_task(
                                     &session_id,
                                     &agent_name,
                                     &notif.update,
+                                    &available_commands,
+                                    &session_modes,
+                                    &last_usage,
                                 )
                                 .await
                                 {
@@ -633,6 +904,30 @@ async fn reader_task(
                                     break;
                                 }
                             }
+                        } else if method == CLIENT_METHOD_NAMES.elicitation_complete
+                            || method == "elicitation/complete"
+                        {
+                            // Agent signals a URL elicitation finished
+                            // out-of-band. Clear pending state and tell the
+                            // UI to dismiss it. Never log secret material.
+                            if let Ok(notif) = serde_json::from_value::<
+                                agent_client_protocol_schema::CompleteElicitationNotification,
+                            >(params)
+                            {
+                                let eid = notif.elicitation_id.to_string();
+                                callback_handler.complete_elicitation(&eid).await;
+                                let _ = event_log.append(
+                                    &session_id,
+                                    &agent_name,
+                                    EventPayload::ElicitationComplete {
+                                        elicitation_id: eid,
+                                    },
+                                );
+                            }
+                        } else if method.starts_with("$/") {
+                            // Protocol-level notifications are advisory.
+                            // `$`-prefixed methods may be ignored per spec.
+                            continue;
                         }
                     }
                     IncomingKind::Request { id, method, params } => {
@@ -644,7 +939,8 @@ async fn reader_task(
                                 Ok(p) => p,
                                 Err(_) => return,
                             };
-                            let response = handle_agent_request(&method, params, &handler).await;
+                            let response =
+                                handle_agent_request(&method, params, &id, &handler).await;
 
                             let resp = JsonRpcResponse {
                                 jsonrpc: "2.0",
@@ -718,6 +1014,7 @@ pub fn validate_config_value(
 async fn handle_agent_request(
     method: &str,
     params: serde_json::Value,
+    id: &agent_client_protocol_schema::RequestId,
     handler: &CallbackHandler,
 ) -> Result<serde_json::Value, String> {
     match method {
@@ -725,6 +1022,16 @@ async fn handle_agent_request(
             let req: RequestPermissionRequest =
                 serde_json::from_value(params).map_err(|e| e.to_string())?;
             let resp = handler.handle_request_permission(req).await;
+            serde_json::to_value(resp).map_err(|e| e.to_string())
+        }
+        m if m == CLIENT_METHOD_NAMES.elicitation_create => {
+            let req: agent_client_protocol_schema::CreateElicitationRequest =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let rpc_id = match id {
+                agent_client_protocol_schema::RequestId::Number(n) => n.to_string(),
+                agent_client_protocol_schema::RequestId::String(s) => s.to_string(),
+            };
+            let resp = handler.handle_elicitation(rpc_id, req).await;
             serde_json::to_value(resp).map_err(|e| e.to_string())
         }
         m if m == CLIENT_METHOD_NAMES.fs_read_text_file => {
@@ -793,34 +1100,79 @@ async fn handle_session_update(
     session_id: &str,
     agent_name: &str,
     update: &SessionUpdate,
+    available_commands: &Arc<tokio::sync::RwLock<serde_json::Value>>,
+    session_modes: &Arc<tokio::sync::RwLock<serde_json::Value>>,
+    last_usage: &Arc<tokio::sync::RwLock<serde_json::Value>>,
 ) -> anyhow::Result<()> {
     let payload = match update {
         SessionUpdate::SessionInfoUpdate(info) => {
-            if let ::agent_client_protocol_schema::MaybeUndefined::Value(title) = &info.title {
-                let trimmed = title.trim();
-                if !trimmed.is_empty() && trimmed.len() <= 200 {
-                    if let Some(st) = store {
-                        let mut changed = false;
-                        let _ = st.update_chat(session_id, |c| {
-                            // Store's read/modify/write lock orders this
-                            // update against a manual rename. Whichever
-                            // mutation commits first is deterministic, and a
-                            // committed manual override always wins.
-                            if !c.title_overridden && c.title != trimmed {
-                                c.title = trimmed.to_string();
-                                changed = true;
+            // Preserve title for the chat row plus generic updated_at.
+            // Unknown _meta stays opaque; no provider interpretation.
+            let title_opt = match &info.title {
+                ::agent_client_protocol_schema::MaybeUndefined::Value(t) => {
+                    let trimmed = t.trim();
+                    if !trimmed.is_empty() && trimmed.len() <= 200 {
+                        if let Some(st) = store {
+                            let mut changed = false;
+                            let _ = st.update_chat(session_id, |c| {
+                                if !c.title_overridden && c.title != trimmed {
+                                    c.title = trimmed.to_string();
+                                    changed = true;
+                                }
+                            });
+                            if changed {
+                                event_log.append(
+                                    session_id,
+                                    agent_name,
+                                    EventPayload::MetadataChanged {},
+                                )?;
                             }
-                        });
-                        if changed {
-                            event_log.append(
-                                session_id,
-                                agent_name,
-                                EventPayload::MetadataChanged {},
-                            )?;
                         }
+                        Some(trimmed.to_string())
+                    } else {
+                        None
                     }
                 }
+                _ => None,
+            };
+            let updated_at_opt = match &info.updated_at {
+                ::agent_client_protocol_schema::MaybeUndefined::Value(t) => {
+                    let trimmed = t.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                }
+                _ => None,
+            };
+            // Emit generic session metadata even when the title was
+            // ignored for the chat row, so updated_at is not silently
+            // dropped. Skip entirely when the agent sent nothing useful.
+            if title_opt.is_none() && updated_at_opt.is_none() {
+                // Still check Null-clear: if either was explicit Null, emit
+                // a clear marker so the UI can drop stale metadata.
+                let title_is_null = matches!(
+                    &info.title,
+                    ::agent_client_protocol_schema::MaybeUndefined::Null
+                );
+                let updated_is_null = matches!(
+                    &info.updated_at,
+                    ::agent_client_protocol_schema::MaybeUndefined::Null
+                );
+                if !title_is_null && !updated_is_null {
+                    return Ok(());
+                }
             }
+            EventPayload::SessionInfo {
+                title: title_opt,
+                updated_at: updated_at_opt,
+            }
+        }
+        SessionUpdate::UserMessageChunk(_) => {
+            // Agent-reflected user chunks must not duplicate Pueblo's
+            // locally persisted UserMessage during replay/resume. The local
+            // echo in admit_turn is authoritative; drop the reflection.
             return Ok(());
         }
         SessionUpdate::AgentMessageChunk(chunk) => {
@@ -833,6 +1185,7 @@ async fn handle_session_update(
             }
             EventPayload::MessageChunk {
                 text: text.to_string(),
+                message_id: chunk.message_id.as_ref().map(|m| m.to_string()),
             }
         }
         SessionUpdate::AgentThoughtChunk(chunk) => {
@@ -845,6 +1198,7 @@ async fn handle_session_update(
             }
             EventPayload::ThoughtChunk {
                 text: text.to_string(),
+                message_id: chunk.message_id.as_ref().map(|m| m.to_string()),
             }
         }
         SessionUpdate::ToolCall(tc) => {
@@ -854,12 +1208,18 @@ async fn handle_session_update(
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))
                 .or_else(|| Some(format!("{:?}", tc.kind).to_lowercase()));
             let parent_id = extract_parent_id(tc.meta.as_ref());
+            let locations = if tc.locations.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&tc.locations).ok()
+            };
             EventPayload::ToolCall {
                 id: tc.tool_call_id.to_string(),
                 title,
                 status: "in_progress".to_string(),
                 kind,
                 parent_id,
+                locations,
             }
         }
         SessionUpdate::ToolCallUpdate(tcu) => {
@@ -880,12 +1240,19 @@ async fn handle_session_update(
                     .and_then(|v| v.as_str().map(ToOwned::to_owned))
                     .unwrap_or_else(|| format!("{:?}", k).to_lowercase())
             });
+            let locations = tcu
+                .fields
+                .locations
+                .as_ref()
+                .filter(|l| !l.is_empty())
+                .and_then(|l| serde_json::to_value(l).ok());
             EventPayload::ToolCallUpdate {
                 id: tcu.tool_call_id.to_string(),
                 status: serialize_optional_enum(&tcu.fields.status),
                 title,
                 kind,
                 output: clean_tool_output(format_tool_call_output(&tcu.fields)),
+                locations,
             }
         }
         SessionUpdate::Plan(plan) => {
@@ -898,6 +1265,62 @@ async fn handle_session_update(
                 })
                 .collect();
             EventPayload::Plan { entries }
+        }
+        SessionUpdate::AvailableCommandsUpdate(u) => {
+            let cmds =
+                serde_json::to_value(&u.available_commands).unwrap_or(serde_json::json!([]));
+            *available_commands.write().await = cmds.clone();
+            EventPayload::AvailableCommands { commands: cmds }
+        }
+        SessionUpdate::CurrentModeUpdate(u) => {
+            let new_id = u.current_mode_id.to_string();
+            let mut guard = session_modes.write().await;
+            let mut state = (*guard).clone();
+            if state.is_null() {
+                state = serde_json::json!({
+                    "current_mode_id": new_id,
+                    "available_modes": []
+                });
+            } else if let Some(obj) = state.as_object_mut() {
+                obj.insert(
+                    "current_mode_id".to_string(),
+                    serde_json::Value::String(new_id.clone()),
+                );
+                obj.insert(
+                    "currentModeId".to_string(),
+                    serde_json::Value::String(new_id),
+                );
+            }
+            *guard = state.clone();
+            drop(guard);
+            EventPayload::SessionModes { state }
+        }
+        SessionUpdate::ConfigOptionUpdate(u) => {
+            // Authoritative snapshot; reader_task already emitted for live
+            // updates. This path covers direct handling (tests) and keeps
+            // ordering/descriptions/values/groups/categories generically.
+            let options =
+                serde_json::to_value(&u.config_options).unwrap_or(serde_json::json!([]));
+            EventPayload::ConfigOptions { options }
+        }
+        SessionUpdate::UsageUpdate(u) => {
+            let snapshot = serde_json::json!({
+                "used": u.used,
+                "size": u.size,
+                "cost": u.cost,
+            });
+            *last_usage.write().await = snapshot;
+            let (amount, currency) = u
+                .cost
+                .as_ref()
+                .map(|c| (Some(c.amount), Some(c.currency.clone())))
+                .unwrap_or((None, None));
+            EventPayload::UsageUpdate {
+                used: u.used,
+                size: u.size,
+                cost_amount: amount,
+                cost_currency: currency,
+            }
         }
         _ => return Ok(()),
     };
@@ -1071,9 +1494,14 @@ mod tests {
 
         let params =
             serde_json::to_value(ReadTextFileRequest::new("session-1", file_path)).unwrap();
-        let result = handle_agent_request(CLIENT_METHOD_NAMES.fs_read_text_file, params, &handler)
-            .await
-            .unwrap();
+        let result = handle_agent_request(
+            CLIENT_METHOD_NAMES.fs_read_text_file,
+            params,
+            &agent_client_protocol_schema::RequestId::Number(1),
+            &handler,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result["content"], "hello");
     }
@@ -1131,5 +1559,171 @@ mod tests {
             extract_tool_call_title(Some("Read src/lib.rs (1 - 50)"), None),
             "Read src/lib.rs (1 - 50)"
         );
+    }
+
+    fn test_log() -> Arc<EventLog> {
+        Arc::new(EventLog::new(100))
+    }
+
+    fn test_arcs() -> (
+        Arc<tokio::sync::RwLock<serde_json::Value>>,
+        Arc<tokio::sync::RwLock<serde_json::Value>>,
+        Arc<tokio::sync::RwLock<serde_json::Value>>,
+    ) {
+        (
+            Arc::new(tokio::sync::RwLock::new(serde_json::json!([]))),
+            Arc::new(tokio::sync::RwLock::new(serde_json::Value::Null)),
+            Arc::new(tokio::sync::RwLock::new(serde_json::Value::Null)),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_available_commands_preserve_ordering_and_hints() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let update = SessionUpdate::AvailableCommandsUpdate(
+            agent_client_protocol_schema::AvailableCommandsUpdate::new(vec![
+                agent_client_protocol_schema::AvailableCommand::new("plan", "Make a plan").input(
+                    agent_client_protocol_schema::AvailableCommandInput::Unstructured(
+                        agent_client_protocol_schema::UnstructuredCommandInput::new("goal"),
+                    ),
+                ),
+                agent_client_protocol_schema::AvailableCommand::new("review", "Review changes"),
+            ]),
+        );
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        assert_eq!(cmds.read().await.as_array().unwrap().len(), 2);
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(e) => e,
+            _ => panic!("expected complete"),
+        };
+        assert!(matches!(
+            &events[0].payload,
+            crate::events::EventPayload::AvailableCommands { commands } if commands.as_array().unwrap().len() == 2
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_current_mode_update_merges_and_old_agents_without_modes_work() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        // Agent without modes: Null stays Null, no crash.
+        let update = SessionUpdate::CurrentModeUpdate(
+            agent_client_protocol_schema::CurrentModeUpdate::new("act"),
+        );
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        assert_eq!(modes.read().await["current_mode_id"], "act");
+    }
+
+    #[tokio::test]
+    async fn test_user_message_chunk_does_not_duplicate() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let chunk = agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(
+            TextContent::new("hello"),
+        ));
+        let update = SessionUpdate::UserMessageChunk(chunk);
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(e) => e,
+            _ => panic!("expected complete"),
+        };
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_message_ids_survive_and_old_chunks_without_ids_work() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let with_id = SessionUpdate::AgentMessageChunk(
+            agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(
+                TextContent::new("hi"),
+            ))
+            .message_id("msg-1"),
+        );
+        handle_session_update(&log, &None, "s1", "codex", &with_id, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        let without_id = SessionUpdate::AgentMessageChunk(
+            agent_client_protocol_schema::ContentChunk::new(ContentBlock::Text(TextContent::new(
+                "old",
+            ))),
+        );
+        handle_session_update(&log, &None, "s1", "codex", &without_id, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(e) => e,
+            _ => panic!("expected complete"),
+        };
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0].payload,
+            crate::events::EventPayload::MessageChunk { message_id: Some(id), .. } if id == "msg-1"
+        ));
+        assert!(matches!(
+            &events[1].payload,
+            crate::events::EventPayload::MessageChunk { message_id: None, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_usage_update_exposes_context_and_cost_generically() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let update = SessionUpdate::UsageUpdate(
+            agent_client_protocol_schema::UsageUpdate::new(100, 2000)
+                .cost(agent_client_protocol_schema::Cost::new(0.5, "USD")),
+        );
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        assert_eq!(usage.read().await["used"], 100);
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(e) => e,
+            _ => panic!("expected complete"),
+        };
+        assert!(matches!(
+            &events[0].payload,
+            crate::events::EventPayload::UsageUpdate { used: 100, size: 2000, cost_amount: Some(_), cost_currency: Some(_), .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_tool_locations_preserved() {
+        let log = test_log();
+        let (cmds, modes, usage) = test_arcs();
+        let tc = agent_client_protocol_schema::ToolCall::new("t1", "Edit")
+            .locations(vec![agent_client_protocol_schema::ToolCallLocation::new("/a/b.rs").line(3_u32)]);
+        let update = SessionUpdate::ToolCall(tc);
+        handle_session_update(&log, &None, "s1", "codex", &update, &cmds, &modes, &usage)
+            .await
+            .unwrap();
+        let events = match log.replay_from(1) {
+            crate::events::ReplayResult::Complete(e) => e,
+            _ => panic!("expected complete"),
+        };
+        assert!(matches!(
+            &events[0].payload,
+            crate::events::EventPayload::ToolCall { locations: Some(_), .. }
+        ));
+    }
+
+    #[test]
+    fn test_validate_boolean_config_and_select() {
+        let options = serde_json::json!([
+            {"id": "model", "type": "select", "options": [{"value": "small", "name": "Small"}]},
+            {"id": "web", "type": "boolean"}
+        ]);
+        assert!(validate_config_value(&options, "model", &serde_json::json!("small")).is_ok());
+        assert!(validate_config_value(&options, "model", &serde_json::json!("big")).is_err());
+        assert!(validate_config_value(&options, "web", &serde_json::json!(true)).is_ok());
+        assert!(validate_config_value(&options, "web", &serde_json::json!("yes")).is_err());
     }
 }

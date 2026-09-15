@@ -36,6 +36,10 @@ export class ChatSessionStore {
   readonly chatsByProject = signal<ChatMap>({});
   readonly configOptionsByChat = signal<ConfigMap>({});
   readonly configLoadedByChat = signal<BooleanMap>({});
+  readonly commandsByChat = signal<Record<string, import('../core/api/types').AvailableCommand[]>>({});
+  readonly modesByChat = signal<Record<string, import('../core/api/types').SessionModes | null>>({});
+  readonly usageByChat = signal<Record<string, import('../core/api/types').UsageInfo | null>>({});
+  readonly elicitationsByChat = signal<Record<string, import('../core/api/types').ElicitationInfo[]>>({});
   readonly reducersByChat = signal<Record<string, EventReducer>>({});
   readonly loadingChats = signal<ReadonlySet<string>>(new Set());
   readonly connectingChats = signal<ReadonlySet<string>>(new Set());
@@ -91,6 +95,11 @@ export class ChatSessionStore {
     if (!this.configLoadedByChat()[chatId]) {
       await this.loadChatConfig(chatId).catch(() => undefined);
     }
+    // Dynamic session state stays queryable after reconnect.
+    void this.loadChatCommands(chatId).catch(() => undefined);
+    void this.loadChatModes(chatId).catch(() => undefined);
+    void this.loadChatUsage(chatId).catch(() => undefined);
+    void this.loadElicitations(chatId).catch(() => undefined);
   }
 
   loadChatHistory(chatId: string): Promise<void> {
@@ -192,6 +201,14 @@ export class ChatSessionStore {
           this.setError(chatId, this.errorMessage(error, 'Failed to load agent configuration'));
           throw error;
         }
+        // Dynamic state stays queryable after reconnect; failures leave
+        // prior snapshots in place.
+        await Promise.allSettled([
+          this.loadChatCommands(chatId),
+          this.loadChatModes(chatId),
+          this.loadChatUsage(chatId),
+          this.loadElicitations(chatId),
+        ]);
         return updated;
       } finally {
         this.setSetValue(this.connectingChats, chatId, false);
@@ -206,6 +223,108 @@ export class ChatSessionStore {
     const options = this.normalizeConfigOptions(await this.api.fetchChatConfig(chatId));
     this.setConfig(chatId, options);
     return options;
+  }
+
+  async loadChatCommands(chatId: string): Promise<void> {
+    try {
+      const commands = await this.api.fetchChatCommands(chatId);
+      this.commandsByChat.update((c) => ({ ...c, [chatId]: commands ?? [] }));
+    } catch {
+      // Old agents omit commands; an empty list keeps the composer working.
+    }
+  }
+
+  async loadChatModes(chatId: string): Promise<void> {
+    try {
+      const modes = this.normalizeModes(await this.api.fetchChatModes(chatId));
+      this.modesByChat.update((c) => ({ ...c, [chatId]: modes ?? null }));
+    } catch {
+      this.modesByChat.update((c) => ({ ...c, [chatId]: null }));
+    }
+  }
+
+  async setChatMode(chatId: string, modeId: string): Promise<void> {
+    const modes = this.normalizeModes(await this.api.setChatMode(chatId, modeId));
+    this.modesByChat.update((c) => ({ ...c, [chatId]: modes }));
+  }
+
+  private normalizeModes(value: unknown): import('../core/api/types').SessionModes | null {
+    if (!value || typeof value !== 'object') return null;
+    const obj = value as Record<string, unknown>;
+    const current =
+      typeof obj['current_mode_id'] === 'string'
+        ? (obj['current_mode_id'] as string)
+        : typeof obj['currentModeId'] === 'string'
+          ? (obj['currentModeId'] as string)
+          : null;
+    const rawModes = Array.isArray(obj['available_modes'])
+      ? (obj['available_modes'] as unknown[])
+      : Array.isArray(obj['availableModes'])
+        ? (obj['availableModes'] as unknown[])
+        : null;
+    if (!current || !rawModes) return null;
+    return {
+      current_mode_id: current,
+      available_modes: rawModes.map((m) => {
+        const entry = (m ?? {}) as Record<string, unknown>;
+        return {
+          id: String(entry['id'] ?? ''),
+          name: String(entry['name'] ?? entry['id'] ?? ''),
+          description: typeof entry['description'] === 'string' ? (entry['description'] as string) : null,
+        };
+      }),
+    };
+  }
+
+  async loadChatUsage(chatId: string): Promise<void> {
+    try {
+      const usage = this.normalizeUsage(await this.api.fetchChatUsage(chatId));
+      this.usageByChat.update((c) => ({ ...c, [chatId]: usage ?? null }));
+    } catch {
+      // Usage is optional; absence leaves the indicator hidden.
+    }
+  }
+
+  private normalizeUsage(value: unknown): import('../core/api/types').UsageInfo | null {
+    if (!value || typeof value !== 'object') return null;
+    const obj = value as Record<string, unknown>;
+    const used = Number(obj['used']);
+    const size = Number(obj['size']);
+    if (!Number.isFinite(used) || !Number.isFinite(size)) return null;
+    let amount: number | null = null;
+    let currency: string | null = null;
+    if (typeof obj['cost_amount'] === 'number') amount = obj['cost_amount'] as number;
+    else if (obj['cost'] && typeof (obj['cost'] as Record<string, unknown>)['amount'] === 'number') {
+      amount = (obj['cost'] as Record<string, unknown>)['amount'] as number;
+    }
+    if (typeof obj['cost_currency'] === 'string') currency = obj['cost_currency'] as string;
+    else if (obj['cost'] && typeof (obj['cost'] as Record<string, unknown>)['currency'] === 'string') {
+      currency = (obj['cost'] as Record<string, unknown>)['currency'] as string;
+    }
+    return { used, size, cost_amount: amount, cost_currency: currency };
+  }
+
+  async loadElicitations(chatId: string): Promise<void> {
+    try {
+      const list = await this.api.fetchElicitations(chatId);
+      this.elicitationsByChat.update((c) => ({ ...c, [chatId]: list ?? [] }));
+    } catch {
+      this.elicitationsByChat.update((c) => ({ ...c, [chatId]: [] }));
+    }
+  }
+
+  async respondElicitation(chatId: string, id: string, action: string, content?: unknown): Promise<void> {
+    await this.api.respondElicitation(chatId, id, action, content);
+    // The elicitation_response event will mark the entry; optimistically drop
+    // it from the pending list so the UI feels immediate.
+    this.elicitationsByChat.update((c) => ({
+      ...c,
+      [chatId]: (c[chatId] ?? []).filter((e) => e.id !== id),
+    }));
+  }
+
+  async deleteRemoteSession(chatId: string, remoteId: string): Promise<void> {
+    await this.api.deleteRemoteSession(chatId, remoteId);
   }
 
   async sendPrompt(chatId: string, text: string): Promise<void> {
@@ -310,6 +429,36 @@ export class ChatSessionStore {
       this.setConfig(sessionId, this.normalizeConfigOptions(payload.options));
       return;
     }
+    if (payload.type === 'available_commands' && sessionId) {
+      const commands = Array.isArray(payload['commands'])
+        ? (payload['commands'] as import('../core/api/types').AvailableCommand[])
+        : [];
+      this.commandsByChat.update((c) => ({ ...c, [sessionId]: commands }));
+      return;
+    }
+    if (payload.type === 'session_modes' && sessionId) {
+      const state = this.normalizeModes(payload['state'] ?? null);
+      this.modesByChat.update((c) => ({ ...c, [sessionId]: state }));
+      return;
+    }
+    if (payload.type === 'usage_update' && sessionId) {
+      const usage = this.normalizeUsage({
+        used: payload['used'],
+        size: payload['size'],
+        cost_amount: payload['cost_amount'],
+        cost_currency: payload['cost_currency'],
+        cost: payload['cost'],
+      });
+      if (usage) this.usageByChat.update((c) => ({ ...c, [sessionId]: usage }));
+      return;
+    }
+    if (payload.type === 'elicitation_request' && sessionId) {
+      // Keep the queryable pending list in sync for reconnect.
+      void this.loadElicitations(sessionId).catch(() => undefined);
+    }
+    if ((payload.type === 'elicitation_response' || payload.type === 'elicitation_complete') && sessionId) {
+      void this.loadElicitations(sessionId).catch(() => undefined);
+    }
 
     if (!sessionId) return;
     const reducers = { ...this.reducersByChat() };
@@ -404,6 +553,10 @@ export class ChatSessionStore {
       this.reducersByChat,
       this.configOptionsByChat,
       this.configLoadedByChat,
+      this.commandsByChat,
+      this.modesByChat,
+      this.usageByChat,
+      this.elicitationsByChat,
       this.connectErrors,
       this.rejectedConfigByChat,
       this.blockedEnvrcByChat,
@@ -511,6 +664,10 @@ export class ChatSessionStore {
               return {
                 value: valueEntry['value'],
                 name: String(valueEntry['name'] ?? valueEntry['label'] ?? valueEntry['value'] ?? ''),
+                description:
+                  typeof valueEntry['description'] === 'string'
+                    ? (valueEntry['description'] as string)
+                    : undefined,
               };
             }),
           };
@@ -518,6 +675,8 @@ export class ChatSessionStore {
         return {
           value: entry['value'],
           name: String(entry['name'] ?? entry['label'] ?? entry['value'] ?? ''),
+          description:
+            typeof entry['description'] === 'string' ? (entry['description'] as string) : undefined,
         };
       });
       return {
@@ -526,6 +685,7 @@ export class ChatSessionStore {
         type: String(option['type'] ?? ''),
         currentValue: option['currentValue'] ?? option['current_value'],
         description: typeof option['description'] === 'string' ? option['description'] : undefined,
+        category: typeof option['category'] === 'string' ? option['category'] : undefined,
         options,
       };
     });

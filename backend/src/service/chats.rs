@@ -632,6 +632,78 @@ impl HubService {
             .list_remote_sessions(cursor)
             .await?)
     }
+
+    pub async fn delete_remote_session(
+        &self,
+        chat_id: &str,
+        remote_id: &str,
+    ) -> ServiceResult<()> {
+        Ok(self
+            .live(chat_id)
+            .await?
+            .delete_remote_session(remote_id)
+            .await?)
+    }
+
+    pub async fn chat_commands(&self, chat_id: &str) -> ServiceResult<Value> {
+        let live = self.live(chat_id).await?;
+        // Ensure the agent is running so commands are current, but do not
+        // fail the query when the chat is stopped; return the last snapshot.
+        let _ = live.ensure_running().await;
+        Ok(live.available_commands().await)
+    }
+
+    pub async fn chat_modes(&self, chat_id: &str) -> ServiceResult<Value> {
+        let live = self.live(chat_id).await?;
+        let _ = live.ensure_running().await;
+        Ok(live.session_modes().await)
+    }
+
+    pub async fn set_chat_mode(
+        &self,
+        chat_id: &str,
+        mode_id: &str,
+    ) -> ServiceResult<Value> {
+        Ok(self.live(chat_id).await?.set_mode(mode_id).await?)
+    }
+
+    pub async fn chat_usage(&self, chat_id: &str) -> ServiceResult<Value> {
+        let live = self.live(chat_id).await?;
+        Ok(live.usage_snapshot().await)
+    }
+
+    pub async fn chat_session_info(&self, chat_id: &str) -> ServiceResult<Value> {
+        let live = self.live(chat_id).await?;
+        Ok(live.agent_info().await)
+    }
+
+    pub async fn list_elicitations(&self, chat_id: &str) -> ServiceResult<Value> {
+        let live = self.live(chat_id).await?;
+        let pending = live.pending_elicitations().await;
+        Ok(serde_json::to_value(pending).unwrap_or(serde_json::json!([])))
+    }
+
+    pub async fn respond_elicitation(
+        &self,
+        chat_id: &str,
+        id: &str,
+        action: &str,
+        content: Option<Value>,
+    ) -> ServiceResult<bool> {
+        let normalized = match action {
+            "accept" | "decline" | "cancel" => action,
+            _ => {
+                return Err(ServiceError::Invalid(
+                    "Elicitation action must be accept, decline, or cancel".into(),
+                ))
+            }
+        };
+        Ok(self
+            .live(chat_id)
+            .await?
+            .respond_elicitation(id, normalized, content)
+            .await?)
+    }
 }
 
 async fn inspect_with_branches(path: PathBuf) -> ServiceResult<(RepoInfo, Vec<BranchInfo>)> {

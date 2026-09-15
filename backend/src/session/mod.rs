@@ -354,6 +354,31 @@ impl AcpSession {
                 options: client.config_options.read().await.clone(),
             },
         )?;
+        // Publish initial dynamic state so a reconnecting frontend can
+        // query modes/commands without waiting for the next notification.
+        let modes_snapshot = client.session_modes_snapshot().await;
+        if !modes_snapshot.is_null() {
+            let _ = self.event_log.append(
+                &self.id,
+                &self.key.agent,
+                EventPayload::SessionModes {
+                    state: modes_snapshot,
+                },
+            );
+        }
+        let cmds_snapshot = client.available_commands_snapshot().await;
+        if cmds_snapshot
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+        {
+            let _ = self.event_log.append(
+                &self.id,
+                &self.key.agent,
+                EventPayload::AvailableCommands {
+                    commands: cmds_snapshot,
+                },
+            );
+        }
         *self.client.write().await = Some(Arc::new(client));
         self.set_states(ProcessState::Running, TurnState::Idle)
             .await?;
@@ -399,6 +424,7 @@ impl AcpSession {
             &self.key.agent,
             EventPayload::UserMessage {
                 text: message.clone(),
+                message_id: None,
             },
             turn_started_at,
         )?;
@@ -582,7 +608,7 @@ impl AcpSession {
                 .iter()
                 .filter(|e| e.session_id == self.id)
                 .filter_map(|e| match &e.payload {
-                    EventPayload::MessageChunk { text } => Some(text.as_str()),
+                    EventPayload::MessageChunk { text, .. } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -771,13 +797,17 @@ impl AcpSession {
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
-        // Resolve callbacks before cancellation, so the prompt can finish.
+        // A cancelled turn must answer pending permission with ACP
+        // `cancelled`, never as denial, so the prompt can finish with the
+        // correct outcome. Pending elicitations cancel the same way.
         client
             .callback_handler()
-            .pending_permissions
-            .write()
-            .await
-            .clear();
+            .cancel_pending_permissions()
+            .await;
+        client
+            .callback_handler()
+            .cancel_pending_elicitations()
+            .await;
         let sid = self
             .acp_session_id
             .read()
@@ -793,6 +823,113 @@ impl AcpSession {
         } else {
             serde_json::json!([])
         }
+    }
+
+    pub async fn available_commands(&self) -> serde_json::Value {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.available_commands_snapshot().await
+        } else {
+            serde_json::json!([])
+        }
+    }
+
+    pub async fn session_modes(&self) -> serde_json::Value {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.session_modes_snapshot().await
+        } else {
+            serde_json::Value::Null
+        }
+    }
+
+    pub async fn usage_snapshot(&self) -> serde_json::Value {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.usage_snapshot().await
+        } else {
+            serde_json::Value::Null
+        }
+    }
+
+    pub async fn agent_info(&self) -> serde_json::Value {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.agent_info_snapshot().await
+        } else {
+            serde_json::Value::Null
+        }
+    }
+
+    pub async fn pending_elicitations(
+        &self,
+    ) -> Vec<crate::acp::callbacks::PendingElicitationInfo> {
+        if let Some(client) = self.client.read().await.as_ref() {
+            client.callback_handler().list_pending_elicitations().await
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub async fn respond_elicitation(
+        &self,
+        id: &str,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> anyhow::Result<bool> {
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        Ok(client
+            .callback_handler()
+            .respond_elicitation(id, action, content)
+            .await?)
+    }
+
+    pub async fn set_mode(&self, mode_id: &str) -> anyhow::Result<serde_json::Value> {
+        let _guard = self.turn_guard.try_lock().map_err(|_| {
+            anyhow::anyhow!("Wait for the active turn before changing mode")
+        })?;
+        self.ensure_running().await?;
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        let sid = self
+            .acp_session_id
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
+        tokio::time::timeout(Duration::from_secs(30), client.set_mode(&sid, mode_id)).await??;
+        // Refresh the snapshot after the agent confirms. The live
+        // `current_mode_update` will also merge, but query immediately so
+        // reconnect sees the new mode without waiting for a notification.
+        let modes = client.session_modes_snapshot().await;
+        // Emit the merged state so the frontend updates immediately.
+        self.event_log.append(
+            &self.id,
+            &self.key.agent,
+            EventPayload::SessionModes { state: modes.clone() },
+        )?;
+        Ok(modes)
+    }
+
+    pub async fn delete_remote_session(&self, remote_id: &str) -> anyhow::Result<()> {
+        self.resume().await?;
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            client.delete_remote_session(remote_id),
+        )
+        .await??;
+        Ok(())
     }
 
     pub async fn set_config(

@@ -210,6 +210,52 @@ export class ApiService {
     });
   }
 
+  fetchChatCommands(chatId: string): Promise<import('./types').AvailableCommand[]> {
+    return this.request<import('./types').AvailableCommand[]>(`/api/chats/${encodeURIComponent(chatId)}/commands`);
+  }
+
+  fetchChatModes(chatId: string): Promise<import('./types').SessionModes | null> {
+    return this.request<import('./types').SessionModes | null>(`/api/chats/${encodeURIComponent(chatId)}/modes`);
+  }
+
+  setChatMode(chatId: string, modeId: string): Promise<import('./types').SessionModes> {
+    return this.request<import('./types').SessionModes>(`/api/chats/${encodeURIComponent(chatId)}/modes`, {
+      method: 'PATCH',
+      body: { mode_id: modeId },
+    });
+  }
+
+  fetchChatUsage(chatId: string): Promise<import('./types').UsageInfo | null> {
+    return this.request<import('./types').UsageInfo | null>(`/api/chats/${encodeURIComponent(chatId)}/usage`);
+  }
+
+  fetchSessionInfo(chatId: string): Promise<unknown> {
+    return this.request<unknown>(`/api/chats/${encodeURIComponent(chatId)}/session-info`);
+  }
+
+  fetchElicitations(chatId: string): Promise<import('./types').ElicitationInfo[]> {
+    return this.request<import('./types').ElicitationInfo[]>(`/api/chats/${encodeURIComponent(chatId)}/elicitations`);
+  }
+
+  async respondElicitation(chatId: string, id: string, action: string, content?: unknown): Promise<void> {
+    await this.request(`/api/chats/${encodeURIComponent(chatId)}/elicitations/${encodeURIComponent(id)}/respond`, {
+      method: 'POST',
+      body: content !== undefined ? { action, content } : { action },
+    });
+  }
+
+  fetchRemoteSessions(chatId: string): Promise<{ sessions: Array<{ sessionId: string; title?: string }>; nextCursor?: string | null }> {
+    return this.request<{ sessions: Array<{ sessionId: string; title?: string }>; nextCursor?: string | null }>(
+      `/api/chats/${encodeURIComponent(chatId)}/remote-sessions`,
+    );
+  }
+
+  async deleteRemoteSession(chatId: string, remoteId: string): Promise<void> {
+    await this.request(`/api/chats/${encodeURIComponent(chatId)}/remote-sessions/${encodeURIComponent(remoteId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   fetchAgents(): Promise<AgentSummary[]> {
     return this.request<AgentSummary[]>('/api/agents');
   }

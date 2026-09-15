@@ -10,5 +10,12 @@
     <mat-panel-description>{{ tool().status }}</mat-panel-description>
   </mat-expansion-panel-header>
   @if (cleanOutput()) { <pre>{{ cleanOutput() }}</pre> }
+  @if (tool().locations?.length) {
+    <div class="tool-locations" aria-label="Related files">
+      @for (loc of tool().locations!; track loc.path) {
+        <span class="location">{{ loc.path }}@if (loc.line != null) { :{{ loc.line }} }</span>
+      }
+    </div>
+  }
 </mat-expansion-panel>
 

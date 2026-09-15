@@ -99,6 +99,7 @@ export interface ConfigOptionSelectGroup {
 export interface ConfigOptionSelectValue {
   value: unknown;
   name: string;
+  description?: string;
 }
 
 export interface ConfigOption {
@@ -107,7 +108,42 @@ export interface ConfigOption {
   type: 'select' | 'boolean' | string;
   currentValue: unknown;
   description?: string;
+  category?: string;
   options?: Array<ConfigOptionSelectValue | ConfigOptionSelectGroup>;
+}
+
+export interface AvailableCommand {
+  name: string;
+  description: string;
+  input?: { hint: string } | null;
+}
+
+export interface SessionMode {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface SessionModes {
+  current_mode_id: string;
+  available_modes: SessionMode[];
+}
+
+export interface UsageInfo {
+  used: number;
+  size: number;
+  cost_amount?: number | null;
+  cost_currency?: string | null;
+}
+
+export interface ElicitationInfo {
+  id: string;
+  mode: string;
+  message: string;
+  schema?: unknown;
+  url?: string | null;
+  elicitation_id?: string | null;
+  tool_call_id?: string | null;
 }
 
 export interface DirectoryEntry {
@@ -161,6 +197,20 @@ export interface TurnEntryTool {
   output?: string | null;
   kind?: string;
   parentId?: string;
+  locations?: Array<{ path: string; line?: number | null }> | null;
+}
+
+export interface TurnEntryElicitation {
+  id: number;
+  type: 'elicitation_request';
+  requestId: string;
+  mode: string;
+  message: string;
+  schema?: unknown;
+  url?: string | null;
+  toolCallId?: string;
+  responded?: boolean;
+  decision?: string;
 }
 
 export interface TurnEntryPlan {
@@ -186,7 +236,8 @@ export type TurnEntry =
   | TurnEntryThought
   | TurnEntryTool
   | TurnEntryPlan
-  | TurnEntryPermission;
+  | TurnEntryPermission
+  | TurnEntryElicitation;
 
 export interface DisplayTurn {
   id: number;
@@ -245,6 +296,13 @@ export interface SessionPayload {
     | 'turn_complete'
     | 'state_change'
     | 'config_options'
+    | 'available_commands'
+    | 'session_modes'
+    | 'usage_update'
+    | 'session_info'
+    | 'elicitation_request'
+    | 'elicitation_response'
+    | 'elicitation_complete'
     | 'error'
     | 'metadata_changed';
   id?: unknown;

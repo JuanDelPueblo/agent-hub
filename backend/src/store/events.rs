@@ -46,7 +46,7 @@ pub(crate) fn recovery(conn: &Connection) -> StoreResult<Vec<SessionEvent>> {
     let mut stmt = conn.prepare(
         "SELECT data FROM events \
          WHERE json_extract(data, '$.payload.type') IN \
-         ('permission_request', 'permission_response', 'state_change', 'turn_complete') \
+         ('permission_request', 'permission_response', 'elicitation_request', 'elicitation_response', 'elicitation_complete', 'state_change', 'turn_complete') \
          ORDER BY seq",
     )?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;

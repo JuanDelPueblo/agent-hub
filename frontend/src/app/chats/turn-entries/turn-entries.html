@@ -20,5 +20,8 @@
     @case ('permission_request') {
       <hub-permission-card [permission]="entry" [chatId]="chatId()" />
     }
+    @case ('elicitation_request') {
+      <hub-elicitation-card [elicitation]="entry" [chatId]="chatId()" />
+    }
   }
 }

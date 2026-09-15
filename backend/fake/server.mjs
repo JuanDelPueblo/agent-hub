@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 
 import { upgrade } from './websocket.mjs';
 import { AGENTS, FakeState, PERMISSION_POLICIES, PROJECT_ROOT, defaultConfigOptions, validateCustomInput } from './state.mjs';
-import { answerPermission, cancel, isRunning, startTurn } from './turns.mjs';
+import { answerElicitation, answerPermission, cancel, isRunning, listPendingElicitations, startTurn } from './turns.mjs';
 
 const options = parseArgs(process.argv.slice(2));
 const state = new FakeState();
@@ -44,6 +44,14 @@ const routes = [
   ['PATCH', /^\/api\/chats\/([^/]+)\/config$/, setConfig],
   ['DELETE', /^\/api\/chats\/([^/]+)\/config\/([^/]+)$/, clearConfig],
   ['GET', /^\/api\/chats\/([^/]+)\/remote-sessions$/, remoteSessions],
+  ['DELETE', /^\/api\/chats\/([^/]+)\/remote-sessions\/([^/]+)$/, deleteRemoteSession],
+  ['GET', /^\/api\/chats\/([^/]+)\/commands$/, getCommands],
+  ['GET', /^\/api\/chats\/([^/]+)\/modes$/, getModes],
+  ['PATCH', /^\/api\/chats\/([^/]+)\/modes$/, setMode],
+  ['GET', /^\/api\/chats\/([^/]+)\/usage$/, getUsage],
+  ['GET', /^\/api\/chats\/([^/]+)\/session-info$/, getSessionInfo],
+  ['GET', /^\/api\/chats\/([^/]+)\/elicitations$/, listElicitations],
+  ['POST', /^\/api\/chats\/([^/]+)\/elicitations\/([^/]+)\/respond$/, respondElicitation],
   ['POST', /^\/api\/chats\/([^/]+)\/environment\/authorize$/, authorizeEnvironment],
   ['GET', /^\/api\/chats\/([^/]+)\/tasks$/, listTasks],
   ['GET', /^\/api\/chats\/([^/]+)\/tasks\/([^/]+)$/, getTask],
@@ -379,6 +387,92 @@ function deleteChat({ params }) {
   return json({ success: true });
 }
 
+function getCommands({ params }) {
+  const chat = requireChat(params[0]);
+  ensureRunning(chat);
+  return json(state.commandsByChat.get(chat.id) ?? []);
+}
+
+function getModes({ params }) {
+  const chat = requireChat(params[0]);
+  ensureRunning(chat);
+  return json(state.modesByChat.get(chat.id) ?? null);
+}
+
+function setMode({ params, body }) {
+  const chat = requireChat(params[0]);
+  if (isRunning(chat.id)) throw httpError(409, 'Wait for the active turn before changing mode');
+  const modes = state.modesByChat.get(chat.id);
+  if (!modes || !Array.isArray(modes.available_modes) || modes.available_modes.length === 0) {
+    throw httpError(400, 'Agent does not advertise session modes');
+  }
+  const modeId = typeof body.mode_id === 'string' ? body.mode_id.trim() : '';
+  if (!modes.available_modes.some((m) => m.id === modeId)) {
+    throw httpError(400, `Unknown mode: ${modeId}`);
+  }
+  modes.current_mode_id = modeId;
+  state.emit(chat.id, chat.agent, { type: 'session_modes', state: modes });
+  return json(modes);
+}
+
+function getUsage({ params }) {
+  const chat = requireChat(params[0]);
+  return json(state.usageByChat.get(chat.id) ?? null);
+}
+
+function getSessionInfo({ params }) {
+  const chat = requireChat(params[0]);
+  return json({
+    agent_info: { name: chat.agent, version: '1.0.0', title: chat.agent },
+    auth_methods: [],
+  });
+}
+
+function listElicitations({ params }) {
+  const chat = requireChat(params[0]);
+  const pending = listPendingElicitations(chat.id);
+  const stored = state.elicitationsByChat.get(chat.id) ?? [];
+  // Prefer live pending from turns; fall back to stored list for reconnect.
+  return json(pending.length > 0 ? pending : stored);
+}
+
+function respondElicitation({ params, body }) {
+  const chat = requireChat(params[0]);
+  const eid = params[1];
+  const action = typeof body.action === 'string' ? body.action : '';
+  if (!['accept', 'decline', 'cancel'].includes(action)) {
+    throw httpError(400, 'Elicitation action must be accept, decline, or cancel');
+  }
+  const content = body.content;
+  // URL mode never carries secrets in the log; form values stay transient.
+  const ok = answerElicitation(chat.id, eid, action, content ?? null);
+  if (!ok) {
+    // Also try stored list for idempotency after reconnect.
+    const stored = state.elicitationsByChat.get(chat.id) ?? [];
+    const idx = stored.findIndex((e) => e.id === eid);
+    if (idx < 0) throw httpError(404, 'Elicitation not found');
+    stored.splice(idx, 1);
+    state.emit(chat.id, chat.agent, { type: 'elicitation_response', id: eid, action });
+    return json({ success: true });
+  }
+  const stored = state.elicitationsByChat.get(chat.id) ?? [];
+  const idx = stored.findIndex((e) => e.id === eid);
+  if (idx >= 0) stored.splice(idx, 1);
+  // The turn itself emits elicitation_response/complete; this endpoint only
+  // acknowledges acceptance for the HTTP caller.
+  return json({ success: true });
+}
+
+function deleteRemoteSession({ params }) {
+  const chat = requireChat(params[0]);
+  const remoteId = params[1];
+  const list = state.remoteSessionsByChat.get(chat.id) ?? [];
+  const idx = list.findIndex((s) => s.sessionId === remoteId);
+  if (idx < 0) throw httpError(404, 'Remote session not found');
+  list.splice(idx, 1);
+  return json({ success: true });
+}
+
 function promptChat({ params, body }) {
   const chat = requireChat(params[0]);
   if (state.isEnvironmentBlocked(chat.id)) {
@@ -436,6 +530,10 @@ async function resumeChat({ params }) {
     type: 'config_options',
     options: state.configByChat.get(chat.id) ?? defaultConfigOptions(chat.agent),
   });
+  const modes = state.modesByChat.get(chat.id);
+  if (modes) state.emit(chat.id, chat.agent, { type: 'session_modes', state: modes });
+  const commands = state.commandsByChat.get(chat.id);
+  if (commands?.length) state.emit(chat.id, chat.agent, { type: 'available_commands', commands });
 
   return json(state.chatView(chat));
 }
@@ -471,6 +569,22 @@ function setConfig({ params, body }) {
   const option = config.find((entry) => entry.id === id);
   if (!option) throw httpError(400, `Unknown config option: ${id}`);
 
+  // Stable boolean options require a boolean value; select options must pick
+  // from advertised values. Preserve ordering/descriptions generically.
+  if (option.type === 'boolean' && typeof body.value !== 'boolean') {
+    throw httpError(400, 'Unsupported ACP config value');
+  }
+  if (option.type === 'select') {
+    const flat = [];
+    for (const entry of option.options ?? []) {
+      if (entry.options) flat.push(...entry.options);
+      else flat.push(entry);
+    }
+    if (!flat.some((v) => v.value === body.value)) {
+      throw httpError(400, 'Unsupported ACP config value');
+    }
+  }
+
   option.currentValue = body.value;
   chat.config_values = { ...chat.config_values, [id]: body.value };
 
@@ -489,6 +603,15 @@ function clearConfig({ params }) {
 
 function remoteSessions({ params }) {
   const chat = requireChat(params[0]);
+  const stored = state.remoteSessionsByChat.get(chat.id);
+  if (stored) {
+    // Keep the live ACP id first so the UI can match the current session.
+    const liveId = chat.acp_session_id;
+    const sessions = liveId && !stored.some((s) => s.sessionId === liveId)
+      ? [{ sessionId: liveId, title: chat.title }, ...stored]
+      : stored;
+    return json({ sessions, nextCursor: null });
+  }
   return json({
     sessions: [
       { sessionId: chat.acp_session_id ?? 'acp-unknown', title: chat.title },

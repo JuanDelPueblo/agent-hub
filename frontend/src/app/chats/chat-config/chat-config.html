@@ -14,6 +14,20 @@
       </section>
       <mat-divider />
     }
+    @if (showModes() && modes(); as sessionModes) {
+      <div class="config-item">
+        <mat-form-field appearance="outline">
+          <mat-label>Session mode</mat-label>
+          <mat-select [value]="sessionModes.current_mode_id" (selectionChange)="changeMode($event.value)">
+            @for (mode of sessionModes.available_modes; track mode.id) {
+              <mat-option [value]="mode.id">{{ mode.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <p>Legacy mode selector. Hidden when a mode config option already covers it.</p>
+      </div>
+      <mat-divider />
+    }
     <div class="config-item">
       <mat-form-field appearance="outline">
         <mat-label>Permission policy</mat-label>

@@ -159,9 +159,17 @@ export class EventReducer {
         ? [...items, next]
         : items.map((item) => (item.id === next.id ? next : item));
 
-      // A permission response can resolve a request raised in an earlier turn.
+      // A permission/elicitation response can resolve a request raised in an
+      // earlier turn.
       if (payload.type === 'permission_response' && !handledHere) {
         return this.markPermissionInItems(merged, next.id, payload);
+      }
+      if (
+        (payload.type === 'elicitation_response' ||
+          payload.type === 'elicitation_complete') &&
+        !handledHere
+      ) {
+        return this.markElicitationInItems(merged, next.id, payload);
       }
       return merged;
     });
@@ -179,6 +187,9 @@ export class EventReducer {
       'plan',
       'permission_request',
       'permission_response',
+      'elicitation_request',
+      'elicitation_response',
+      'elicitation_complete',
       'turn_complete',
     ].includes(type);
   }
@@ -191,13 +202,34 @@ export class EventReducer {
 
     if (payload.type === 'message_chunk' || payload.type === 'thought_chunk') {
       const text = this.stringValue(payload.text) ?? '';
-      if (last && last.type === payload.type) {
-        const merged: TurnEntry = { ...last, text: last.text + text };
+      const messageId = this.stringValue((payload as Record<string, unknown>)['message_id']);
+      // Same messageId means one message; a change starts a new entry.
+      // Old agents omit IDs and merge by adjacency.
+      if (
+        last &&
+        last.type === payload.type &&
+        (messageId == null ||
+          (last as { messageId?: string }).messageId === messageId)
+      ) {
+        // Preserve the ID on the merged entry for later chunks.
+        const merged: TurnEntry = {
+          ...last,
+          text: (last as { text: string }).text + text,
+          ...(messageId != null ? { messageId } : {}),
+        } as TurnEntry;
         return { ...turn, entries: [...entries.slice(0, -1), merged] };
       }
       return {
         ...turn,
-        entries: [...entries, { id: this.nextId++, type: payload.type, text }],
+        entries: [
+          ...entries,
+          {
+            id: this.nextId++,
+            type: payload.type,
+            text,
+            ...(messageId != null ? { messageId } : {}),
+          } as TurnEntry,
+        ],
       };
     }
 
@@ -207,6 +239,9 @@ export class EventReducer {
         String(this.nextId);
       const kind = this.stringValue(payload['kind']);
       const parentId = this.stringValue(payload['parent_id'] ?? payload['parentId']);
+      const locations = Array.isArray(payload['locations'])
+        ? (payload['locations'] as Array<{ path: string; line?: number | null }>)
+        : null;
       return {
         ...turn,
         entries: [
@@ -220,6 +255,7 @@ export class EventReducer {
             output: null,
             kind,
             parentId,
+            locations,
           },
         ],
       };
@@ -228,6 +264,9 @@ export class EventReducer {
     if (payload.type === 'tool_call_update') {
       const toolId =
         this.stringValue(payload.id ?? payload.toolCallId ?? payload.tool_call_id) ?? '';
+      const locations = Array.isArray(payload['locations'])
+        ? (payload['locations'] as Array<{ path: string; line?: number | null }>)
+        : undefined;
       const index = this.findToolCallIndex(entries, toolId);
       if (index >= 0) {
         const tool = entries[index] as TurnEntryTool;
@@ -243,6 +282,7 @@ export class EventReducer {
             payload.output !== undefined && payload.output !== null
               ? (tool.output || '') + String(payload.output)
               : tool.output,
+          ...(locations !== undefined ? { locations } : {}),
         };
         const nextEntries = [...entries];
         nextEntries[index] = updated;
@@ -261,6 +301,7 @@ export class EventReducer {
             output: payload.output == null ? null : String(payload.output),
             kind: this.stringValue(payload['kind']),
             parentId: this.stringValue(payload['parent_id'] ?? payload['parentId']),
+            locations: locations ?? null,
           },
         ],
       };
@@ -304,6 +345,36 @@ export class EventReducer {
       return marked ? { ...turn, entries: marked } : turn;
     }
 
+    if (payload.type === 'elicitation_request') {
+      return {
+        ...turn,
+        entries: [
+          ...entries,
+          {
+            id: this.nextId++,
+            type: 'elicitation_request',
+            requestId: this.stringValue(payload.id) ?? '',
+            mode: this.stringValue(payload['mode']) ?? 'form',
+            message: this.stringValue(payload['message']) ?? '',
+            schema: payload['schema'],
+            url: this.stringValue(payload['url']),
+            toolCallId: this.stringValue(payload['tool_call_id']),
+            responded: false,
+          },
+        ],
+      };
+    }
+
+    if (payload.type === 'elicitation_response') {
+      const marked = this.markElicitation(entries, payload);
+      return marked ? { ...turn, entries: marked } : turn;
+    }
+
+    if (payload.type === 'elicitation_complete') {
+      const marked = this.markElicitationComplete(entries, payload);
+      return marked ? { ...turn, entries: marked } : turn;
+    }
+
     return turn;
   }
 
@@ -337,6 +408,59 @@ export class EventReducer {
       const item = items[index];
       if (item.type !== 'turn' || item.id === skipTurnId) continue;
       const marked = this.markPermission(item.entries, payload);
+      if (!marked) continue;
+      const next = [...items];
+      next[index] = { ...item, entries: marked };
+      return next;
+    }
+    return items;
+  }
+
+  private markElicitation(
+    entries: readonly TurnEntry[],
+    payload: SessionEvent['payload'],
+  ): TurnEntry[] | null {
+    const id = this.stringValue(payload.id);
+    const action = this.stringValue(payload['action']) ?? 'cancel';
+    const index = entries.findIndex(
+      (entry) =>
+        entry.type === 'elicitation_request' && (!id || entry.requestId === id),
+    );
+    if (index < 0) return null;
+    const next = [...entries];
+    const label = action === 'accept' ? 'Accepted' : action === 'decline' ? 'Declined' : 'Cancelled';
+    next[index] = { ...next[index], responded: true, decision: label } as TurnEntry;
+    return next;
+  }
+
+  private markElicitationComplete(
+    entries: readonly TurnEntry[],
+    payload: SessionEvent['payload'],
+  ): TurnEntry[] | null {
+    const eid = this.stringValue(payload['elicitation_id'] ?? payload.id);
+    const index = entries.findIndex(
+      (entry) =>
+        entry.type === 'elicitation_request' &&
+        (!eid || entry.requestId === eid || (entry as { toolCallId?: string }).toolCallId === eid),
+    );
+    if (index < 0) return null;
+    const next = [...entries];
+    next[index] = { ...next[index], responded: true, decision: 'Completed' } as TurnEntry;
+    return next;
+  }
+
+  private markElicitationInItems(
+    items: DisplayItem[],
+    skipTurnId: number,
+    payload: SessionEvent['payload'],
+  ): DisplayItem[] {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item.type !== 'turn' || item.id === skipTurnId) continue;
+      const marked =
+        payload.type === 'elicitation_complete'
+          ? this.markElicitationComplete(item.entries, payload)
+          : this.markElicitation(item.entries, payload);
       if (!marked) continue;
       const next = [...items];
       next[index] = { ...item, entries: marked };

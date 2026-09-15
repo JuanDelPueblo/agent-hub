@@ -18,6 +18,8 @@ pub struct SessionEvent {
 pub enum EventPayload {
     UserMessage {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     Error {
         message: String,
@@ -28,9 +30,13 @@ pub enum EventPayload {
     MetadataChanged {},
     MessageChunk {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     ThoughtChunk {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     ToolCall {
         id: String,
@@ -40,6 +46,8 @@ pub enum EventPayload {
         kind: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locations: Option<serde_json::Value>,
     },
     ToolCallUpdate {
         id: String,
@@ -49,6 +57,48 @@ pub enum EventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<String>,
         output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locations: Option<serde_json::Value>,
+    },
+    AvailableCommands {
+        commands: serde_json::Value,
+    },
+    SessionModes {
+        state: serde_json::Value,
+    },
+    UsageUpdate {
+        used: u64,
+        size: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_amount: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_currency: Option<String>,
+    },
+    SessionInfo {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        updated_at: Option<String>,
+    },
+    ElicitationRequest {
+        id: String,
+        mode: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        schema: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        elicitation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
+    },
+    ElicitationResponse {
+        id: String,
+        action: String,
+    },
+    ElicitationComplete {
+        elicitation_id: String,
     },
     Plan {
         entries: Vec<PlanEntry>,
@@ -144,7 +194,10 @@ impl EventLog {
         *log.events.write().unwrap() = recent.into();
         log.store = Some(store);
         // Browser approvals from a previous process can no longer authorize work.
+        // Pending elicitations are cancelled the same way; their form values
+        // never persist, only the cancel marker.
         let mut pending = std::collections::BTreeMap::new();
+        let mut pending_elicitations = std::collections::BTreeMap::new();
         let mut active = std::collections::BTreeMap::new();
         for e in recovery {
             match &e.payload {
@@ -153,6 +206,15 @@ impl EventLog {
                 }
                 EventPayload::PermissionResponse { id, .. } => {
                     pending.remove(id);
+                }
+                EventPayload::ElicitationRequest { id, .. } => {
+                    pending_elicitations.insert(id.clone(), (e.session_id.clone(), e.agent.clone()));
+                }
+                EventPayload::ElicitationResponse { id, .. } => {
+                    pending_elicitations.remove(id);
+                }
+                EventPayload::ElicitationComplete { elicitation_id } => {
+                    pending_elicitations.remove(elicitation_id);
                 }
                 EventPayload::StateChange { turn, .. } if turn == "PROMPTING" => {
                     active.insert(e.session_id.clone(), e.agent.clone());
@@ -168,6 +230,16 @@ impl EventLog {
                 &chat,
                 &agent,
                 EventPayload::PermissionResponse { id, granted: false },
+            )?;
+        }
+        for (id, (chat, agent)) in pending_elicitations {
+            log.append(
+                &chat,
+                &agent,
+                EventPayload::ElicitationResponse {
+                    id,
+                    action: "cancel".to_string(),
+                },
             )?;
         }
         for (chat, agent) in active {
@@ -325,6 +397,7 @@ mod tests {
             "s1",
             "codex",
             EventPayload::MessageChunk {
+                message_id: None,
                 text: "hello".to_string(),
             },
         );
@@ -332,6 +405,7 @@ mod tests {
             "s1",
             "codex",
             EventPayload::MessageChunk {
+                message_id: None,
                 text: "world".to_string(),
             },
         );
@@ -357,7 +431,7 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { text: "a".into() },
+            EventPayload::MessageChunk { message_id: None, text: "a".into() },
         )
         .unwrap();
         assert_eq!(log.next_seq(), 2);
@@ -370,7 +444,7 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { text: "hi".into() },
+            EventPayload::MessageChunk { message_id: None, text: "hi".into() },
         )
         .unwrap();
         let event = rx.recv().await.unwrap();
@@ -384,7 +458,7 @@ mod tests {
         log.append(
             "s1",
             "codex",
-            EventPayload::MessageChunk { text: "a".into() },
+            EventPayload::MessageChunk { message_id: None, text: "a".into() },
         )
         .unwrap();
         match log.replay_from(999) {
@@ -401,6 +475,7 @@ mod tests {
                 "s1",
                 "codex",
                 EventPayload::MessageChunk {
+                    message_id: None,
                     text: format!("msg{}", i),
                 },
             )
@@ -431,6 +506,7 @@ mod tests {
                     "s1",
                     "codex",
                     EventPayload::MessageChunk {
+                        message_id: None,
                         text: "ordered".to_string(),
                     },
                 )
@@ -462,6 +538,7 @@ mod tests {
                 "s1",
                 "codex",
                 EventPayload::MessageChunk {
+                    message_id: None,
                     text: "lost".into()
                 }
             )
@@ -473,6 +550,7 @@ mod tests {
                 "s1",
                 "codex",
                 EventPayload::MessageChunk {
+                    message_id: None,
                     text: "later".into()
                 }
             )
@@ -489,6 +567,7 @@ mod tests {
                 "s1",
                 "codex",
                 EventPayload::MessageChunk {
+                    message_id: None,
                     text: index.to_string(),
                 },
             )
@@ -537,6 +616,7 @@ mod tests {
                         "chat-other",
                         "codex",
                         EventPayload::MessageChunk {
+                            message_id: None,
                             text: format!("filler-{index}"),
                         },
                     )
@@ -655,6 +735,7 @@ mod tests {
                         "chat-other",
                         "codex",
                         EventPayload::MessageChunk {
+                            message_id: None,
                             text: format!("filler-{index}"),
                         },
                     )

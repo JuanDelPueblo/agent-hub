@@ -1,0 +1,61 @@
+<mat-card class="elicitation">
+  <mat-card-header>
+    <mat-icon mat-card-avatar>{{ isUrl() ? 'link' : 'edit_note' }}</mat-icon>
+    <mat-card-title>{{ elicitation().message || 'Input needed' }}</mat-card-title>
+    <mat-card-subtitle>
+      {{ isUrl() ? 'URL verification' : 'Form input' }}
+      @if (elicitation().toolCallId) { · tool {{ elicitation().toolCallId }} }
+    </mat-card-subtitle>
+  </mat-card-header>
+  <mat-card-content>
+    @if (elicitation().responded) {
+      <p class="decision">Response recorded: {{ elicitation().decision }}</p>
+    } @else {
+      @if (isUrl()) {
+        <p class="url-warning">The agent asks you to visit this address out of band. Pueblo Hub never opens or fetches it automatically.</p>
+        @if (elicitation().url; as url) {
+          <p class="url-line"><strong>Address:</strong> <span class="url">{{ url }}</span></p>
+          @if (host()) { <p class="url-line"><strong>Host:</strong> {{ host() }}</p> }
+          <p><a [href]="url" target="_blank" rel="noopener noreferrer">Open link manually</a></p>
+        }
+      } @else {
+        @for (field of fields(); track field.key) {
+          <div class="field">
+            @if (field.enumOptions?.length) {
+              <mat-form-field appearance="outline">
+                <mat-label>{{ field.title }}{{ field.required ? ' *' : '' }}</mat-label>
+                <mat-select [ngModel]="fieldValue(field.key)" (ngModelChange)="setFieldValue(field.key, $event)">
+                  @for (opt of field.enumOptions!; track opt) { <mat-option [value]="opt">{{ opt }}</mat-option> }
+                </mat-select>
+                @if (field.description) { <mat-hint>{{ field.description }}</mat-hint> }
+              </mat-form-field>
+            } @else if (field.type === 'boolean') {
+              <mat-checkbox [ngModel]="!!fieldValue(field.key)" (ngModelChange)="setFieldValue(field.key, $event)">{{ field.title }}{{ field.required ? ' *' : '' }}</mat-checkbox>
+              @if (field.description) { <p class="hint">{{ field.description }}</p> }
+            } @else if (field.type === 'integer' || field.type === 'number') {
+              <mat-form-field appearance="outline">
+                <mat-label>{{ field.title }}{{ field.required ? ' *' : '' }}</mat-label>
+                <input matInput type="number" [ngModel]="fieldValue(field.key)" (ngModelChange)="setFieldValue(field.key, $event)" />
+                @if (field.description) { <mat-hint>{{ field.description }}</mat-hint> }
+              </mat-form-field>
+            } @else {
+              <mat-form-field appearance="outline">
+                <mat-label>{{ field.title }}{{ field.required ? ' *' : '' }}</mat-label>
+                <input matInput type="text" [ngModel]="fieldValue(field.key) ?? ''" (ngModelChange)="setFieldValue(field.key, $event)" />
+                @if (field.description) { <mat-hint>{{ field.description }}</mat-hint> }
+              </mat-form-field>
+            }
+          </div>
+        }
+        @if (!fields().length) { <p class="hint">No form fields advertised.</p> }
+      }
+    }
+  </mat-card-content>
+  @if (!elicitation().responded) {
+    <mat-card-actions align="end">
+      <button mat-button type="button" (click)="cancel()" [disabled]="responding()">Cancel</button>
+      <button mat-button type="button" (click)="decline()" [disabled]="responding()">Decline</button>
+      <button mat-flat-button color="primary" type="button" (click)="accept()" [disabled]="responding()">Accept</button>
+    </mat-card-actions>
+  }
+</mat-card>

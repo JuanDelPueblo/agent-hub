@@ -1,10 +1,10 @@
 <mat-drawer-container class="chat-layout" [hasBackdrop]="compact()">
   <mat-drawer #configDrawer position="end" [mode]="compact() ? 'over' : 'side'" [opened]="configOpen()" (closed)="configOpen.set(false)" aria-label="Chat configuration">
     <div class="config-header"><h2>Chat configuration</h2><button mat-icon-button aria-label="Close chat configuration" (click)="closeConfig(configDrawer)"><mat-icon>close</mat-icon></button></div>
-    <div class="config-body"><hub-chat-config [chat]="chat()" [options]="options()" /></div>
+    <div class="config-body"><hub-chat-config [chat]="chat()" [options]="options()" [modes]="modes()" /></div>
   </mat-drawer>
   <mat-drawer-content class="chat-content">
-    <hub-chat-header [chat]="chat()" (configRequested)="openConfig(configDrawer)" />
+    <hub-chat-header [chat]="chat()" [usage]="usage()" (configRequested)="openConfig(configDrawer)" />
     @if (!chat()) {
       <section class="status-state"><mat-icon>chat</mat-icon><h1>No chat selected</h1><p>Choose a chat from the navigation.</p></section>
     } @else {
@@ -43,11 +43,11 @@
       @if (historyLoading() && !items().length) {
         <section class="status-state"><mat-spinner diameter="36" /><p>Loading recent chat history…</p></section>
       } @else if (!items().length && !hasOlderHistory()) {
-        <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" /></mat-card-content></mat-card></section>
+        <section class="welcome"><mat-card><mat-card-content><div class="welcome-heading"><span class="avatar">{{ chat()!.agent[0] }}</span><div><h1>{{ chat()!.agent }} connected</h1><p>Configure agent options or send your first message to begin.</p></div></div><hub-chat-config [chat]="chat()" [options]="options()" [modes]="modes()" /></mat-card-content></mat-card></section>
       } @else {
         <hub-event-stream [items]="items()" [chatId]="chatId()" [hasOlderHistory]="hasOlderHistory()" [historyLoading]="historyLoading()" (olderRequested)="loadOlderHistory()" />
       }
-      <hub-chat-composer [chatId]="chatId()" [options]="options()" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="chat()!.archived" />
+      <hub-chat-composer [chatId]="chatId()" [options]="options()" [commands]="commands()" [turnState]="chat()!.turn_state || 'IDLE'" [disabled]="chat()!.archived" />
     }
   </mat-drawer-content>
 </mat-drawer-container>
