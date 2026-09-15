@@ -8,9 +8,18 @@
 .workspace-details > div { display: grid; grid-template-columns: minmax(110px, 0.35fr) 1fr; gap: 12px; }
 .workspace-details dt { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
 .workspace-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font: var(--mat-sys-body-medium); }
-.root-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
-.root-row mat-form-field { flex: 1; }
-.mcp-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: center; }
-.secret-editor { grid-column: 1 / -1; display: grid; gap: 8px; }
-.secret-row { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(7rem, auto) minmax(10rem, 1fr) auto; gap: 8px; align-items: center; }
-@media (max-width: 599px) { .secret-row { grid-template-columns: 1fr; } }
+.access-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 4px 4px 12px; border-radius: var(--mat-sys-corner-small); background: var(--mat-sys-surface-container); }
+.access-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--mat-sys-body-medium); }
+.access-add { display: flex; align-items: center; gap: 8px; }
+.access-add mat-form-field { flex: 1; }
+.mcp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; border-radius: var(--mat-sys-corner-small); background: var(--mat-sys-surface-container); }
+.mcp-summary { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mcp-summary > mat-icon { color: var(--mat-sys-primary); flex: none; }
+.mcp-text { display: flex; flex-direction: column; min-width: 0; }
+.mcp-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--mat-sys-body-medium); }
+.mcp-meta { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
+.mcp-actions { display: flex; align-items: center; flex: none; }
+@media (max-width: 599px) {
+  .access-add { flex-direction: column; align-items: stretch; }
+  .mcp-summary { gap: 8px; }
+}
