@@ -79,6 +79,9 @@ pub enum EventPayload {
         title: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         updated_at: Option<String>,
+        /// Opaque agent `_meta` preserved generically without interpretation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
     },
     ElicitationRequest {
         id: String,

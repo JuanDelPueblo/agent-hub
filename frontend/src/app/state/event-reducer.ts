@@ -82,11 +82,13 @@ export class EventReducer {
 
     if (payload.type === 'user_message') {
       this.closeCurrentTurn();
+      const messageId = this.stringValue(payload['message_id']);
       return this.append<DisplayUserMessage>({
         id: this.nextId++,
         type: 'user_message',
         text: this.stringValue(payload.text) ?? '',
         timestamp: event.timestamp,
+        ...(messageId != null ? { messageId } : {}),
       });
     }
 

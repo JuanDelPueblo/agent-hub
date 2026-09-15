@@ -9,15 +9,11 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import type { TurnEntryElicitation } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
-
-interface FormField {
-  key: string;
-  title: string;
-  description?: string;
-  type: string;
-  required: boolean;
-  enumOptions?: string[];
-}
+import {
+  applyElicitationDefaults,
+  elicitationFields,
+  validateElicitationForm,
+} from './validate-form';
 
 /** Renders stable form and URL elicitation associated with its chat/tool context. */
 @Component({
@@ -53,40 +49,55 @@ export class ElicitationCardComponent {
     }
   });
 
-  readonly fields = computed<FormField[]>(() => {
-    const schema = this.elicitation().schema as Record<string, unknown> | undefined;
-    const props = (schema?.['properties'] ?? {}) as Record<string, Record<string, unknown>>;
-    const required = Array.isArray(schema?.['required']) ? (schema?.['required'] as string[]) : [];
-    return Object.entries(props).map(([key, prop]) => {
-      const enumValues = Array.isArray(prop['enum'])
-        ? (prop['enum'] as string[])
-        : Array.isArray(prop['enum_values'])
-          ? (prop['enum_values'] as string[])
-          : undefined;
-      return {
-        key,
-        title: typeof prop['title'] === 'string' ? (prop['title'] as string) : key,
-        description: typeof prop['description'] === 'string' ? (prop['description'] as string) : undefined,
-        type: typeof prop['type'] === 'string' ? (prop['type'] as string) : 'string',
-        required: required.includes(key),
-        enumOptions: enumValues,
-      };
-    });
-  });
+  readonly fields = computed(() => elicitationFields(this.elicitation().schema));
+
+  /** Explicit edits merged over schema defaults. */
+  readonly mergedValues = computed(() =>
+    applyElicitationDefaults(this.fields(), this.formValues()),
+  );
+
+  readonly formErrors = computed(
+    () => validateElicitationForm(this.elicitation().schema, this.formValues()).errors,
+  );
+
+  /** Accept stays disabled until the form satisfies the advertised schema. */
+  readonly canAccept = computed(
+    () => validateElicitationForm(this.elicitation().schema, this.formValues()).valid,
+  );
+
+  fieldError(key: string): string | undefined {
+    return this.formErrors()[key];
+  }
 
   fieldValue(key: string): unknown {
-    return this.formValues()[key];
+    const edited = this.formValues()[key];
+    return edited !== undefined ? edited : this.mergedValues()[key];
   }
 
   setFieldValue(key: string, value: unknown): void {
     this.formValues.update((c) => ({ ...c, [key]: value }));
   }
 
+  arrayText(key: string): string {
+    const value = this.fieldValue(key);
+    return Array.isArray(value) ? (value as unknown[]).join(', ') : '';
+  }
+
+  setArrayText(key: string, text: string): void {
+    this.setFieldValue(
+      key,
+      text
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0),
+    );
+  }
+
   async accept(): Promise<void> {
-    if (!this.chatId() || !this.elicitation().requestId) return;
+    if (!this.chatId() || !this.elicitation().requestId || !this.canAccept()) return;
     this.responding.set(true);
     try {
-      const content = this.isUrl() ? undefined : this.formValues();
+      const content = this.isUrl() ? undefined : this.mergedValues();
       await this.state.respondElicitation(this.chatId(), this.elicitation().requestId, 'accept', content);
     } catch (error) {
       console.error('Failed to accept elicitation', error);

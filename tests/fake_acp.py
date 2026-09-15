@@ -66,6 +66,16 @@ for line in sys.stdin:
         if not (root / current).exists():
             send({"id": id, "error": {"code": -32001, "message": "Missing history"}})
         else:
+            # Replay dynamic snapshots as live agents do during load. The
+            # client must retain them in memory without duplicating durable
+            # history: message chunks stay suppressed and config snapshots
+            # must not add historical config events.
+            update("available_commands_update", availableCommands=[
+                {"name": "plan", "description": "Make a plan", "input": {"hint": "goal"}},
+                {"name": "review", "description": "Review changes"}])
+            update("current_mode_update", currentModeId=current_mode)
+            update("usage_update", used=100, size=2000, cost={"amount": 0.5, "currency": "USD"})
+            update("config_option_update", configOptions=options())
             update("agent_message_chunk", content={"type": "text", "text": "REPLAY"})
             reply(id, {"configOptions": options(), "modes": modes()})
     elif method == "session/set_config_option":
@@ -151,6 +161,17 @@ for line in sys.stdin:
             update("user_message_chunk", content={"type": "text", "text": text})
             update("agent_message_chunk", content={"type": "text", "text": "user-chunk-sent"})
             reply(id, {"stopReason": "end_turn"})
+        elif text.startswith("identity:"):
+            # Echo the client-generated user message identity from `_meta`
+            # so the round trip can be correlated. Other prompts omit the
+            # echo entirely, exercising agents that ignore the extension.
+            observed = p.get("_meta", {}).get("puebloHub", {}).get("userMessageId")
+            update("agent_message_chunk", content={"type": "text", "text": f"identity:{observed}"})
+            if observed is None:
+                reply(id, {"stopReason": "end_turn"})
+            else:
+                reply(id, {"stopReason": "end_turn",
+                           "_meta": {"puebloHub": {"userMessageId": observed}}})
         elif text == "tool-loc":
             update("tool_call", toolCallId="t1", title="Edit", kind="edit",
                    locations=[{"path": "/tmp/a.rs", "line": 3}])

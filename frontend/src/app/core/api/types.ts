@@ -255,6 +255,7 @@ export interface DisplayUserMessage {
   type: 'user_message';
   text: string;
   timestamp: string;
+  messageId?: string;
 }
 
 export interface DisplayError {

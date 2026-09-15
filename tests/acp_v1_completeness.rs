@@ -75,6 +75,26 @@ async fn prompt_when_idle(hub: &HubService, chat_id: &str, text: &str) {
     }
 }
 
+/// Stops a chat, retrying while the just-finished turn still holds its
+/// guard: `await_turn` returns on the `TurnComplete` event, which is
+/// published just before the guard is released.
+async fn stop_when_idle(hub: &HubService, chat_id: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match hub.stop_chat(chat_id).await {
+            Ok(()) => return,
+            Err(e) if tokio::time::Instant::now() < deadline => {
+                assert!(
+                    e.to_string().contains("Cancel the active turn"),
+                    "unexpected stop error: {e}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(e) => panic!("stop never admitted: {e}"),
+        }
+    }
+}
+
 /// Reads the current mode id from either wire casing. The backend preserves
 /// the agent's camelCase wire object; merged updates also carry snake_case.
 fn current_mode_id(modes: &serde_json::Value) -> &str {
@@ -250,19 +270,42 @@ async fn remote_session_delete_is_capability_gated() {
         .create_chat(&project.id, "codex", None)
         .await
         .unwrap();
+    // A second chat gives the agent a second remote session to delete.
+    // Agent-side sessions are files in the shared history dir, so both
+    // chats see each other's remote sessions here.
+    let other = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+    service.remote_sessions(&other.chat.id, None).await.unwrap();
 
     let listed = service.remote_sessions(&chat.chat.id, None).await.unwrap();
     let sessions_arr = listed["sessions"].as_array().unwrap().clone();
-    assert!(!sessions_arr.is_empty());
-    // Delete one remote session; Pueblo's own chat remains.
-    let remote_id = sessions_arr[0]["sessionId"].as_str().unwrap().to_string();
-    // The live session itself may be the first entry; pick a non-live one when possible.
-    let target = sessions_arr
-        .iter()
-        .find(|s| s["sessionId"].as_str() != Some(remote_id.as_str()))
-        .and_then(|s| s["sessionId"].as_str())
-        .unwrap_or(&remote_id)
-        .to_string();
+    let live_id = service
+        .get_chat(&chat.chat.id)
+        .await
+        .unwrap()
+        .chat
+        .acp_session_id
+        .expect("resume links an agent session");
+    // Deleting the agent session backing this chat is refused: the next
+    // restart would otherwise try to resume a deliberately deleted agent
+    // session instead of reporting the saved chat cleanly.
+    assert!(sessions_arr.iter().any(|s| s["sessionId"] == live_id));
+    assert!(service
+        .delete_remote_session(&chat.chat.id, &live_id)
+        .await
+        .is_err());
+    // An unlinked remote session deletes normally; the Pueblo chat remains.
+    let mut target: Option<String> = None;
+    for s in &sessions_arr {
+        let sid = s["sessionId"].as_str().unwrap_or("<missing>");
+        if sid != live_id {
+            target = Some(sid.to_string());
+            break;
+        }
+    }
+    let target = target.expect("a second remote session");
     service
         .delete_remote_session(&chat.chat.id, &target)
         .await
@@ -273,10 +316,24 @@ async fn remote_session_delete_is_capability_gated() {
         .unwrap()
         .iter()
         .any(|s| s["sessionId"] == target));
-    // Pueblo chat still exists.
     assert!(service.get_chat(&chat.chat.id).await.is_ok());
 
+    // Stop and restart: the chat still resumes against its linked agent
+    // session, which the deletion above never touched.
     sessions.shutdown_all().await;
+    let (restarted, restarted_sessions) = hub(tmp.path());
+    restarted.resume_chat(&chat.chat.id).await.unwrap();
+    assert_eq!(
+        restarted
+            .get_chat(&chat.chat.id)
+            .await
+            .unwrap()
+            .chat
+            .acp_session_id
+            .as_deref(),
+        Some(live_id.as_str())
+    );
+    restarted_sessions.shutdown_all().await;
 }
 
 #[tokio::test]
@@ -312,6 +369,218 @@ async fn tool_locations_and_session_info_preserved() {
         service.get_chat(&chat.chat.id).await.unwrap().chat.title,
         "Hello World"
     );
+
+    sessions.shutdown_all().await;
+}
+
+fn count_payload(log: &EventLog, chat_id: &str, ty: &str) -> usize {
+    match log.replay_from(1) {
+        pueblo_hub::events::ReplayResult::Complete(events) => events
+            .iter()
+            .filter(|e| e.session_id == chat_id)
+            .filter(|e| serde_json::to_value(&e.payload).unwrap()["type"] == ty)
+            .count(),
+        _ => panic!("expected complete"),
+    }
+}
+
+#[tokio::test]
+async fn stop_reconnect_retains_dynamic_state_without_duplicating_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+
+    // Populate live dynamic state, then stop the agent process.
+    prompt_when_idle(&service, &chat.chat.id, "commands").await;
+    await_turn(&log, &chat.chat.id).await;
+    prompt_when_idle(&service, &chat.chat.id, "usage").await;
+    await_turn(&log, &chat.chat.id).await;
+    let config_before = count_payload(&log, &chat.chat.id, "config_options");
+    let commands_before = count_payload(&log, &chat.chat.id, "available_commands");
+    let usage_before = count_payload(&log, &chat.chat.id, "usage_update");
+    assert!(commands_before > 0 && usage_before > 0);
+    stop_when_idle(&service, &chat.chat.id).await;
+
+    // Resume replays the agent history: snapshots sent during replay must
+    // be retained in queryable state...
+    service.resume_chat(&chat.chat.id).await.unwrap();
+    let commands = service.chat_commands(&chat.chat.id).await.unwrap();
+    assert_eq!(commands.as_array().unwrap().len(), 2);
+    let usage = service.chat_usage(&chat.chat.id).await.unwrap();
+    assert_eq!(usage["used"], 100);
+    let modes = service.chat_modes(&chat.chat.id).await.unwrap();
+    assert_eq!(
+        modes.get("current_mode_id").or(modes.get("currentModeId")),
+        Some(&serde_json::json!("ask"))
+    );
+    let options = service.chat_config(&chat.chat.id).await.unwrap();
+    assert!(options
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|o| o["id"] == "web_search"));
+
+    // ...without duplicating durable history: replayed snapshots add no
+    // events of their own. Only the single ensure_running config snapshot
+    // may follow the resume, never a replayed duplicate.
+    assert_eq!(
+        count_payload(&log, &chat.chat.id, "available_commands"),
+        commands_before + 1
+    );
+    assert_eq!(
+        count_payload(&log, &chat.chat.id, "usage_update"),
+        usage_before
+    );
+    assert_eq!(
+        count_payload(&log, &chat.chat.id, "config_options"),
+        config_before + 1
+    );
+    let history = match log.replay_from(1) {
+        pueblo_hub::events::ReplayResult::Complete(e) => e,
+        _ => panic!("expected complete"),
+    };
+    assert!(!history.iter().any(|e| matches!(
+        &e.payload,
+        EventPayload::MessageChunk { text, .. } if text == "REPLAY"
+    )));
+
+    sessions.shutdown_all().await;
+}
+
+/// Minimal peer: answers `initialize`, records every `$/cancel_request`
+/// id it observes, and hangs on anything else.
+const HANG_PEER: &str = r#"
+import json
+import sys
+
+cancel_log = sys.argv[1]
+
+def send(obj):
+    print(json.dumps({"jsonrpc": "2.0", **obj}), flush=True)
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "$/cancel_request":
+        with open(cancel_log, "a") as handle:
+            handle.write(str(msg["params"]["requestId"]) + "\n")
+    elif method == "initialize":
+        send({"id": msg["id"], "result": {"protocolVersion": 1, "agentCapabilities": {}}})
+    # Anything else hangs: no reply is ever sent.
+"#;
+
+fn observed_cancels(log: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+#[tokio::test]
+async fn timed_out_requests_emit_cancel_request() {
+    use pueblo_hub::acp::{callbacks::CallbackPolicy, AcpClient, RequestTimedOut};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("hang_peer.py");
+    std::fs::write(&script, HANG_PEER).unwrap();
+    let cancel_log = tmp.path().join("cancels.log");
+    let tracker = Arc::new(pueblo_hub::tasks::TerminalTaskTracker::default());
+    // The child needs a real environment (notably PATH) to exec python3.
+    let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let client = AcpClient::spawn(
+        "python3",
+        &[
+            script.display().to_string(),
+            cancel_log.display().to_string(),
+        ],
+        &env,
+        tmp.path(),
+        CallbackPolicy::Ask,
+        "sess".into(),
+        "test-agent".into(),
+        Arc::new(EventLog::new(100)),
+        None,
+        tracker,
+    )
+    .await
+    .unwrap();
+    client.initialize(tmp.path()).await.unwrap();
+
+    // An answered request is never protocol-cancelled.
+    client.initialize(tmp.path()).await.unwrap();
+    assert!(observed_cancels(&cancel_log).is_empty());
+
+    // An abandoned request is protocol-cancelled with its own id, which
+    // stays distinct from whole-turn `session/cancel` semantics.
+    let error = client
+        .send_request_with_timeout(
+            "test/hang",
+            serde_json::json!({}),
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.is::<RequestTimedOut>());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let cancels = observed_cancels(&cancel_log);
+        if cancels.len() == 1 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "peer never observed $/cancel_request, got {cancels:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn user_message_identity_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (service, sessions) = hub(tmp.path());
+    let log = sessions.event_log().clone();
+    let project = service
+        .create_project("demo".into(), tmp.path().display().to_string())
+        .unwrap();
+    let chat = service
+        .create_chat(&project.id, "codex", None)
+        .await
+        .unwrap();
+
+    // The fake peer echoes the `_meta` identity it observed in the prompt
+    // request back in its reply text and response `_meta`.
+    let start = log.next_seq();
+    prompt_when_idle(&service, &chat.chat.id, "identity: who are you").await;
+    await_turn(&log, &chat.chat.id).await;
+
+    // The durable user message persists the sent identity.
+    let durable_id = match log.replay_from(start) {
+        pueblo_hub::events::ReplayResult::Complete(events) => events
+            .into_iter()
+            .filter(|e| e.session_id == chat.chat.id)
+            .find_map(|e| match e.payload {
+                EventPayload::UserMessage { message_id, .. } => message_id,
+                _ => None,
+            })
+            .expect("durable user message carries its identity"),
+        _ => panic!("expected complete"),
+    };
+    // The agent observed and returned that same identity: send, persist,
+    // and correlate all agree end to end.
+    let text = collect_text(&log, &chat.chat.id, start).await;
+    assert_eq!(text, format!("identity:{durable_id}"));
 
     sessions.shutdown_all().await;
 }

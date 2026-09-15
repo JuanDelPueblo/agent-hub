@@ -1,4 +1,4 @@
-use crate::acp::{AcpClient, SavedConfigRejected};
+use crate::acp::{AcpClient, RequestTimedOut, SavedConfigRejected};
 use crate::agents::{AgentCatalog, AgentRuntime};
 use crate::events::{EventLog, EventPayload};
 use crate::state::{ProcessState, TurnState};
@@ -24,6 +24,7 @@ pub struct AdmittedTurn {
     message: String,
     timeout: Option<Duration>,
     start_seq: u64,
+    user_message_id: String,
 }
 
 pub struct AcpSession {
@@ -155,7 +156,25 @@ impl AcpSession {
         state_result
     }
 
-    async fn finalize_turn_response(&self, resp: &PromptResponse) -> anyhow::Result<()> {
+    async fn finalize_turn_response(
+        &self,
+        resp: &PromptResponse,
+        user_message_id: &str,
+    ) -> anyhow::Result<()> {
+        // Correlate the agent's response with the durable user message when
+        // the agent echoes the identity Pueblo Hub sent on `_meta`. Agents
+        // that omit it are normal; the durable UserMessage already carries
+        // the client-generated identity and stays authoritative.
+        match crate::acp::echoed_user_message_id(&resp.meta) {
+            Some(echoed) if echoed != user_message_id => {
+                tracing::warn!(
+                    expected = %user_message_id,
+                    echoed = %echoed,
+                    "Agent returned a different user message identity; keeping the durable one"
+                );
+            }
+            _ => {}
+        }
         let stop_reason = stop_reason_to_string(resp.stop_reason);
         self.event_log.append(
             &self.id,
@@ -259,11 +278,13 @@ impl AcpSession {
         // tree sweep. Cleared on every failure path below.
         *self.child_root_pid.write().await = client.root_pid();
 
-        if let Err(e) =
-            tokio::time::timeout(Duration::from_secs(60), client.initialize(&self.key.cwd))
-                .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("ACP initialize timed out")))
-        {
+        if let Err(e) = client.initialize(&self.key.cwd).await.map_err(|error| {
+            if error.is::<RequestTimedOut>() {
+                anyhow::anyhow!("ACP initialize timed out")
+            } else {
+                error
+            }
+        }) {
             client.shutdown().await;
             *self.child_root_pid.write().await = None;
             self.set_states(ProcessState::Dead, TurnState::Idle).await?;
@@ -276,13 +297,16 @@ impl AcpSession {
             .await
             .as_ref()
             .map(|s| s.to_string());
-        let new_session = match tokio::time::timeout(
-            Duration::from_secs(60),
-            client.open_session(&self.key.cwd, saved.as_deref()),
-        )
-        .await
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("ACP session setup timed out")))
-        {
+        let new_session = match client
+            .open_session(&self.key.cwd, saved.as_deref())
+            .await
+            .map_err(|error| {
+                if error.is::<RequestTimedOut>() {
+                    anyhow::anyhow!("ACP session setup timed out")
+                } else {
+                    error
+                }
+            }) {
             Ok(s) => s,
             Err(e) => {
                 client.shutdown().await;
@@ -305,15 +329,24 @@ impl AcpSession {
             let values = store.chat(&self.id)?.config_values;
             if let Some(values) = values.as_object() {
                 for (id, value) in values {
-                    let result = tokio::time::timeout(
-                        Duration::from_secs(30),
-                        client.set_config(&new_session.clone().into(), id, value.clone()),
-                    )
-                    .await;
-                    match result {
-                        // A timeout applying saved config is transient: keep
+                    match client
+                        .set_config(&new_session.clone().into(), id, value.clone())
+                        .await
+                    {
+                        // A genuine agent rejection or locally invalid stale
+                        // config keeps its typed identity for `resume_chat`
+                        // to map to `SavedConfigRejected`. Return it unwrapped
+                        // so the downcast survives.
+                        Err(error) if error.is::<SavedConfigRejected>() => {
+                            client.shutdown().await;
+                            *self.child_root_pid.write().await = None;
+                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                            return Err(error);
+                        }
+                        // A timeout applying saved config is transient (the
+                        // request was already protocol-cancelled): keep
                         // `config_values` so the ordinary Retry path appears.
-                        Err(_) => {
+                        Err(error) if error.is::<RequestTimedOut>() => {
                             client.shutdown().await;
                             *self.child_root_pid.write().await = None;
                             self.set_states(ProcessState::Dead, TurnState::Idle).await?;
@@ -321,20 +354,10 @@ impl AcpSession {
                                 "Timed out applying saved ACP option {id}; retry to reconnect"
                             );
                         }
-                        // A genuine agent rejection or locally invalid stale
-                        // config keeps its typed identity for `resume_chat`
-                        // to map to `SavedConfigRejected`. Return it unwrapped
-                        // so the downcast survives.
-                        Ok(Err(error)) if error.is::<SavedConfigRejected>() => {
-                            client.shutdown().await;
-                            *self.child_root_pid.write().await = None;
-                            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
-                            return Err(error);
-                        }
                         // Transport disconnects, writer failures, and malformed
                         // agent responses are transient: preserve the saved
                         // option and let Retry reconnect.
-                        Ok(Err(error)) => {
+                        Err(error) => {
                             client.shutdown().await;
                             *self.child_root_pid.write().await = None;
                             self.set_states(ProcessState::Dead, TurnState::Idle).await?;
@@ -342,7 +365,7 @@ impl AcpSession {
                                 "Failed to reapply saved ACP option {id}; retry to reconnect: {error}"
                             ));
                         }
-                        Ok(Ok(_)) => {}
+                        Ok(_) => {}
                     }
                 }
             }
@@ -416,12 +439,16 @@ impl AcpSession {
             store.touch_chat(&self.id, &turn_started_at.to_rfc3339())?;
         }
 
+        // The durable user message carries the identity sent with the
+        // prompt, so later turns and replays can correlate it even when
+        // the agent never echoes it back.
+        let user_message_id = uuid::Uuid::new_v4().to_string();
         self.event_log.append_at(
             &self.id,
             &self.key.agent,
             EventPayload::UserMessage {
                 text: message.clone(),
-                message_id: None,
+                message_id: Some(user_message_id.clone()),
             },
             turn_started_at,
         )?;
@@ -437,6 +464,7 @@ impl AcpSession {
             message,
             timeout,
             start_seq,
+            user_message_id,
         })
     }
 
@@ -464,9 +492,12 @@ impl AcpSession {
             message,
             timeout,
             start_seq,
+            user_message_id,
             ..
         } = admitted;
-        let result = self.execute_prompt(&message, timeout, start_seq).await;
+        let result = self
+            .execute_prompt(&message, timeout, start_seq, &user_message_id)
+            .await;
         if let Err(error) = &result {
             let stop_reason = if error.is::<PromptTimeout>() {
                 "timeout"
@@ -483,6 +514,7 @@ impl AcpSession {
         message: &str,
         timeout: Option<Duration>,
         start_seq: u64,
+        user_message_id: &str,
     ) -> anyhow::Result<String> {
         let client = match self.client.read().await.as_ref().cloned() {
             Some(c) => c,
@@ -499,7 +531,7 @@ impl AcpSession {
             }
         };
 
-        let prompt_future = client.prompt(&sid, message);
+        let prompt_future = client.prompt(&sid, message, user_message_id);
         tokio::pin!(prompt_future);
 
         let mut event_rx = self.event_log.subscribe();
@@ -543,7 +575,7 @@ impl AcpSession {
                 self.set_states(ProcessState::Running, TurnState::Idle)
                     .await?;
                 self.touch().await;
-                if let Err(error) = self.finalize_turn_response(&resp).await {
+                if let Err(error) = self.finalize_turn_response(&resp, user_message_id).await {
                     let _ = self.mark_dead().await;
                     return Err(error);
                 }
@@ -895,7 +927,7 @@ impl AcpSession {
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
-        tokio::time::timeout(Duration::from_secs(30), client.set_mode(&sid, mode_id)).await??;
+        client.set_mode(&sid, mode_id).await?;
         // The `set_mode` response carries no state, so merge the confirmed
         // id into the snapshot here. A later `current_mode_update` merges
         // the same way. Update both casings; the wire uses camelCase.
@@ -935,17 +967,25 @@ impl AcpSession {
 
     pub async fn delete_remote_session(&self, remote_id: &str) -> anyhow::Result<()> {
         self.resume().await?;
+        // Never delete the agent session backing this chat through the
+        // remote-history path: after a restart Pueblo Hub would try to
+        // resume an agent session it deliberately destroyed instead of
+        // reporting the saved chat cleanly. Detach by deleting the chat
+        // itself, which owns the full cleanup workflow.
+        if let Some(current) = self.acp_session_id.read().await.as_ref() {
+            if current.to_string() == remote_id {
+                anyhow::bail!(
+                    "Refusing to delete the agent session linked to this chat; delete the chat itself to remove it"
+                );
+            }
+        }
         let client = self
             .client
             .read()
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
-        tokio::time::timeout(
-            Duration::from_secs(30),
-            client.delete_remote_session(remote_id),
-        )
-        .await??;
+        client.delete_remote_session(remote_id).await?;
         Ok(())
     }
 
@@ -970,11 +1010,7 @@ impl AcpSession {
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No ACP session"))?;
-        let options = tokio::time::timeout(
-            Duration::from_secs(30),
-            client.set_config(&sid, id, value.clone()),
-        )
-        .await??;
+        let options = client.set_config(&sid, id, value.clone()).await?;
         if let Some(store) = &self.store {
             let authoritative = options
                 .as_array()
@@ -1008,11 +1044,7 @@ impl AcpSession {
             .await
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Chat is stopped"))?;
-        tokio::time::timeout(
-            Duration::from_secs(30),
-            client.list_sessions(&self.key.cwd, cursor),
-        )
-        .await?
+        client.list_sessions(&self.key.cwd, cursor).await
     }
 
     async fn try_sync_acp_title(&self, client: &Arc<AcpClient>) -> anyhow::Result<()> {

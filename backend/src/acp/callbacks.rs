@@ -47,6 +47,10 @@ pub struct PendingElicitationInfo {
 struct PendingElicitation {
     tx: oneshot::Sender<agent_client_protocol_schema::ElicitationAction>,
     info: PendingElicitationInfo,
+    /// Typed requested schema for form mode. Held so responses are
+    /// validated against what the agent advertised before anything is
+    /// sent back. `None` for URL mode.
+    requested_schema: Option<agent_client_protocol_schema::ElicitationSchema>,
 }
 
 pub struct CallbackHandler {
@@ -567,40 +571,65 @@ impl CallbackHandler {
         action: &str,
         content: Option<serde_json::Value>,
     ) -> anyhow::Result<bool> {
-        let (tx, info) = {
-            let mut pending = self.pending_elicitations.write().await;
-            match pending.remove(id) {
-                Some(p) => (p.tx, p.info),
-                None => return Ok(false),
+        // Validate an accept against the advertised schema BEFORE removing
+        // the pending entry, so a rejected submission stays answerable.
+        // Form values stay transient: only the action marker is recorded,
+        // never the submitted values.
+        if action == "accept" {
+            let (mode, schema) = {
+                let pending = self.pending_elicitations.read().await;
+                match pending.get(id) {
+                    Some(p) => (p.info.mode.clone(), p.requested_schema.clone()),
+                    None => return Ok(false),
+                }
+            };
+            if mode == "form" {
+                let schema = schema
+                    .ok_or_else(|| anyhow::anyhow!("Form elicitation has no advertised schema"))?;
+                let raw = content.unwrap_or(serde_json::Value::Null);
+                let map: std::collections::BTreeMap<
+                    String,
+                    agent_client_protocol_schema::ElicitationContentValue,
+                > = serde_json::from_value(raw)
+                    .map_err(|e| anyhow::anyhow!("Invalid elicitation content: {e}"))?;
+                let validated = validate_elicitation_content(&schema, &map).map_err(|e| {
+                    anyhow::anyhow!("Elicitation content does not match the requested form: {e}")
+                })?;
+                return self
+                    .resolve_elicitation(
+                        id,
+                        agent_client_protocol_schema::ElicitationAction::Accept(
+                            agent_client_protocol_schema::ElicitationAcceptAction::new()
+                                .content(Some(validated)),
+                        ),
+                    )
+                    .await;
             }
-        };
+        }
         let elic_action = match action {
             "accept" => {
-                // Form values stay transient: validate the flat shape but
-                // never persist them in the event log. Only the action
-                // marker is recorded.
-                let validated = if info.mode == "form" {
-                    match content {
-                        Some(v) => {
-                            let map: std::collections::BTreeMap<
-                                String,
-                                agent_client_protocol_schema::ElicitationContentValue,
-                            > = serde_json::from_value(v)
-                                .map_err(|e| anyhow::anyhow!("Invalid elicitation content: {e}"))?;
-                            Some(map)
-                        }
-                        None => None,
-                    }
-                } else {
-                    // URL mode carries no form content; ignore any payload.
-                    None
-                };
+                // URL mode carries no form content; ignore any payload.
                 agent_client_protocol_schema::ElicitationAction::Accept(
-                    agent_client_protocol_schema::ElicitationAcceptAction::new().content(validated),
+                    agent_client_protocol_schema::ElicitationAcceptAction::new().content(None),
                 )
             }
             "decline" => agent_client_protocol_schema::ElicitationAction::Decline,
             _ => agent_client_protocol_schema::ElicitationAction::Cancel,
+        };
+        self.resolve_elicitation(id, elic_action).await
+    }
+
+    async fn resolve_elicitation(
+        &self,
+        id: &str,
+        elic_action: agent_client_protocol_schema::ElicitationAction,
+    ) -> anyhow::Result<bool> {
+        let tx = {
+            let mut pending = self.pending_elicitations.write().await;
+            match pending.remove(id) {
+                Some(p) => p.tx,
+                None => return Ok(false),
+            }
         };
         let action_str = match &elic_action {
             agent_client_protocol_schema::ElicitationAction::Accept(_) => "accept",
@@ -665,58 +694,67 @@ impl CallbackHandler {
         req: agent_client_protocol_schema::CreateElicitationRequest,
     ) -> agent_client_protocol_schema::CreateElicitationResponse {
         use agent_client_protocol_schema::{ElicitationAction, ElicitationMode};
-        let (mode_str, schema, url, elicitation_id, tool_call_id) = match &req.mode {
-            ElicitationMode::Form(f) => {
-                let schema_val = serde_json::to_value(&f.requested_schema).ok();
-                let tool = match &f.scope {
-                    agent_client_protocol_schema::ElicitationScope::Session(s) => {
-                        s.tool_call_id.as_ref().map(|t| t.to_string())
-                    }
-                    _ => None,
-                };
-                ("form".to_string(), schema_val, None, None, tool)
-            }
-            ElicitationMode::Url(u) => {
-                let tool = match &u.scope {
-                    agent_client_protocol_schema::ElicitationScope::Session(s) => {
-                        s.tool_call_id.as_ref().map(|t| t.to_string())
-                    }
-                    _ => None,
-                };
-                (
-                    "url".to_string(),
-                    None,
-                    Some(u.url.clone()),
-                    Some(u.elicitation_id.to_string()),
-                    tool,
-                )
-            }
-            ElicitationMode::Other(o) => {
-                // Never render unknown modes as known. Record opaquely and
-                // answer cancelled.
-                let _ = self.event_log.append(
-                    &self.session_id,
-                    &self.agent_name,
-                    EventPayload::ElicitationRequest {
-                        id: rpc_id.clone(),
-                        mode: format!("other:{}", o.mode),
-                        message: req.message.clone(),
-                        schema: None,
-                        url: None,
-                        elicitation_id: None,
-                        tool_call_id: None,
-                    },
-                );
-                return agent_client_protocol_schema::CreateElicitationResponse::new(
-                    ElicitationAction::Cancel,
-                );
-            }
-            _ => {
-                return agent_client_protocol_schema::CreateElicitationResponse::new(
-                    ElicitationAction::Cancel,
-                );
-            }
-        };
+        let (mode_str, schema, url, elicitation_id, tool_call_id, requested_schema) =
+            match &req.mode {
+                ElicitationMode::Form(f) => {
+                    let schema_val = serde_json::to_value(&f.requested_schema).ok();
+                    let tool = match &f.scope {
+                        agent_client_protocol_schema::ElicitationScope::Session(s) => {
+                            s.tool_call_id.as_ref().map(|t| t.to_string())
+                        }
+                        _ => None,
+                    };
+                    (
+                        "form".to_string(),
+                        schema_val,
+                        None,
+                        None,
+                        tool,
+                        Some(f.requested_schema.clone()),
+                    )
+                }
+                ElicitationMode::Url(u) => {
+                    let tool = match &u.scope {
+                        agent_client_protocol_schema::ElicitationScope::Session(s) => {
+                            s.tool_call_id.as_ref().map(|t| t.to_string())
+                        }
+                        _ => None,
+                    };
+                    (
+                        "url".to_string(),
+                        None,
+                        Some(u.url.clone()),
+                        Some(u.elicitation_id.to_string()),
+                        tool,
+                        None,
+                    )
+                }
+                ElicitationMode::Other(o) => {
+                    // Never render unknown modes as known. Record opaquely and
+                    // answer cancelled.
+                    let _ = self.event_log.append(
+                        &self.session_id,
+                        &self.agent_name,
+                        EventPayload::ElicitationRequest {
+                            id: rpc_id.clone(),
+                            mode: format!("other:{}", o.mode),
+                            message: req.message.clone(),
+                            schema: None,
+                            url: None,
+                            elicitation_id: None,
+                            tool_call_id: None,
+                        },
+                    );
+                    return agent_client_protocol_schema::CreateElicitationResponse::new(
+                        ElicitationAction::Cancel,
+                    );
+                }
+                _ => {
+                    return agent_client_protocol_schema::CreateElicitationResponse::new(
+                        ElicitationAction::Cancel,
+                    );
+                }
+            };
         // Pending id is the stable elicitation_id for URL, else the RPC id.
         let pending_id = elicitation_id.clone().unwrap_or_else(|| rpc_id.clone());
         let info = PendingElicitationInfo {
@@ -734,6 +772,7 @@ impl CallbackHandler {
             PendingElicitation {
                 tx,
                 info: info.clone(),
+                requested_schema,
             },
         );
         if let Err(e) = self.event_log.append(
@@ -772,6 +811,209 @@ impl CallbackHandler {
                 task.stop();
             }
         }
+    }
+}
+
+/// Validates submitted form content against the agent's advertised stable
+/// restricted schema and applies schema defaults for omitted optional
+/// fields. Unknown submitted properties are rejected: the flat content
+/// shape cannot represent anything the schema did not declare. Returns the
+/// content to send back on success.
+///
+/// Enforced: required presence, value types, single-select membership
+/// (`enum`/`oneOf`), string length bounds, numeric bounds, and multi-select
+/// item counts and membership. String `pattern` and `format` are advisory
+/// only: without a pattern engine they pass through untouched rather than
+/// being interpreted.
+fn validate_elicitation_content(
+    schema: &agent_client_protocol_schema::ElicitationSchema,
+    content: &std::collections::BTreeMap<
+        String,
+        agent_client_protocol_schema::ElicitationContentValue,
+    >,
+) -> Result<
+    std::collections::BTreeMap<String, agent_client_protocol_schema::ElicitationContentValue>,
+    String,
+> {
+    use agent_client_protocol_schema::{ElicitationContentValue, ElicitationPropertySchema};
+    let mut validated = std::collections::BTreeMap::new();
+    for (name, property) in &schema.properties {
+        let required = schema
+            .required
+            .as_ref()
+            .is_some_and(|names| names.iter().any(|n| n == name));
+        match content.get(name) {
+            None => {
+                if required {
+                    return Err(format!("Missing required field: {name}"));
+                }
+                // Omitted optional fields fall back to the schema default
+                // when the agent declared one.
+                match property {
+                    ElicitationPropertySchema::String(s) => {
+                        if let Some(d) = &s.default {
+                            validated
+                                .insert(name.clone(), ElicitationContentValue::String(d.clone()));
+                        }
+                    }
+                    ElicitationPropertySchema::Number(n) => {
+                        if let Some(d) = n.default {
+                            validated.insert(name.clone(), ElicitationContentValue::Number(d));
+                        }
+                    }
+                    ElicitationPropertySchema::Integer(i) => {
+                        if let Some(d) = i.default {
+                            validated.insert(name.clone(), ElicitationContentValue::Integer(d));
+                        }
+                    }
+                    ElicitationPropertySchema::Boolean(b) => {
+                        if let Some(d) = b.default {
+                            validated.insert(name.clone(), ElicitationContentValue::Boolean(d));
+                        }
+                    }
+                    ElicitationPropertySchema::Array(a) => {
+                        if let Some(d) = &a.default {
+                            validated.insert(
+                                name.clone(),
+                                ElicitationContentValue::StringArray(d.clone()),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some(value) => {
+                validated.insert(name.clone(), check_property_value(name, property, value)?);
+            }
+        }
+    }
+    for name in content.keys() {
+        if !schema.properties.contains_key(name) {
+            return Err(format!("Unknown field: {name}"));
+        }
+    }
+    Ok(validated)
+}
+
+fn check_property_value(
+    name: &str,
+    property: &agent_client_protocol_schema::ElicitationPropertySchema,
+    value: &agent_client_protocol_schema::ElicitationContentValue,
+) -> Result<agent_client_protocol_schema::ElicitationContentValue, String> {
+    use agent_client_protocol_schema::{ElicitationContentValue, ElicitationPropertySchema};
+    let err = |msg: &str| Err(format!("Invalid value for {name}: {msg}"));
+    match property {
+        ElicitationPropertySchema::String(s) => {
+            let text = match value {
+                ElicitationContentValue::String(t) => t,
+                _ => return err("expected a string"),
+            };
+            if let Some(allowed) = &s.enum_values {
+                if !allowed.iter().any(|v| v == text) {
+                    return err("value is not one of the advertised choices");
+                }
+            }
+            if let Some(options) = &s.one_of {
+                if !options.iter().any(|o| o.value == *text) {
+                    return err("value is not one of the advertised choices");
+                }
+            }
+            let len = text.chars().count() as u32;
+            if let Some(min) = s.min_length {
+                if len < min {
+                    return err("value is shorter than the advertised minimum");
+                }
+            }
+            if let Some(max) = s.max_length {
+                if len > max {
+                    return err("value is longer than the advertised maximum");
+                }
+            }
+            Ok(ElicitationContentValue::String(text.clone()))
+        }
+        ElicitationPropertySchema::Number(n) => {
+            // Integer JSON input coerces: number fields commonly receive
+            // whole values from numeric controls.
+            let num = match value {
+                ElicitationContentValue::Number(f) => *f,
+                ElicitationContentValue::Integer(i) => *i as f64,
+                _ => return err("expected a number"),
+            };
+            if let Some(min) = n.minimum {
+                if num < min {
+                    return err("value is below the advertised minimum");
+                }
+            }
+            if let Some(max) = n.maximum {
+                if num > max {
+                    return err("value is above the advertised maximum");
+                }
+            }
+            Ok(ElicitationContentValue::Number(num))
+        }
+        ElicitationPropertySchema::Integer(i) => {
+            let num = match value {
+                ElicitationContentValue::Integer(v) => *v,
+                ElicitationContentValue::Number(f)
+                    if f.fract() == 0.0 && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 =>
+                {
+                    *f as i64
+                }
+                _ => return err("expected an integer"),
+            };
+            if let Some(min) = i.minimum {
+                if num < min {
+                    return err("value is below the advertised minimum");
+                }
+            }
+            if let Some(max) = i.maximum {
+                if num > max {
+                    return err("value is above the advertised maximum");
+                }
+            }
+            Ok(ElicitationContentValue::Integer(num))
+        }
+        ElicitationPropertySchema::Boolean(_) => match value {
+            ElicitationContentValue::Boolean(b) => Ok(ElicitationContentValue::Boolean(*b)),
+            _ => err("expected a boolean"),
+        },
+        ElicitationPropertySchema::Array(a) => {
+            let items = match value {
+                ElicitationContentValue::StringArray(v) => v,
+                _ => return err("expected a list of strings"),
+            };
+            let len = items.len() as u64;
+            if let Some(min) = a.min_items {
+                if len < min {
+                    return err("fewer items than the advertised minimum");
+                }
+            }
+            if let Some(max) = a.max_items {
+                if len > max {
+                    return err("more items than the advertised maximum");
+                }
+            }
+            let allowed: Option<Vec<&str>> = match &a.items {
+                agent_client_protocol_schema::MultiSelectItems::String(s) => {
+                    Some(s.values.iter().map(String::as_str).collect())
+                }
+                agent_client_protocol_schema::MultiSelectItems::Titled(t) => {
+                    Some(t.options.iter().map(|o| o.value.as_str()).collect())
+                }
+                _ => None,
+            };
+            if let Some(allowed) = allowed {
+                if let Some(bad) = items.iter().find(|v| !allowed.contains(&v.as_str())) {
+                    return Err(format!(
+                        "Invalid value for {name}: {bad} is not one of the advertised choices"
+                    ));
+                }
+            }
+            Ok(ElicitationContentValue::StringArray(items.clone()))
+        }
+        _ => Err(format!(
+            "Unsupported property type for {name}; cannot verify the value"
+        )),
     }
 }
 
@@ -1340,6 +1582,235 @@ mod tests {
         assert_eq!(title, Some("Run tests".to_string()));
         assert_eq!(description, "Execute command: cargo test --all");
         assert!(kind.is_none());
+    }
+
+    fn elicitation_map(
+        pairs: Vec<(&str, agent_client_protocol_schema::ElicitationContentValue)>,
+    ) -> std::collections::BTreeMap<String, agent_client_protocol_schema::ElicitationContentValue>
+    {
+        pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    #[test]
+    fn test_elicitation_validation_required_types_and_unknown() {
+        use super::agent_client_protocol_schema::{
+            ElicitationContentValue as V, ElicitationSchema,
+        };
+        let schema = ElicitationSchema::new()
+            .string("name", true)
+            .property(
+                "age",
+                agent_client_protocol_schema::IntegerPropertySchema::new(),
+                false,
+            )
+            .property(
+                "admin",
+                agent_client_protocol_schema::BooleanPropertySchema::new(),
+                false,
+            );
+        // Missing required field is rejected.
+        assert!(validate_elicitation_content(&schema, &elicitation_map(vec![])).is_err());
+        // Wrong types are rejected.
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![("name", V::Integer(3)), ("age", V::Integer(3))]),
+        )
+        .is_err());
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("a".into())),
+                ("admin", V::String("x".into()))
+            ]),
+        )
+        .is_err());
+        // Unknown fields are rejected.
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("a".into())),
+                ("zzz", V::String("b".into())),
+            ]),
+        )
+        .is_err());
+        // Valid content passes through, omitting unset optionals.
+        let out = validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("a".into())),
+                ("age", V::Integer(3)),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn test_elicitation_validation_enum_and_bounds() {
+        use super::agent_client_protocol_schema::{
+            ElicitationContentValue as V, ElicitationSchema,
+        };
+        let schema = ElicitationSchema::new().property(
+            "color",
+            agent_client_protocol_schema::StringPropertySchema::new()
+                .enum_values(vec!["red".to_string(), "blue".to_string()]),
+            true,
+        );
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![("color", V::String("green".into()))]),
+        )
+        .is_err());
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![("color", V::String("red".into()))]),
+        )
+        .is_ok());
+
+        let bounded = ElicitationSchema::new()
+            .property(
+                "nick",
+                agent_client_protocol_schema::StringPropertySchema::new()
+                    .min_length(2_u32)
+                    .max_length(4_u32),
+                true,
+            )
+            .property(
+                "n",
+                agent_client_protocol_schema::IntegerPropertySchema::new()
+                    .minimum(2_i64)
+                    .maximum(4_i64),
+                true,
+            );
+        let base = elicitation_map(vec![
+            ("nick", V::String("abc".into())),
+            ("n", V::Integer(3)),
+        ]);
+        assert!(validate_elicitation_content(&bounded, &base).is_ok());
+        let mut short = base.clone();
+        short.insert("nick".to_string(), V::String("a".into()));
+        assert!(validate_elicitation_content(&bounded, &short).is_err());
+        let mut high = base.clone();
+        high.insert("n".to_string(), V::Integer(9));
+        assert!(validate_elicitation_content(&bounded, &high).is_err());
+        // Whole JSON numbers coerce into integer fields.
+        let mut float_whole = base.clone();
+        float_whole.insert("n".to_string(), V::Number(3.0));
+        assert!(validate_elicitation_content(&bounded, &float_whole).is_ok());
+        let mut float_frac = base;
+        float_frac.insert("n".to_string(), V::Number(3.5));
+        assert!(validate_elicitation_content(&bounded, &float_frac).is_err());
+    }
+
+    #[test]
+    fn test_elicitation_validation_defaults_and_multiselect() {
+        use super::agent_client_protocol_schema::{
+            ElicitationContentValue as V, ElicitationSchema,
+        };
+        let schema = ElicitationSchema::new()
+            .string("name", true)
+            .property(
+                "level",
+                agent_client_protocol_schema::StringPropertySchema::new()
+                    .default_value("low".to_string()),
+                false,
+            )
+            .property(
+                "tags",
+                agent_client_protocol_schema::MultiSelectPropertySchema::new(vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                ])
+                .min_items(1_u64)
+                .max_items(2_u64),
+                false,
+            );
+        // Omitted optionals fill declared defaults.
+        let out = validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![("name", V::String("n".into()))]),
+        )
+        .unwrap();
+        assert_eq!(out.get("level"), Some(&V::String("low".to_string())));
+        // Membership and item counts are enforced.
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("n".into())),
+                ("tags", V::StringArray(vec!["zzz".to_string()])),
+            ]),
+        )
+        .is_err());
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("n".into())),
+                ("tags", V::StringArray(vec![])),
+            ]),
+        )
+        .is_err());
+        assert!(validate_elicitation_content(
+            &schema,
+            &elicitation_map(vec![
+                ("name", V::String("n".into())),
+                (
+                    "tags",
+                    V::StringArray(vec!["a".to_string(), "b".to_string()])
+                ),
+            ]),
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_elicitation_rejected_accept_stays_pending() {
+        // A submission that fails schema validation keeps the elicitation
+        // answerable instead of resolving it.
+        let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
+        let handler = Arc::new(CallbackHandler::new(
+            CallbackPolicy::Ask,
+            "s1".into(),
+            "codex".into(),
+            event_log,
+            std::env::temp_dir(),
+            Arc::new(std::collections::HashMap::new()),
+            tracker,
+        ));
+        let schema = agent_client_protocol_schema::ElicitationSchema::new().string("name", true);
+        let scope = agent_client_protocol_schema::ElicitationSessionScope::new("sess-1");
+        let req = agent_client_protocol_schema::CreateElicitationRequest::new(
+            agent_client_protocol_schema::ElicitationFormMode::new(scope, schema),
+            "Provide name",
+        );
+        let h = handler.clone();
+        let handle =
+            tokio::spawn(async move { h.handle_elicitation("rpc-reject".to_string(), req).await });
+        let mut pending_id = None;
+        for _ in 0..50 {
+            if let Some(first) = handler.list_pending_elicitations().await.first() {
+                pending_id = Some(first.id.clone());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let pid = pending_id.expect("elicitation pending");
+        let bad = serde_json::json!({});
+        assert!(handler
+            .respond_elicitation(&pid, "accept", Some(bad))
+            .await
+            .is_err());
+        assert_eq!(handler.list_pending_elicitations().await.len(), 1);
+        let good = serde_json::json!({"name": " Ada "});
+        assert!(handler
+            .respond_elicitation(&pid, "accept", Some(good))
+            .await
+            .unwrap());
+        let resp = handle.await.unwrap();
+        assert!(matches!(
+            resp.action,
+            agent_client_protocol_schema::ElicitationAction::Accept(_)
+        ));
     }
 
     #[test]

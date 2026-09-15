@@ -54,6 +54,22 @@ impl std::fmt::Display for SavedConfigRejected {
 
 impl std::error::Error for SavedConfigRejected {}
 
+/// An outgoing ACP request passed its local deadline. The client already
+/// emitted `$/cancel_request` for it, so callers treat this as transient:
+/// it must never be mistaken for an agent rejection.
+#[derive(Debug)]
+pub struct RequestTimedOut {
+    pub method: &'static str,
+}
+
+impl std::fmt::Display for RequestTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ACP request {} timed out", self.method)
+    }
+}
+
+impl std::error::Error for RequestTimedOut {}
+
 enum WriterMsg {
     Line(String),
     Shutdown,
@@ -179,6 +195,40 @@ impl AcpClient {
         method: &'static str,
         params: P,
     ) -> anyhow::Result<serde_json::Value> {
+        let (_, rx) = self.dispatch_request(method, params).await?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("Response channel dropped"))?
+    }
+
+    /// Sends one JSON-RPC request and awaits it with a deadline. When the
+    /// deadline passes first, the client emits stable `$/cancel_request`
+    /// for that request id before reporting the timeout, so an abandoned
+    /// outgoing request is actually protocol-cancelled. This stays distinct
+    /// from `session/cancel`, which cancels a whole turn.
+    pub async fn send_request_with_timeout<P: serde::Serialize>(
+        &self,
+        method: &'static str,
+        params: P,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (id, rx) = self.dispatch_request(method, params).await?;
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(outcome) => outcome.map_err(|_| anyhow::anyhow!("Response channel dropped"))?,
+            Err(_) => {
+                // A late answer finds no pending entry and is dropped.
+                // Tell the agent the request is abandoned first.
+                self.pending.lock().await.remove(&id);
+                self.cancel_request(id).await;
+                Err(anyhow::Error::new(RequestTimedOut { method }))
+            }
+        }
+    }
+
+    async fn dispatch_request<P: serde::Serialize>(
+        &self,
+        method: &'static str,
+        params: P,
+    ) -> anyhow::Result<(i64, oneshot::Receiver<ResponseResult>)> {
         if !self.is_connected() {
             anyhow::bail!("ACP agent connection closed");
         }
@@ -207,8 +257,7 @@ impl AcpClient {
             anyhow::bail!("Writer channel closed");
         }
 
-        rx.await
-            .map_err(|_| anyhow::anyhow!("Response channel dropped"))?
+        Ok((id, rx))
     }
 
     async fn send_notification<P: serde::Serialize>(
@@ -252,7 +301,9 @@ impl AcpClient {
                 env!("CARGO_PKG_VERSION"),
             ))
             .client_capabilities(caps);
-        let result = self.send_request("initialize", req).await?;
+        let result = self
+            .send_request_with_timeout("initialize", req, std::time::Duration::from_secs(60))
+            .await?;
         let response: InitializeResponse = serde_json::from_value(result.clone())?;
         // Target stable ACP v1 only. Reject pre-release or future versions
         // explicitly rather than negotiating silently.
@@ -286,6 +337,11 @@ impl AcpClient {
 
     /// Preserve the agent's identity. Never fall back to session/new on resume failure.
     pub async fn open_session(&self, cwd: &Path, saved: Option<&str>) -> anyhow::Result<String> {
+        // Clear transient dynamic state BEFORE load/resume so updates that
+        // arrive as part of ACP replay are retained rather than wiped by a
+        // reset that runs after the request returns.
+        *self.available_commands.write().await = serde_json::json!([]);
+        *self.last_usage.write().await = serde_json::Value::Null;
         let params = serde_json::json!({"cwd":cwd,"mcpServers":[],"sessionId":saved});
         let result = if let Some(id) = saved {
             let caps = self.capabilities.read().await.clone();
@@ -302,26 +358,31 @@ impl AcpClient {
             // Our durable event log already contains the displayed history.
             // Loading still restores agent-owned state; do not append its replay twice.
             self.replaying.store(true, Ordering::SeqCst);
-            let result = self.send_request(method, params).await;
+            let result = self
+                .send_request_with_timeout(method, params, std::time::Duration::from_secs(60))
+                .await;
             self.replaying.store(false, Ordering::SeqCst);
             result?
         } else {
-            self.send_request("session/new", NewSessionRequest::new(cwd.to_path_buf()))
-                .await?
+            self.send_request_with_timeout(
+                "session/new",
+                NewSessionRequest::new(cwd.to_path_buf()),
+                std::time::Duration::from_secs(60),
+            )
+            .await?
         };
         *self.config_options.write().await = result
             .get("configOptions")
             .cloned()
             .unwrap_or(serde_json::json!([]));
         // Preserve advertised modes/current mode generically. Absent means
-        // the agent has no legacy mode support.
+        // the agent has no legacy mode support. The response snapshot is
+        // authoritative; live `current_mode_update` notifications that
+        // arrive during replay merge into it on arrival.
         *self.session_modes.write().await = result
             .get("modes")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        // Reset commands and usage on (re)open; live updates repopulate them.
-        *self.available_commands.write().await = serde_json::json!([]);
-        *self.last_usage.write().await = serde_json::Value::Null;
         if let Some(saved) = saved {
             if let Some(returned) = result["sessionId"].as_str() {
                 anyhow::ensure!(
@@ -375,12 +436,18 @@ impl AcpClient {
             serde_json::json!({"sessionId":session_id,"configId":id,"value":value})
         };
         let result = self
-            .send_request("session/set_config_option", params)
+            .send_request_with_timeout(
+                "session/set_config_option",
+                params,
+                std::time::Duration::from_secs(30),
+            )
             .await
             .map_err(|error| {
                 // Only an agent RPC rejection is a saved-config rejection.
-                // Transport disconnects, writer failures, and dropped response
-                // channels are transient and must keep the ordinary Retry path.
+                // Transport disconnects, timeouts (already protocol-cancelled
+                // via `$/cancel_request`), writer failures, and dropped
+                // response channels are transient and must keep the ordinary
+                // Retry path.
                 let message = error.to_string();
                 if message.starts_with("RPC error") {
                     anyhow::Error::new(SavedConfigRejected {
@@ -440,9 +507,10 @@ impl AcpClient {
             }
         };
         anyhow::ensure!(has_modes, "Agent does not advertise session modes");
-        self.send_request(
+        self.send_request_with_timeout(
             "session/set_mode",
             serde_json::json!({"sessionId":session_id,"modeId":mode_id}),
+            std::time::Duration::from_secs(30),
         )
         .await?;
         Ok(())
@@ -460,9 +528,10 @@ impl AcpClient {
                 .is_some_and(|v| v.is_object()),
             "Agent does not advertise session/delete"
         );
-        self.send_request(
+        self.send_request_with_timeout(
             "session/delete",
             serde_json::json!({"sessionId":session_id}),
+            std::time::Duration::from_secs(30),
         )
         .await?;
         Ok(())
@@ -489,11 +558,13 @@ impl AcpClient {
             .pointer("/sessionCapabilities/close")
             .is_some_and(|v| v.is_object())
         {
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                self.send_request("session/close", serde_json::json!({"sessionId":session_id})),
-            )
-            .await;
+            let _ = self
+                .send_request_with_timeout(
+                    "session/close",
+                    serde_json::json!({"sessionId":session_id}),
+                    std::time::Duration::from_secs(5),
+                )
+                .await;
         }
     }
 
@@ -518,9 +589,10 @@ impl AcpClient {
                 .is_some_and(|v| v.is_object()),
             "Agent does not advertise session/list"
         );
-        self.send_request(
+        self.send_request_with_timeout(
             "session/list",
             serde_json::json!({"cwd":cwd,"cursor":cursor}),
+            std::time::Duration::from_secs(30),
         )
         .await
     }
@@ -529,11 +601,18 @@ impl AcpClient {
         &self,
         session_id: &SessionId,
         text: &str,
+        user_message_id: &str,
     ) -> anyhow::Result<PromptResponse> {
+        // Stable v1 has no dedicated user-message-id field, so the identity
+        // travels on the generic `_meta` extension point under Pueblo Hub's
+        // own namespace. Agents that do not understand it ignore it, as the
+        // spec requires; agents that echo it let the turn correlate the
+        // response with the durable user message.
         let req = PromptRequest::new(
             session_id.clone(),
             vec![ContentBlock::Text(TextContent::new(text))],
-        );
+        )
+        .meta(user_message_meta(user_message_id));
         let result = self.send_request("session/prompt", req).await?;
         Ok(serde_json::from_value(result)?)
     }
@@ -759,10 +838,9 @@ async fn reader_task(
                         if method == "session/update" {
                             // Dynamic snapshots update memory even during ACP
                             // replay so the state stays queryable after
-                            // reconnect. Events emit only for live updates to
-                            // avoid duplicating durable history, except for
-                            // the authoritative config snapshot which keeps
-                            // its historical behavior.
+                            // reconnect. Durable events emit only for live
+                            // updates: replaying an authoritative snapshot
+                            // would duplicate history on every reconnect.
                             let kind = params
                                 .pointer("/update/sessionUpdate")
                                 .and_then(|v| v.as_str())
@@ -773,15 +851,17 @@ async fn reader_task(
                                     .filter(|v| v.is_array())
                                 {
                                     *config_options.write().await = options.clone();
-                                    if let Err(error) = event_log.append(
-                                        &session_id,
-                                        &agent_name,
-                                        EventPayload::ConfigOptions {
-                                            options: options.clone(),
-                                        },
-                                    ) {
-                                        tracing::error!(%error, "Stopping ACP reader after event persistence failure");
-                                        break;
+                                    if !replaying.load(Ordering::SeqCst) {
+                                        if let Err(error) = event_log.append(
+                                            &session_id,
+                                            &agent_name,
+                                            EventPayload::ConfigOptions {
+                                                options: options.clone(),
+                                            },
+                                        ) {
+                                            tracing::error!(%error, "Stopping ACP reader after event persistence failure");
+                                            break;
+                                        }
                                     }
                                 }
                             } else if kind == "available_commands_update" {
@@ -997,6 +1077,39 @@ async fn reader_task(
     .await;
 }
 
+/// Namespace for Pueblo Hub's generic `_meta` extensions. Extension keys
+/// never drive protocol behavior; agents that do not understand them must
+/// ignore them per the ACP extensibility rules.
+pub const PUEBLO_META_KEY: &str = "puebloHub";
+/// User-message identity key inside Pueblo Hub's `_meta` namespace.
+pub const USER_MESSAGE_ID_META_KEY: &str = "userMessageId";
+
+/// Builds the generic `_meta` carrying one user-message identity.
+pub fn user_message_meta(user_message_id: &str) -> agent_client_protocol_schema::Meta {
+    let mut inner = serde_json::Map::new();
+    inner.insert(
+        USER_MESSAGE_ID_META_KEY.to_string(),
+        serde_json::Value::String(user_message_id.to_string()),
+    );
+    let mut meta = agent_client_protocol_schema::Meta::new();
+    meta.insert(
+        PUEBLO_META_KEY.to_string(),
+        serde_json::Value::Object(inner),
+    );
+    meta
+}
+
+/// Reads a user-message identity an agent echoed back on the generic
+/// `_meta` extension point. Returns `None` for agents that omit it, which
+/// normal operation must always tolerate.
+pub fn echoed_user_message_id(meta: &Option<agent_client_protocol_schema::Meta>) -> Option<String> {
+    meta.as_ref()?
+        .get(PUEBLO_META_KEY)?
+        .get(USER_MESSAGE_ID_META_KEY)?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
 pub fn validate_config_value(
     options: &serde_json::Value,
     id: &str,
@@ -1158,10 +1271,16 @@ async fn handle_session_update(
                 }
                 _ => None,
             };
+            // Preserve the generic `_meta` opaquely without interpreting
+            // it. Unknown agent metadata stays available to surfaces that
+            // can represent it instead of being silently dropped.
+            let meta_opt = serde_json::to_value(&info.meta)
+                .ok()
+                .filter(|v| !v.is_null());
             // Emit generic session metadata even when the title was
             // ignored for the chat row, so updated_at is not silently
             // dropped. Skip entirely when the agent sent nothing useful.
-            if title_opt.is_none() && updated_at_opt.is_none() {
+            if title_opt.is_none() && updated_at_opt.is_none() && meta_opt.is_none() {
                 // Still check Null-clear: if either was explicit Null, emit
                 // a clear marker so the UI can drop stale metadata.
                 let title_is_null = matches!(
@@ -1179,6 +1298,7 @@ async fn handle_session_update(
             EventPayload::SessionInfo {
                 title: title_opt,
                 updated_at: updated_at_opt,
+                meta: meta_opt,
             }
         }
         SessionUpdate::UserMessageChunk(_) => {
@@ -1306,12 +1426,12 @@ async fn handle_session_update(
             drop(guard);
             EventPayload::SessionModes { state }
         }
-        SessionUpdate::ConfigOptionUpdate(u) => {
-            // Authoritative snapshot; reader_task already emitted for live
-            // updates. This path covers direct handling (tests) and keeps
-            // ordering/descriptions/values/groups/categories generically.
-            let options = serde_json::to_value(&u.config_options).unwrap_or(serde_json::json!([]));
-            EventPayload::ConfigOptions { options }
+        SessionUpdate::ConfigOptionUpdate(_) => {
+            // Owned by reader_task: it updates the snapshot memory and
+            // emits the durable event (live updates only, never during ACP
+            // replay). Handled here as a no-op so live notifications are
+            // never persisted twice.
+            return Ok(());
         }
         SessionUpdate::UsageUpdate(u) => {
             let snapshot = serde_json::json!({
@@ -1743,6 +1863,23 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_user_message_meta_round_trip_and_omission() {
+        let meta = user_message_meta("msg-123");
+        let wire = serde_json::to_value(&meta).unwrap();
+        assert_eq!(wire["puebloHub"]["userMessageId"], "msg-123");
+        assert_eq!(
+            echoed_user_message_id(&Some(meta)),
+            Some("msg-123".to_string())
+        );
+        // Agents that omit the extension stay supported.
+        assert_eq!(echoed_user_message_id(&None), None);
+        assert_eq!(
+            echoed_user_message_id(&Some(agent_client_protocol_schema::Meta::new())),
+            None
+        );
     }
 
     #[test]
