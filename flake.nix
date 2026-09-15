@@ -11,65 +11,13 @@
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pueblo-hub-frontend = pkgs.buildNpmPackage {
-            pname = "pueblo-hub-frontend";
-            version = "0.3.0";
-            src = ./frontend;
-            npmDepsHash = "sha256-sfE4FiYhZL24PSU+hRlXW3ltkkXN1PM1D7Rc0aqGqHk=";
-            preBuild = ''
-              export NG_CLI_ANALYTICS=false
-            '';
-            installPhase = ''
-              mkdir -p $out
-              cp -r dist/browser/* $out/
-            '';
-          };
-        in rec {
-          inherit pueblo-hub-frontend;
+          pueblo-hub = import ./nix/package.nix { inherit pkgs crane; };
+          pueblo-hub-frontend = import ./nix/frontend.nix { inherit pkgs; };
+          pueblo-hub-oci = import ./nix/oci.nix { inherit pkgs pueblo-hub; };
+        in {
+          inherit pueblo-hub pueblo-hub-frontend pueblo-hub-oci;
           # Compatibility attribute for existing `.#frontend` consumers.
           frontend = pueblo-hub-frontend;
-          pueblo-hub =
-            let
-              craneLib = crane.mkLib pkgs;
-              rustSrc = pkgs.lib.fileset.toSource {
-                root = ./.;
-                fileset = pkgs.lib.fileset.unions [
-                  ./Cargo.toml
-                  ./Cargo.lock
-                  ./backend/src
-                  ./static
-                ];
-              };
-              commonArgs = {
-                pname = "pueblo-hub";
-                version = "0.3.0";
-                src = rustSrc;
-                strictDeps = true;
-                # Packaging builds the release artifact only. Source-level
-                # verification, including the Rust test suite, lives in
-                # `nix run .#verify` and CI.
-                doCheck = false;
-                nativeBuildInputs =
-                  pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
-                RUSTFLAGS =
-                  pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-C link-arg=-fuse-ld=mold";
-                meta = {
-                  description = "Persistent single-owner ACP project and chat supervisor";
-                  license = pkgs.lib.licenses.gpl3Only;
-                  mainProgram = "pueblo-hub";
-                };
-              };
-              # Dependencies compile once from the manifest and lockfile.
-              # Crate-only edits reuse these artifacts.
-              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-            in
-            craneLib.buildPackage (commonArgs // {
-              inherit cargoArtifacts;
-              preBuild = ''
-                rm -rf static/*
-                cp -r ${pueblo-hub-frontend}/* static/
-              '';
-            });
           default = pueblo-hub;
         });
 
@@ -136,6 +84,7 @@
       apps = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          pueblo-hub = self.packages.${system}.pueblo-hub;
           verify = pkgs.writeShellApplication {
             name = "pueblo-hub-verify";
             # Every tool the verification suite needs, so `nix run .#verify`
@@ -157,10 +106,53 @@
             text = builtins.readFile ./nix/verify.sh;
           };
         in {
+          pueblo-hub = {
+            type = "app";
+            program = pkgs.lib.getExe pueblo-hub;
+          };
+          default = {
+            type = "app";
+            program = pkgs.lib.getExe pueblo-hub;
+          };
           verify = {
             type = "app";
             program = pkgs.lib.getExe verify;
           };
+        });
+
+      overlays.default = import ./nix/overlay.nix { inherit crane; };
+
+      # The exported module installs the Pueblo overlay itself, so the
+      # default `services.pueblo-hub.package = pkgs.pueblo-hub` resolves with
+      # only `nixosModules.default` imported. Overriding `package` still wins.
+      nixosModules.pueblo-hub = {
+        imports = [ ./nix/nixos-module.nix ];
+        nixpkgs.overlays = [ (import ./nix/overlay.nix { inherit crane; }) ];
+      };
+      nixosModules.default = self.nixosModules.pueblo-hub;
+
+      checks = eachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          pueblo-hub = self.packages.${system}.pueblo-hub;
+          pueblo-hub-oci = self.packages.${system}.pueblo-hub-oci;
+          module = self.nixosModules.pueblo-hub;
+          overlaid = import nixpkgs {
+            inherit system;
+            overlays = [ self.overlays.default ];
+          };
+        in {
+          eval-checks = import ./nix/eval-checks.nix { inherit pkgs crane pueblo-hub module; };
+          oci-config = import ./nix/oci-check.nix { inherit pkgs pueblo-hub pueblo-hub-oci; };
+          vm-test = import ./nix/vm-test.nix { inherit pkgs module; };
+          overlay-provides-package = pkgs.runCommand "pueblo-hub-overlay-check" { } ''
+            [ -x ${overlaid.pueblo-hub}/bin/pueblo-hub ] \
+              || (echo "overlay does not provide pkgs.pueblo-hub" >&2; exit 1)
+            ${overlaid.pueblo-hub}/bin/pueblo-hub --help > /dev/null
+            [ "$(${overlaid.pueblo-hub}/bin/pueblo-hub --version)" = "$(${pueblo-hub}/bin/pueblo-hub --version)" ] \
+              || (echo "overlay package version differs from canonical package" >&2; exit 1)
+            touch $out
+          '';
         });
     };
 }

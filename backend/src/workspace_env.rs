@@ -217,6 +217,63 @@ pub fn merge_launch_env(
     env
 }
 
+/// Moves the named variables out of the process environment and returns them
+/// as a stash. Startup calls this once for `--secret-env-vars` before any
+/// child process is spawned, so a secret supplied through systemd
+/// `EnvironmentFile` never reaches the inherited workspace environment that
+/// every agent would otherwise share. Only names listed by some agent's
+/// `pass_env` (or the explicit secret list) are taken; everything else stays.
+pub fn take_secret_env(names: &[String]) -> HashMap<String, String> {
+    let mut secrets = HashMap::new();
+    for name in names {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if let Ok(value) = std::env::var(name) {
+            secrets.insert(name.to_string(), value);
+            std::env::remove_var(name);
+        }
+    }
+    secrets
+}
+
+/// The complete environment one agent process starts with.
+///
+/// The workspace environment always starts from the Pueblo process
+/// environment, which may still carry a secret that no list named (for
+/// example, an operator added it to an environment file but to no redaction
+/// list). Scrubbing every stashed name first keeps that accident from
+/// leaking, and only the names this agent's `pass_env` lists are then
+/// injected back from the stash. An agent that lists nothing receives no
+/// secret, even a web-managed one.
+pub fn resolve_agent_env(
+    workspace_env: &HashMap<String, String>,
+    launch_env: &HashMap<String, String>,
+    pass_env: &[String],
+    secrets: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let merged = merge_launch_env(workspace_env, launch_env);
+    let scrubbed: HashMap<String, String> = merged
+        .into_iter()
+        .filter(|(name, _)| !secrets.contains_key(name))
+        .collect();
+    apply_pass_env_from(scrubbed, pass_env, secrets)
+}
+
+pub(crate) fn apply_pass_env_from(
+    mut base: HashMap<String, String>,
+    pass_env: &[String],
+    source: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    for name in pass_env {
+        if let Some(value) = source.get(name) {
+            base.insert(name.clone(), value.clone());
+        }
+    }
+    base
+}
+
 pub fn merge_terminal_env(
     base: &HashMap<String, String>,
     req_env: &[agent_client_protocol_schema::v1::EnvVariable],
@@ -296,6 +353,91 @@ printf '{%s}\n' "$json"
         )];
         let term_merged = merge_terminal_env(&merged, &terminal_overlay);
         assert_eq!(term_merged.get("OVERRIDE").unwrap(), "terminal");
+    }
+
+    #[test]
+    fn test_pass_env_overlays_process_values_and_keeps_missing() {
+        let mut base = HashMap::new();
+        base.insert("SECRET".to_string(), "workspace".to_string());
+        base.insert("KEEP".to_string(), "base".to_string());
+        let mut source = HashMap::new();
+        source.insert("SECRET".to_string(), "runtime".to_string());
+
+        let merged =
+            apply_pass_env_from(base, &["SECRET".to_string(), "ABSENT".to_string()], &source);
+        assert_eq!(merged.get("SECRET").unwrap(), "runtime");
+        assert_eq!(merged.get("KEEP").unwrap(), "base");
+        assert!(!merged.contains_key("ABSENT"));
+    }
+
+    /// Two agents with two different secrets must never see each other's
+    /// values, and an agent that lists nothing must see neither. The
+    /// workspace base deliberately still carries both secrets, simulating a
+    /// process environment that an environment file filled, so the test
+    /// proves the scrub-then-inject order rather than a clean fixture.
+    #[test]
+    fn agent_secrets_are_isolated_per_agent() {
+        let workspace_base: HashMap<String, String> = HashMap::from([
+            ("PATH".to_string(), "/bin".to_string()),
+            ("AGENT_A_TOKEN".to_string(), "aaa".to_string()),
+            ("AGENT_B_TOKEN".to_string(), "bbb".to_string()),
+        ]);
+        let launch_env = HashMap::new();
+        let secrets: HashMap<String, String> = HashMap::from([
+            ("AGENT_A_TOKEN".to_string(), "aaa".to_string()),
+            ("AGENT_B_TOKEN".to_string(), "bbb".to_string()),
+        ]);
+
+        let env_a = resolve_agent_env(
+            &workspace_base,
+            &launch_env,
+            &["AGENT_A_TOKEN".to_string()],
+            &secrets,
+        );
+        assert_eq!(env_a.get("AGENT_A_TOKEN").map(String::as_str), Some("aaa"));
+        assert!(!env_a.contains_key("AGENT_B_TOKEN"));
+        assert_eq!(env_a.get("PATH").map(String::as_str), Some("/bin"));
+
+        let env_b = resolve_agent_env(
+            &workspace_base,
+            &launch_env,
+            &["AGENT_B_TOKEN".to_string()],
+            &secrets,
+        );
+        assert_eq!(env_b.get("AGENT_B_TOKEN").map(String::as_str), Some("bbb"));
+        assert!(!env_b.contains_key("AGENT_A_TOKEN"));
+
+        // A web-managed agent lists no pass_env and receives no secret.
+        let env_plain = resolve_agent_env(&workspace_base, &launch_env, &[], &secrets);
+        assert!(!env_plain.contains_key("AGENT_A_TOKEN"));
+        assert!(!env_plain.contains_key("AGENT_B_TOKEN"));
+        assert_eq!(env_plain.get("PATH").map(String::as_str), Some("/bin"));
+    }
+
+    #[test]
+    fn take_secret_env_moves_listed_names_out_of_the_process() {
+        unsafe {
+            std::env::set_var("PUEBLO_TEST_SECRET_TAKE_A", "aaa");
+            std::env::set_var("PUEBLO_TEST_SECRET_TAKE_B", "bbb");
+        }
+        let stashed = take_secret_env(&[
+            "PUEBLO_TEST_SECRET_TAKE_A".to_string(),
+            "  ".to_string(),
+            "PUEBLO_TEST_SECRET_TAKE_ABSENT".to_string(),
+        ]);
+        assert_eq!(
+            stashed.get("PUEBLO_TEST_SECRET_TAKE_A").map(String::as_str),
+            Some("aaa")
+        );
+        assert!(std::env::var("PUEBLO_TEST_SECRET_TAKE_A").is_err());
+        // Anything not listed is left alone.
+        assert_eq!(
+            std::env::var("PUEBLO_TEST_SECRET_TAKE_B").as_deref(),
+            Ok("bbb")
+        );
+        unsafe {
+            std::env::remove_var("PUEBLO_TEST_SECRET_TAKE_B");
+        }
     }
 
     #[tokio::test]

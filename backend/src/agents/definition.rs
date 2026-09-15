@@ -17,6 +17,10 @@ pub struct AgentLaunch {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Environment variable names inherited from the Pueblo Hub process at
+    /// session start. The values never live in a declarative file or in the
+    /// Nix store; systemd `EnvironmentFile` supplies them at runtime.
+    pub pass_env: Vec<String>,
     pub idle_timeout: Duration,
 }
 
@@ -182,6 +186,7 @@ impl AgentDefinition {
                 command: command.into(),
                 args: Vec::new(),
                 env: HashMap::new(),
+                pass_env: Vec::new(),
                 idle_timeout: Duration::from_secs(DEFAULT_IDLE_TIMEOUT_SECS),
             },
             usage_provider: None,
@@ -256,6 +261,11 @@ impl AgentDefinition {
 
     pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
         self.launch.env = env;
+        self
+    }
+
+    pub fn with_pass_env(mut self, pass_env: Vec<String>) -> Self {
+        self.launch.pass_env = pass_env;
         self
     }
 

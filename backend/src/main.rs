@@ -1,6 +1,6 @@
 use clap::Parser;
 use pueblo_hub::{
-    agents::{parse_agents, AgentManager, HostRuntimeProbe},
+    agents::{parse_agents, parse_declarative_agents, AgentManager, HostRuntimeProbe},
     config::{Config, PathOverrides, PuebloPaths},
     events::EventLog,
     session::SessionManager,
@@ -26,6 +26,21 @@ struct Args {
     worktrees_dir: Option<PathBuf>,
     #[arg(long, env = "PUEBLO_HUB_AGENTS_FILE")]
     agents_file: Option<PathBuf>,
+    /// Declarative deployment agents in the same shape as `--agents-file`
+    /// plus `pass_env`, `default_permission_policy`, and `description`.
+    /// Entries join the catalog with `AgentSource::Declarative`, stay
+    /// read-only through the management APIs, and collide explicitly with any
+    /// other source. The NixOS module generates this file; values are
+    /// non-secret because the path lands in the Nix store.
+    #[arg(long, env = "PUEBLO_HUB_DECLARATIVE_AGENTS_FILE")]
+    declarative_agents_file: Option<PathBuf>,
+    /// Environment variable names treated as secrets. Their values are moved
+    /// out of the process environment at startup into a stash, so the
+    /// workspace environment every agent inherits never carries them. Each
+    /// value is then injected only into the agents whose `pass_env` names it.
+    /// The NixOS module derives this list from declarative `passEnv` names.
+    #[arg(long, env = "PUEBLO_HUB_SECRET_ENV_VARS", value_delimiter = ',')]
+    secret_env_vars: Vec<String>,
     /// The ACP Registry document to read. The default is the official one.
     #[arg(long, env = "PUEBLO_HUB_REGISTRY_URL")]
     registry_url: Option<String>,
@@ -49,10 +64,17 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    // Take secrets out of the process environment before anything else runs,
+    // so no inherited workspace environment and no spawned child can observe
+    // them. Sessions inject each value only into agents naming it in
+    // `pass_env`.
+    let secrets = pueblo_hub::workspace_env::take_secret_env(&args.secret_env_vars);
+    let secret_count = secrets.len();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let args = Args::parse();
+    tracing::info!(count = secret_count, "stashed secret environment variables");
     let paths = PuebloPaths::from_overrides(PathOverrides {
         database: args.database,
         data_dir: args.data_dir,
@@ -75,6 +97,32 @@ async fn main() -> anyhow::Result<()> {
     if let Some(path) = args.agents_file {
         config.agents = Arc::new(parse_agents(&std::fs::read_to_string(path)?)?);
     }
+    if let Some(path) = args.declarative_agents_file {
+        let declarative =
+            parse_declarative_agents(&std::fs::read_to_string(&path).map_err(|error| {
+                anyhow::anyhow!(
+                    "cannot read declarative agents file {}: {error}",
+                    path.display()
+                )
+            })?)?;
+        for definition in declarative.definitions() {
+            config
+                .agents
+                .insert((*definition).clone())
+                .map_err(|collision| {
+                    anyhow::anyhow!(
+                        "Declarative agent id '{}' collides: {}",
+                        collision.id,
+                        collision
+                    )
+                })?;
+        }
+        tracing::info!(
+            count = declarative.len(),
+            file = %path.display(),
+            "loaded declarative agents"
+        );
+    }
     if let Some(url) = args.registry_url {
         config.registry.url = url;
     }
@@ -96,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
     config.agent_manager = Some(agent_manager);
 
     let manager = SessionManager::with_store(config.agents.clone(), events, Some(store));
+    manager.set_secret_env(secrets);
     let web = WebServer::new(manager.clone(), Arc::new(config));
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
