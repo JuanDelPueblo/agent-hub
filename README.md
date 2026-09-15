@@ -307,11 +307,12 @@ environments.
 
 Nix workspace environments work out of the box. The service PATH provides
 `direnv` and the Nix tooling needed for `use flake` and nix-direnv style
-`.envrc` files without a custom Pueblo package. Your system still needs
-flakes enabled (`nix.settings.experimental-features = [ "nix-command" "flakes" ]`).
-Pueblo Hub never auto-authorizes `.envrc` files. When an environment is
-blocked, authorize it from the chat UI, which runs `direnv allow` against
-the verified workspace path.
+`.envrc` files without a custom Pueblo package, and the service sets
+`NIX_CONFIG=experimental-features = nix-command flakes` for its own
+environment, so no system-wide Nix settings are required. Pueblo Hub never
+auto-authorizes `.envrc` files. When an environment is blocked, authorize
+it from the chat UI, which runs `direnv allow` against the verified
+workspace path.
 
 Supported registry `npx` and `uvx` agents work with the generic runtimes in
 `services.pueblo-hub.runtimePackages`, which defaults to Node (`npx`) and

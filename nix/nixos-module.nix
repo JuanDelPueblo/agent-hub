@@ -517,6 +517,11 @@ in
       path = [ pkgs.bash pkgs.coreutils pkgs.git pkgs.direnv pkgs.nix pkgs.openssh ] ++ cfg.runtimePackages;
       environment = {
         HOME = cfg.home;
+        # Enable `nix-command` and `flakes` for the service environment only,
+        # so `use flake` workspace environments resolve with no system-wide
+        # Nix settings. Override `environment.NIX_CONFIG` to take full
+        # control (keep the experimental-features line to keep `use flake`).
+        NIX_CONFIG = "experimental-features = nix-command flakes";
       } // cfg.environment;
       serviceConfig = {
         Type = "simple";
