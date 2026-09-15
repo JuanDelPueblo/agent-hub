@@ -305,20 +305,33 @@ describe('fake backend seed history', () => {
 
   it('reports provider-neutral authentication state', () => {
     const state = new FakeState();
-    assert.equal(state.agentAuth('codex').authenticated, false);
-    assert.equal(state.agentAuth('codex').methods.length, 2);
-    assert.equal(state.agentAuth('claude').authenticated, true);
+    const codex = state.agentAuth('codex');
+    assert.equal(codex.agent_id, 'codex');
+    assert.equal(codex.logout_supported, true);
+    assert.equal(codex.terminal_supported, true);
+    assert.equal(codex.methods.length, 2);
+    assert.equal(codex.methods[0].id, 'openai-oauth');
+    assert.equal(codex.methods[0].type, 'agent');
+    assert.equal(codex.methods[0].supported, true);
+    assert.equal(codex.methods[1].id, 'api-key');
+    assert.equal(codex.methods[1].type, 'terminal');
+    assert.equal(codex.methods[1].supported, true);
+
+    const opencode = state.agentAuth('opencode');
+    assert.equal(opencode.logout_supported, false);
+    assert.equal(opencode.methods[1].type, 'device_code');
+    assert.equal(opencode.methods[1].supported, false);
 
     const afterLogin = state.authenticateAgent('codex', 'openai-oauth');
-    assert.equal(afterLogin.authenticated, true);
+    assert.equal(afterLogin.agent_id, 'codex');
 
     const afterLogout = state.logoutAgent('codex');
-    assert.equal(afterLogout.authenticated, false);
-    assert.equal(afterLogout.account, null);
+    assert.equal(afterLogout.agent_id, 'codex');
 
     assert.throws(() => state.authenticateAgent('codex', 'missing'), /Unknown authentication method/);
-    assert.throws(() => state.authenticateAgent('opencode', 'device-code'), /Unsupported/);
-    assert.throws(() => state.authenticateAgent('codex', 'api-key'), /Terminal methods/);
+    assert.throws(() => state.authenticateAgent('opencode', 'device-code'), /unsupported/i);
+    assert.throws(() => state.authenticateAgent('codex', 'api-key'), /terminal/i);
+    assert.throws(() => state.logoutAgent('opencode'), /does not support logout/);
   });
 
   function attach(state, flowId) {
@@ -338,12 +351,19 @@ describe('fake backend seed history', () => {
     const state = new FakeState();
     const flow = state.startTerminalFlow('codex', 'api-key');
     assert.equal(flow.state, 'running');
-    assert.equal(state.flowView(flow.flow_id).method_name, 'API key');
+    assert.equal(flow.reason, null);
+
+    const view = state.flowView(flow.flow_id);
+    assert.equal(view.flow_id, flow.flow_id);
+    assert.equal(view.agent_id, 'codex');
+    assert.equal(view.method_id, 'api-key');
+    assert.equal(view.state, 'running');
+    assert.equal(view.method_name, undefined);
 
     const sent = attach(state, flow.flow_id);
-    assert.equal(sent[0].type, 'state');
-    assert.equal(sent[0].state, 'running');
-    assert.equal(sent[1].type, 'output');
+    assert.equal(sent[0].type, 'output');
+    assert.equal(sent[1].type, 'state');
+    assert.equal(sent[1].state, 'running');
 
     state.flowResize(flow.flow_id, 120, 40);
     state.flowInput(flow.flow_id, 'secret-token');
@@ -355,17 +375,23 @@ describe('fake backend seed history', () => {
     assert.equal(terminal.state, 'succeeded');
     assert.equal(terminal.exit_code, 0);
     assert.equal(state.flowView(flow.flow_id).state, 'succeeded');
-    assert.equal(state.agentAuth('codex').authenticated, true);
   });
 
-  it('supports failure and cancellation terminal flows', () => {
+  it('supports failure, cancellation, and timeout terminal flows', () => {
     const state = new FakeState();
     const failing = state.startTerminalFlow('codex', 'api-key');
     const sent = attach(state, failing.flow_id);
     state.flowInput(failing.flow_id, 'fail\r');
     assert.equal(state.flowView(failing.flow_id).state, 'failed');
-    assert.equal(state.agentAuth('codex').authenticated, false);
+    assert.equal(state.flowView(failing.flow_id).reason, 'The authentication command failed.');
     assert.equal(sent.at(-1).state, 'failed');
+    assert.equal(sent.at(-1).reason, 'The authentication command failed.');
+
+    const timedOut = state.startTerminalFlow('codex', 'api-key');
+    attach(state, timedOut.flow_id);
+    state.flowInput(timedOut.flow_id, 'timeout\r');
+    assert.equal(state.flowView(timedOut.flow_id).state, 'timed_out');
+    assert.equal(state.flowView(timedOut.flow_id).reason, 'The authentication flow timed out.');
 
     const cancelled = state.startTerminalFlow('codex', 'api-key');
     attach(state, cancelled.flow_id);
@@ -376,7 +402,7 @@ describe('fake backend seed history', () => {
 
   it('rejects terminal flows for non-terminal methods', () => {
     const state = new FakeState();
-    assert.throws(() => state.startTerminalFlow('codex', 'openai-oauth'), /Only terminal methods/);
+    assert.throws(() => state.startTerminalFlow('codex', 'openai-oauth'), /not a terminal method/);
     assert.throws(() => state.startTerminalFlow('codex', 'missing'), /Unknown authentication method/);
   });
 });

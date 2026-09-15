@@ -100,20 +100,32 @@ function defaultAuth(agentId) {
 }
 
 export const AUTH_METHODS = {
-  claude: [
-    { id: 'claude-oauth', name: 'Sign in with Claude', type: 'agent', description: 'Open the provider sign-in page.' },
-  ],
-  codex: [
-    { id: 'openai-oauth', name: 'Sign in with OpenAI', type: 'agent' },
-    { id: 'api-key', name: 'API key', type: 'terminal', description: 'Enter an API key in a terminal.' },
-  ],
-  opencode: [
-    { id: 'opencode-oauth', name: 'OAuth', type: 'agent' },
-    { id: 'device-code', name: 'Legacy device flow', type: 'unsupported', kind: 'device_code' },
-  ],
-  'example-acp': [
-    { id: 'example-token', name: 'Example token', type: 'terminal' },
-  ],
+  claude: {
+    logout_supported: true,
+    methods: [
+      { id: 'claude-oauth', name: 'Sign in with Claude', type: 'agent', description: 'Open the provider sign-in page.', supported: true },
+    ],
+  },
+  codex: {
+    logout_supported: true,
+    methods: [
+      { id: 'openai-oauth', name: 'Sign in with OpenAI', type: 'agent', description: null, supported: true },
+      { id: 'api-key', name: 'API key', type: 'terminal', description: 'Enter an API key in a terminal.', supported: true },
+    ],
+  },
+  opencode: {
+    logout_supported: false,
+    methods: [
+      { id: 'opencode-oauth', name: 'OAuth', type: 'agent', description: null, supported: true },
+      { id: 'device-code', name: 'Legacy device flow', type: 'device_code', description: null, supported: false },
+    ],
+  },
+  'example-acp': {
+    logout_supported: false,
+    methods: [
+      { id: 'example-token', name: 'Example token', type: 'terminal', description: null, supported: true },
+    ],
+  },
 };
 
 export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-all'];
@@ -618,59 +630,52 @@ export class FakeState {
 
   agentAuth(id) {
     if (!this.agent(id)) throw Object.assign(new Error('Agent not found'), { status: 404 });
-    const stored = this.authByAgent.get(id);
-    if (stored) return stored;
-    return { agent_id: id, authenticated: false, methods: AUTH_METHODS[id] ?? [] };
-  }
-
-  setAgentAuth(id, state) {
-    this.authByAgent.set(id, state);
-    return state;
+    const config = AUTH_METHODS[id] ?? { logout_supported: false, methods: [] };
+    return {
+      agent_id: id,
+      methods: config.methods.map((method) => ({ ...method })),
+      logout_supported: config.logout_supported,
+      terminal_supported: true,
+    };
   }
 
   authenticateAgent(id, methodId) {
     const auth = this.agentAuth(id);
-    const method = (AUTH_METHODS[id] ?? auth.methods).find((candidate) => candidate.id === methodId);
+    const method = auth.methods.find((candidate) => candidate.id === methodId);
     if (!method) throw Object.assign(new Error(`Unknown authentication method '${methodId}'`), { status: 404 });
     if (method.type === 'terminal') {
-      throw Object.assign(new Error('Terminal methods run in a terminal, not through authenticate'), { status: 400 });
+      throw Object.assign(new Error(`Authentication method '${methodId}' runs in a terminal. Start a terminal authentication flow instead.`), { status: 400 });
     }
     if (method.type !== 'agent') {
-      throw Object.assign(new Error(`Unsupported authentication method '${method.kind ?? method.type}'`), { status: 400 });
+      throw Object.assign(new Error(`Authentication method '${methodId}' uses the unsupported type '${method.type}'`), { status: 400 });
     }
-    return this.setAgentAuth(id, {
-      agent_id: id,
-      authenticated: true,
-      account: `${id} account`,
-      methods: AUTH_METHODS[id] ?? auth.methods,
-    });
+    return auth;
   }
 
   logoutAgent(id) {
     const auth = this.agentAuth(id);
-    return this.setAgentAuth(id, {
-      agent_id: id,
-      authenticated: false,
-      account: null,
-      methods: AUTH_METHODS[id] ?? auth.methods,
-    });
+    if (!auth.logout_supported) {
+      throw Object.assign(new Error(`Agent '${id}' does not support logout`), { status: 409 });
+    }
+    return auth;
   }
 
   startTerminalFlow(id, methodId) {
     const auth = this.agentAuth(id);
-    const method = (AUTH_METHODS[id] ?? auth.methods).find((candidate) => candidate.id === methodId);
+    const method = auth.methods.find((candidate) => candidate.id === methodId);
     if (!method) throw Object.assign(new Error(`Unknown authentication method '${methodId}'`), { status: 404 });
     if (method.type !== 'terminal') {
-      throw Object.assign(new Error('Only terminal methods start a PTY flow'), { status: 400 });
+      throw Object.assign(new Error(`Authentication method '${methodId}' is not a terminal method`), { status: 400 });
     }
     const flow = {
       flow_id: randomUUID(),
       agent_id: id,
       method_id: methodId,
-      method_name: method.name,
       state: 'running',
       exit_code: null,
-      error: null,
+      reason: null,
+      started_at: new Date().toISOString(),
+      completed_at: null,
       output: `Sign in to ${id}.\nType a token and press Enter. Type "fail" to simulate a failure.\n`,
       cols: 80,
       rows: 24,
@@ -694,8 +699,16 @@ export class FakeState {
       return;
     }
     flow.socket = socket;
-    socket.send(JSON.stringify({ type: 'state', state: flow.state, exit_code: flow.exit_code, error: flow.error }));
     socket.send(JSON.stringify({ type: 'output', data: flow.output }));
+    socket.send(JSON.stringify({
+      type: 'state',
+      flow_id: flow.flow_id,
+      agent_id: flow.agent_id,
+      method_id: flow.method_id,
+      state: flow.state,
+      exit_code: flow.exit_code,
+      reason: flow.reason,
+    }));
     socket.onMessage = (text) => {
       let message;
       try {
@@ -716,10 +729,11 @@ export class FakeState {
     if (!flow || flow.state !== 'running') return;
     flow.output += data;
     this.sendFlow(flow, { type: 'output', data });
-    if (data.includes('\r')) {
+    if (data.includes('\r') || data.includes('\n')) {
       const line = flow.output.split('\n').pop().replace(/\r/g, '').trim().toLowerCase();
-      if (line.includes('fail')) this.finishFlow(flowId, 'failed', 1, 'Authentication was rejected.');
-      else if (line.includes('cancel')) this.finishFlow(flowId, 'cancelled', null, null);
+      if (line.includes('fail')) this.finishFlow(flowId, 'failed', 1, 'The authentication command failed.');
+      else if (line.includes('cancel')) this.finishFlow(flowId, 'cancelled', null, 'Cancelled by the client');
+      else if (line.includes('timeout')) this.finishFlow(flowId, 'timed_out', null, 'The authentication flow timed out.');
       else this.finishFlow(flowId, 'succeeded', 0, null);
     }
   }
@@ -734,26 +748,26 @@ export class FakeState {
   cancelFlow(flowId) {
     const flow = this.flows.get(flowId);
     if (!flow) throw Object.assign(new Error('Authentication flow not found'), { status: 404 });
-    if (flow.state === 'running') this.finishFlow(flowId, 'cancelled', null, null);
+    if (flow.state === 'running') this.finishFlow(flowId, 'cancelled', null, 'Cancelled by the client');
     return this.flowView(flowId);
   }
 
-  finishFlow(flowId, flowState, exitCode, error) {
+  finishFlow(flowId, flowState, exitCode, reason) {
     const flow = this.flows.get(flowId);
     if (!flow || flow.state !== 'running') return;
     flow.state = flowState;
     flow.exit_code = exitCode;
-    flow.error = error;
-    this.sendFlow(flow, { type: 'state', state: flowState, exit_code: exitCode, error });
-    if (flowState === 'succeeded') {
-      const auth = this.authByAgent.get(flow.agent_id) ?? defaultAuth(flow.agent_id);
-      this.setAgentAuth(flow.agent_id, {
-        agent_id: flow.agent_id,
-        authenticated: true,
-        account: `${flow.agent_id} account`,
-        methods: auth.methods,
-      });
-    }
+    flow.reason = reason;
+    flow.completed_at = new Date().toISOString();
+    this.sendFlow(flow, {
+      type: 'state',
+      flow_id: flow.flow_id,
+      agent_id: flow.agent_id,
+      method_id: flow.method_id,
+      state: flowState,
+      exit_code: exitCode,
+      reason: reason,
+    });
   }
 
   sendFlow(flow, message) {
@@ -778,12 +792,6 @@ export class FakeState {
     };
     if (!this.agent(custom.id)) AGENTS.push(customSummary(custom));
     this.customDetails.set(custom.id, customDetail(custom));
-    this.authByAgent.set('claude', {
-      agent_id: 'claude',
-      authenticated: true,
-      account: 'dev@example.com',
-      methods: AUTH_METHODS.claude,
-    });
   }
 
   seed() {

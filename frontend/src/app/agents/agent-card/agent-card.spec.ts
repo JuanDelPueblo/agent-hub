@@ -78,11 +78,13 @@ describe('AgentCardComponent', () => {
   it('represents agent, terminal, and unsupported methods honestly', () => {
     const auth: AgentAuthState = {
       agent_id: 'x',
-      authenticated: false,
+      logout_supported: true,
+      terminal_supported: true,
       methods: [
-        { id: 'oauth', name: 'OAuth', type: 'agent' },
-        { id: 'key', name: 'API key', type: 'terminal' },
-        { id: 'device', name: 'Device flow', type: 'unsupported', kind: 'device_code' },
+        { id: 'oauth', name: 'OAuth', type: 'agent', supported: true },
+        { id: 'key', name: 'API key', type: 'terminal', supported: true },
+        { id: 'device', name: 'Device flow', type: 'device_code', supported: false },
+        { id: 'term-unsupported', name: 'No PTY', type: 'terminal', supported: false },
       ],
     };
     render(summary('builtin'), auth);
@@ -90,28 +92,43 @@ describe('AgentCardComponent', () => {
     expect(text).toContain('Sign in');
     expect(text).toContain('Open terminal');
     expect(text).toContain('Unsupported (device_code)');
+    expect(text).toContain('Terminal (unsupported)');
 
-    const disabled = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
-      .find((button) => button.textContent?.includes('Unsupported'));
-    expect(disabled?.disabled).toBe(true);
+    const disabledButtons = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
+      .filter((button) => button.textContent?.includes('Unsupported'));
+    expect(disabledButtons.length).toBe(2);
+    expect(disabledButtons[0]?.disabled).toBe(true);
+    expect(disabledButtons[1]?.disabled).toBe(true);
   });
 
-  it('shows logout when the agent is authenticated', () => {
+  it('shows logout when logout is supported', () => {
     const logout = vi.fn();
     fixture.componentInstance.logout.subscribe(logout);
     render(summary('builtin'), {
       agent_id: 'x',
-      authenticated: true,
-      account: 'dev@example.com',
+      logout_supported: true,
+      terminal_supported: true,
       methods: [],
     });
     const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('Authenticated');
-    expect(text).toContain('dev@example.com');
+    expect(text).toContain('Active session');
     const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
       .find((item) => (item as HTMLButtonElement).textContent?.includes('Log out')) as HTMLButtonElement;
+    expect(button).toBeDefined();
     button.click();
     expect(logout).toHaveBeenCalled();
+  });
+
+  it('hides logout when logout is not supported', () => {
+    render(summary('builtin'), {
+      agent_id: 'x',
+      logout_supported: false,
+      terminal_supported: true,
+      methods: [],
+    });
+    const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
+      .find((item) => (item as HTMLButtonElement).textContent?.includes('Log out'));
+    expect(button).toBeUndefined();
   });
 
   it('renders repository, website, and license links', () => {

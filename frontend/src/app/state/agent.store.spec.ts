@@ -18,10 +18,30 @@ function makeApi() {
     validateCustomAgent: vi.fn(async () => ({ valid: true, issues: [] })),
     createCustomAgent: vi.fn(async () => ({ id: 'a' } as AgentSummary)),
     editCustomAgent: vi.fn(async () => ({ id: 'a' } as AgentSummary)),
-    fetchAgentAuth: vi.fn(async (id: string): Promise<AgentAuthState> => ({ agent_id: id, authenticated: false, methods: [] })),
-    authenticateAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({ agent_id: id, authenticated: true, methods: [] })),
-    logoutAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({ agent_id: id, authenticated: false, methods: [] })),
-    startTerminalAuth: vi.fn(async () => ({ flow_id: 'f', agent_id: 'a', method_id: 'm', method_name: 'M', state: 'running' as const })),
+    fetchAgentAuth: vi.fn(async (id: string): Promise<AgentAuthState> => ({
+      agent_id: id,
+      methods: [],
+      logout_supported: true,
+      terminal_supported: true,
+    })),
+    authenticateAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({
+      agent_id: id,
+      methods: [],
+      logout_supported: true,
+      terminal_supported: true,
+    })),
+    logoutAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({
+      agent_id: id,
+      methods: [],
+      logout_supported: true,
+      terminal_supported: true,
+    })),
+    startTerminalAuth: vi.fn(async () => ({
+      flow_id: 'f',
+      agent_id: 'a',
+      method_id: 'm',
+      state: 'running' as const,
+    })),
   };
 }
 
@@ -92,16 +112,21 @@ describe('AgentStore', () => {
 
   it('tracks provider-neutral authentication state', async () => {
     await store.loadAuth('codex');
-    expect(store.authByAgent()['codex'].authenticated).toBe(false);
+    expect(store.authByAgent()['codex'].logout_supported).toBe(true);
 
-    api.fetchAgentAuth.mockResolvedValueOnce({ agent_id: 'codex', authenticated: true, methods: [] });
+    api.fetchAgentAuth.mockResolvedValueOnce({
+      agent_id: 'codex',
+      methods: [{ id: 'm1', name: 'M1', type: 'agent', supported: true }],
+      logout_supported: true,
+      terminal_supported: true,
+    });
     await store.authenticate('codex', 'openai');
     expect(api.authenticateAgent).toHaveBeenCalledWith('codex', 'openai');
-    expect(store.authByAgent()['codex'].authenticated).toBe(true);
+    expect(store.authByAgent()['codex'].methods.length).toBe(1);
 
     await store.logout('codex');
     expect(api.logoutAgent).toHaveBeenCalledWith('codex');
-    expect(store.authByAgent()['codex'].authenticated).toBe(false);
+    expect(store.authByAgent()['codex'].logout_supported).toBe(true);
   });
 
   it('starts a terminal flow and refreshes state after it', async () => {

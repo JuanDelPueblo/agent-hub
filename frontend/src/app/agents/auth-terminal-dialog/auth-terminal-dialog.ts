@@ -11,16 +11,22 @@ import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
 import { ApiService } from '../../core/api/api.service';
 import type {
   AgentAuthFlow,
   AgentAuthFlowState,
+  AgentAuthMethod,
   AgentAuthSocketIncoming,
   AgentAuthSocketOutgoing,
 } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 
-const MAX_OUTPUT = 200_000;
+export interface AuthTerminalDialogData {
+  flow: AgentAuthFlow;
+  method: AgentAuthMethod;
+}
 
 @Component({
   selector: 'hub-auth-terminal-dialog',
@@ -35,59 +41,42 @@ const MAX_OUTPUT = 200_000;
 })
 export class AuthTerminalDialogComponent implements AfterViewInit, OnDestroy {
   readonly dialogRef = inject(MatDialogRef<AuthTerminalDialogComponent>);
-  readonly flow = inject<AgentAuthFlow>(MAT_DIALOG_DATA);
+  readonly data = inject<AuthTerminalDialogData>(MAT_DIALOG_DATA);
+  readonly flow = this.data.flow;
+  readonly method = this.data.method;
   private readonly api = inject(ApiService);
   private readonly state = inject(AppStateService);
 
-  readonly output = signal('');
   readonly flowState = signal<AgentAuthFlowState>(this.flow.state);
   readonly exitCode = signal<number | null>(this.flow.exit_code ?? null);
-  readonly error = signal(this.flow.error ?? '');
+  readonly reason = signal<string | null>(this.flow.reason ?? null);
+  readonly errorMessage = signal('');
   readonly connected = signal(false);
 
-  private readonly terminal = viewChild<ElementRef<HTMLElement>>('terminal');
+  private readonly terminalContainer = viewChild<ElementRef<HTMLElement>>('terminal');
+  term: Terminal | null = null;
+  private fitAddon: FitAddon | null = null;
   private socket: WebSocket | null = null;
   private observer: ResizeObserver | null = null;
   private cancelled = false;
 
   ngAfterViewInit(): void {
     this.openSocket();
-    const element = this.terminal()?.nativeElement;
-    if (element && typeof ResizeObserver !== 'undefined') {
-      this.observer = new ResizeObserver(() => this.sendResize());
-      this.observer.observe(element);
-    }
-    this.sendResize();
-    this.focusTerminal();
+    this.initTerminal();
   }
 
   ngOnDestroy(): void {
     this.observer?.disconnect();
     this.socket?.close();
+    this.term?.dispose();
   }
 
   get running(): boolean {
-    return this.flowState() === 'starting' || this.flowState() === 'running';
+    return this.flowState() === 'running';
   }
 
   focusTerminal(): void {
-    this.terminal()?.nativeElement.focus();
-  }
-
-  onKeydown(event: KeyboardEvent): void {
-    if (!this.running) return;
-    const data = this.keyData(event);
-    if (data === null) return;
-    event.preventDefault();
-    this.send({ type: 'input', data });
-  }
-
-  onPaste(event: ClipboardEvent): void {
-    if (!this.running) return;
-    const text = event.clipboardData?.getData('text');
-    if (!text) return;
-    event.preventDefault();
-    this.send({ type: 'input', data: text });
+    this.term?.focus();
   }
 
   async cancel(): Promise<void> {
@@ -105,11 +94,62 @@ export class AuthTerminalDialogComponent implements AfterViewInit, OnDestroy {
     this.dialogRef.close();
   }
 
+  private initTerminal(): void {
+    const element = this.terminalContainer()?.nativeElement;
+    if (!element) return;
+
+    this.term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: "'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      theme: {
+        background: '#14151a',
+        foreground: '#d7dae0',
+        cursor: '#ffffff',
+      },
+      convertEol: true,
+    });
+
+    this.fitAddon = new FitAddon();
+    this.term.loadAddon(this.fitAddon);
+
+    try {
+      this.term.open(element);
+      this.fitAddon.fit();
+    } catch {
+      // Fit or open may fail in mock/test environments
+    }
+
+    this.term.onData((data) => {
+      if (this.running) {
+        this.send({ type: 'input', data });
+      }
+    });
+
+    this.term.onResize(({ cols, rows }) => {
+      this.send({ type: 'resize', cols, rows });
+    });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      this.observer = new ResizeObserver(() => {
+        try {
+          this.fitAddon?.fit();
+        } catch {
+          // ignore
+        }
+      });
+      this.observer.observe(element);
+    }
+
+    this.sendResize();
+    this.focusTerminal();
+  }
+
   private openSocket(): void {
     try {
       this.socket = new WebSocket(this.api.agentAuthSocketUrl(this.flow.flow_id));
     } catch {
-      this.error.set('Could not open the authentication terminal.');
+      this.errorMessage.set('Could not open the authentication terminal.');
       this.flowState.set('failed');
       return;
     }
@@ -121,7 +161,7 @@ export class AuthTerminalDialogComponent implements AfterViewInit, OnDestroy {
     this.socket.onerror = () => {
       this.connected.set(false);
       if (this.running) {
-        this.error.set('The authentication terminal connection failed.');
+        this.errorMessage.set('The authentication terminal connection failed.');
       }
     };
     this.socket.onclose = () => this.connected.set(false);
@@ -135,15 +175,15 @@ export class AuthTerminalDialogComponent implements AfterViewInit, OnDestroy {
       return;
     }
     if (message.type === 'output') {
-      const next = this.output() + message.data;
-      this.output.set(next.length > MAX_OUTPUT ? next.slice(next.length - MAX_OUTPUT) : next);
-      this.scrollToBottom();
+      this.term?.write(message.data);
       return;
     }
     if (message.type === 'state') {
       this.flowState.set(message.state);
       this.exitCode.set(message.exit_code ?? null);
-      if (message.error) this.error.set(message.error);
+      if (message.reason) {
+        this.reason.set(message.reason);
+      }
       if (message.state === 'succeeded') {
         // Refresh status; never call authenticate again for a terminal method.
         void this.state.loadAgentAuth(this.flow.agent_id).catch(() => undefined);
@@ -151,50 +191,20 @@ export class AuthTerminalDialogComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private sendResize(): void {
-    const element = this.terminal()?.nativeElement;
+  sendResize(): void {
+    if (this.term && this.term.cols > 0 && this.term.rows > 0) {
+      this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
+      return;
+    }
+    const element = this.terminalContainer()?.nativeElement;
     if (!element) return;
-    const cols = Math.max(20, Math.floor(element.clientWidth / 8));
-    const rows = Math.max(6, Math.floor(element.clientHeight / 17));
+    const cols = Math.max(20, Math.floor(element.clientWidth / 8) || 80);
+    const rows = Math.max(6, Math.floor(element.clientHeight / 17) || 24);
     this.send({ type: 'resize', cols, rows });
   }
 
-  private send(message: AgentAuthSocketOutgoing): void {
+  send(message: AgentAuthSocketOutgoing): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify(message));
-  }
-
-  private keyData(event: KeyboardEvent): string | null {
-    if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
-      const code = event.key.toLowerCase().charCodeAt(0);
-      if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
-    }
-    switch (event.key) {
-      case 'Enter':
-        return '\r';
-      case 'Backspace':
-        return '\u007f';
-      case 'Tab':
-        return '\t';
-      case 'Escape':
-        return '\u001b';
-      case 'ArrowUp':
-        return '\u001b[A';
-      case 'ArrowDown':
-        return '\u001b[B';
-      case 'ArrowRight':
-        return '\u001b[C';
-      case 'ArrowLeft':
-        return '\u001b[D';
-      default:
-        return event.key.length === 1 ? event.key : null;
-    }
-  }
-
-  private scrollToBottom(): void {
-    queueMicrotask(() => {
-      const element = this.terminal()?.nativeElement;
-      if (element) element.scrollTop = element.scrollHeight;
-    });
   }
 }

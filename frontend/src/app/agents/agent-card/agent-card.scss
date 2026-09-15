@@ -23,7 +23,15 @@
 .meta > div { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
 .meta dt { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-medium); }
 .meta dd { margin: 0; overflow-wrap: anywhere; }
-.auth { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--mat-sys-outline-variant); }
+.auth { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--mat-sys-outline-variant); outline: none; border-radius: var(--mat-sys-corner-medium); }
+.auth.targeted {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 4px;
+  background: var(--mat-sys-surface-container-high);
+  padding: 8px;
+  border-top: none;
+}
+.auth:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 4px; }
 .auth h4 { margin: 0; font: var(--mat-sys-title-small); }
 .auth-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .auth-row.error { color: var(--mat-sys-error); }

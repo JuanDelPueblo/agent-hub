@@ -336,7 +336,7 @@ function logoutAgentRoute({ params }) { return json(state.logoutAgent(params[0])
 
 function startTerminalAuth({ params }) {
   const flow = state.startTerminalFlow(params[0], params[1]);
-  return json(state.flowView(flow.flow_id), 201);
+  return json(state.flowView(flow.flow_id), 200);
 }
 
 function getAgentAuthFlow({ params }) {

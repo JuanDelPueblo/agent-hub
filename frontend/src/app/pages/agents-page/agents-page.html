@@ -26,6 +26,7 @@
         @for (agent of state.agents(); track agent.id) {
           <hub-agent-card
             [agent]="agent"
+            [targeted]="targetAgentId() === agent.id"
             [auth]="authFor(agent.id)"
             [authLoading]="authLoadingFor(agent.id)"
             [authError]="authErrorFor(agent.id)"

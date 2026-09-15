@@ -1,4 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -26,17 +27,34 @@ import { AppStateService } from '../../state/app-state.service';
 export class AgentsPageComponent implements OnInit {
   readonly state = inject(AppStateService);
   private readonly dialog = inject(MatDialog);
+  private readonly route = inject(ActivatedRoute);
 
   readonly actionError = signal('');
   readonly notice = signal('');
+  readonly targetAgentId = signal<string | null>(null);
 
   ngOnInit(): void {
+    const initialTarget = this.route.snapshot.queryParamMap.get('agent');
+    if (initialTarget) {
+      this.targetAgentId.set(initialTarget);
+    }
+    this.route.queryParamMap.subscribe((params) => {
+      const agent = params.get('agent');
+      if (agent) {
+        this.targetAgentId.set(agent);
+        this.targetAgentAuthSection(agent);
+      }
+    });
     void this.initialize();
   }
 
   async initialize(): Promise<void> {
     await Promise.all([this.state.loadAgents(), this.state.loadRegistry()]);
     await this.loadAuthForAll();
+    const target = this.targetAgentId();
+    if (target) {
+      this.targetAgentAuthSection(target);
+    }
   }
 
   authFor(id: string): AgentAuthState | null {
@@ -63,10 +81,8 @@ export class AgentsPageComponent implements OnInit {
     this.actionError.set('');
     this.notice.set('');
     try {
-      const state = await this.state.authenticateAgent(agent.id, methodId);
-      this.notice.set(
-        state.authenticated ? `${agent.display_name} is now authenticated.` : `${agent.display_name} is not authenticated yet.`,
-      );
+      await this.state.authenticateAgent(agent.id, methodId);
+      this.notice.set(`${agent.display_name} authentication completed.`);
     } catch {
       // The store records the method-level error.
     }
@@ -87,9 +103,16 @@ export class AgentsPageComponent implements OnInit {
     this.actionError.set('');
     this.notice.set('');
     try {
+      const auth = this.authFor(agent.id);
+      const method = auth?.methods.find((m) => m.id === methodId) ?? {
+        id: methodId,
+        name: methodId,
+        type: 'terminal',
+        supported: true,
+      };
       const flow = await this.state.startTerminalAgentAuth(agent.id, methodId);
       this.dialog.open(AuthTerminalDialogComponent, {
-        data: flow,
+        data: { flow, method },
         disableClose: true,
         width: 'min(900px, calc(100vw - 16px))',
         maxWidth: '96vw',
@@ -97,6 +120,22 @@ export class AgentsPageComponent implements OnInit {
     } catch (error: unknown) {
       this.actionError.set(this.message(error, `Failed to start terminal authentication for ${agent.display_name}`));
     }
+  }
+
+  private targetAgentAuthSection(agentId: string): void {
+    queueMicrotask(() => {
+      const authSection = document.getElementById(`agent-auth-${agentId}`);
+      if (authSection) {
+        authSection.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        authSection.focus?.();
+        return;
+      }
+      const card = document.getElementById(`agent-card-${agentId}`);
+      if (card) {
+        card.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        card.focus?.();
+      }
+    });
   }
 
   async createCustom(): Promise<void> {

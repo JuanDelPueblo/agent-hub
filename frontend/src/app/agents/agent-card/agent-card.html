@@ -50,7 +50,13 @@
     }
   </dl>
 
-  <section class="auth" aria-label="Authentication">
+  <section
+    class="auth"
+    [attr.id]="'agent-auth-' + agent().id"
+    [class.targeted]="targeted()"
+    tabindex="-1"
+    aria-label="Authentication"
+  >
     <h4>Authentication</h4>
 
     @if (authLoading()) {
@@ -61,11 +67,10 @@
         <button mat-button type="button" (click)="retryAuth.emit()">Retry</button>
       </div>
     } @else if (auth(); as state) {
-      @if (state.error) { <p class="auth-hint" role="alert">{{ state.error }}</p> }
-      @if (authenticated()) {
+      @if (logoutSupported()) {
         <div class="auth-row">
           <mat-icon>verified_user</mat-icon>
-          <span>Authenticated{{ state.account ? ': ' + state.account : '' }}</span>
+          <span>Active session</span>
           <span class="spacer"></span>
           <button mat-stroked-button type="button" (click)="logout.emit()">Log out</button>
         </div>
@@ -79,22 +84,33 @@
             @if (method.description) { <span class="method-description">{{ method.description }}</span> }
           </div>
           <span class="spacer"></span>
-          @switch (method.type) {
-            @case ('agent') {
-              <button mat-flat-button type="button" (click)="authenticate.emit(method.id)">Sign in</button>
-            }
-            @case ('terminal') {
-              <button mat-stroked-button type="button" (click)="terminal.emit(method.id)">Open terminal</button>
-            }
-            @default {
-              <button
-                mat-stroked-button
-                type="button"
-                disabled
-                matTooltip="This client cannot handle this authentication method"
-              >
-                Unsupported
-              </button>
+          @if (!method.supported) {
+            <button
+              mat-stroked-button
+              type="button"
+              disabled
+              matTooltip="This client cannot handle this authentication method"
+            >
+              Unsupported
+            </button>
+          } @else {
+            @switch (method.type) {
+              @case ('agent') {
+                <button mat-flat-button type="button" (click)="authenticate.emit(method.id)">Sign in</button>
+              }
+              @case ('terminal') {
+                <button mat-stroked-button type="button" (click)="terminal.emit(method.id)">Open terminal</button>
+              }
+              @default {
+                <button
+                  mat-stroked-button
+                  type="button"
+                  disabled
+                  matTooltip="This client cannot handle this authentication method"
+                >
+                  Unsupported
+                </button>
+              }
             }
           }
         </div>

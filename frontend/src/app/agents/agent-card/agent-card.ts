@@ -46,8 +46,9 @@ export class AgentCardComponent {
     return 'read_only';
   });
 
+  readonly targeted = input(false);
   readonly available = computed(() => this.agent().availability === 'available');
-  readonly authenticated = computed(() => this.auth()?.authenticated === true);
+  readonly logoutSupported = computed(() => this.auth()?.logout_supported === true);
 
   sourceLabel(source: string): string {
     switch (source) {
@@ -69,11 +70,11 @@ export class AgentCardComponent {
   methodTypeLabel(method: AgentAuthMethod): string {
     switch (method.type) {
       case 'agent':
-        return 'In-app';
+        return method.supported ? 'In-app' : 'In-app (unsupported)';
       case 'terminal':
-        return 'Terminal';
+        return method.supported ? 'Terminal' : 'Terminal (unsupported)';
       default:
-        return `Unsupported${method.kind ? ` (${method.kind})` : ''}`;
+        return `Unsupported (${method.type})`;
     }
   }
 }

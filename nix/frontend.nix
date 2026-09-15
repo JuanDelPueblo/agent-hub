@@ -9,7 +9,7 @@ pkgs.buildNpmPackage {
   pname = "pueblo-hub-frontend";
   inherit version;
   src = ../frontend;
-  npmDepsHash = "sha256-sfE4FiYhZL24PSU+hRlXW3ltkkXN1PM1D7Rc0aqGqHk=";
+  npmDepsHash = "sha256-O0SO3Lc0p7fjQ41gGqVCSP/PxqGJlqVgHq6xOL2u98M=";
   preBuild = ''
     export NG_CLI_ANALYTICS=false
   '';

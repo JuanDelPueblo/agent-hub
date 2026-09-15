@@ -1,10 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
-import { of } from 'rxjs';
+import { ActivatedRoute, convertToParamMap } from '@angular/router';
+import { BehaviorSubject, of } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentAuthState, AgentSummary } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
+import { AuthTerminalDialogComponent } from '../../agents/auth-terminal-dialog/auth-terminal-dialog';
 import { AgentsPageComponent } from './agents-page';
 
 const builtin: AgentSummary = {
@@ -44,17 +46,22 @@ function makeState() {
     registryLoading: signal(false),
     registryError: signal<string | null>(null),
     authByAgent: signal<Record<string, AgentAuthState>>({
-      codex: { agent_id: 'codex', authenticated: false, methods: [{ id: 'oauth', name: 'OAuth', type: 'agent' }] },
+      codex: {
+        agent_id: 'codex',
+        methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
+        logout_supported: true,
+        terminal_supported: true,
+      },
     }),
     authLoading: signal<ReadonlySet<string>>(new Set()),
     authErrors: signal<Record<string, string>>({}),
     loadAgents: vi.fn(async () => undefined),
     loadRegistry: vi.fn(async () => undefined),
     refreshRegistry: vi.fn(async () => undefined),
-    loadAgentAuth: vi.fn(async () => ({ agent_id: 'codex', authenticated: false, methods: [] })),
-    authenticateAgent: vi.fn(async () => ({ agent_id: 'codex', authenticated: true, methods: [] })),
-    logoutAgent: vi.fn(async () => ({ agent_id: 'codex', authenticated: false, methods: [] })),
-    startTerminalAgentAuth: vi.fn(async () => ({ flow_id: 'f', agent_id: 'codex', method_id: 'api-key', method_name: 'API key', state: 'running' as const })),
+    loadAgentAuth: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
+    authenticateAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
+    logoutAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
+    startTerminalAgentAuth: vi.fn(async () => ({ flow_id: 'f', agent_id: 'codex', method_id: 'api-key', state: 'running' as const })),
     fetchAgentDetail: vi.fn(async () => ({ id: 'my-custom', display_name: 'My Custom', command: 'my-agent', args: [], env: {}, idle_timeout: 900, usage_provider: null, metadata: null, default_permission_policy: 'ask', description: null })),
     createCustomAgent: vi.fn(async () => custom),
     editCustomAgent: vi.fn(async () => custom),
@@ -67,16 +74,24 @@ describe('AgentsPageComponent', () => {
   let fixture: ComponentFixture<AgentsPageComponent>;
   let state: ReturnType<typeof makeState>;
   let dialog: { open: ReturnType<typeof vi.fn> };
+  let queryParamsSubject: BehaviorSubject<ReturnType<typeof convertToParamMap>>;
 
   beforeEach(async () => {
     state = makeState();
     dialog = { open: vi.fn(() => ({ afterClosed: () => of(true) })) };
+    queryParamsSubject = new BehaviorSubject(convertToParamMap({ agent: 'codex' }));
+
+    const activatedRoute = {
+      snapshot: { queryParamMap: convertToParamMap({ agent: 'codex' }) },
+      queryParamMap: queryParamsSubject.asObservable(),
+    };
 
     await TestBed.configureTestingModule({
       imports: [AgentsPageComponent],
       providers: [
         { provide: AppStateService, useValue: state },
         { provide: MatDialog, useValue: dialog },
+        { provide: ActivatedRoute, useValue: activatedRoute },
       ],
     }).compileComponents();
 
@@ -96,6 +111,12 @@ describe('AgentsPageComponent', () => {
     expect(state.loadAgents).toHaveBeenCalled();
   });
 
+  it('consumes agent query param and targets the agent auth section', () => {
+    expect(fixture.componentInstance.targetAgentId()).toBe('codex');
+    const targeted = fixture.nativeElement.querySelector('.auth.targeted');
+    expect(targeted).not.toBeNull();
+  });
+
   it('opens the create dialog for a new custom agent', () => {
     fixture.componentInstance.createCustom();
     expect(dialog.open).toHaveBeenCalled();
@@ -110,7 +131,7 @@ describe('AgentsPageComponent', () => {
   it('authenticates through the store and refreshes state', async () => {
     await fixture.componentInstance.authenticate(builtin, 'oauth');
     expect(state.authenticateAgent).toHaveBeenCalledWith('codex', 'oauth');
-    expect(fixture.componentInstance.notice()).toContain('now authenticated');
+    expect(fixture.componentInstance.notice()).toContain('authentication completed');
   });
 
   it('logs out through the store', async () => {
@@ -118,10 +139,18 @@ describe('AgentsPageComponent', () => {
     expect(state.logoutAgent).toHaveBeenCalledWith('codex');
   });
 
-  it('starts a terminal flow and opens the terminal dialog', async () => {
+  it('starts a terminal flow and opens the terminal dialog with flow and method', async () => {
     await fixture.componentInstance.openTerminalAuth(builtin, 'api-key');
     expect(state.startTerminalAgentAuth).toHaveBeenCalledWith('codex', 'api-key');
-    expect(dialog.open).toHaveBeenCalled();
+    expect(dialog.open).toHaveBeenCalledWith(
+      AuthTerminalDialogComponent,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          flow: expect.objectContaining({ flow_id: 'f' }),
+          method: expect.objectContaining({ id: 'api-key' }),
+        }),
+      }),
+    );
   });
 
   it('confirms before removing and reports a retained chat', async () => {

@@ -137,53 +137,52 @@ export interface RemoveOutcome {
 }
 
 /**
- * Provider-neutral authentication method. The backend maps ACP's typed
- * methods onto this contract: known kinds are `agent` and `terminal`, every
- * other discriminator becomes `unsupported` with the raw `kind` preserved.
+ * Authentication method advertised by an ACP agent.
+ * The backend carries the raw ACP type and whether this build/platform supports it.
  */
-export type AgentAuthMethodKind = 'agent' | 'terminal' | 'unsupported';
-
 export interface AgentAuthMethod {
   id: string;
   name: string;
-  type: AgentAuthMethodKind;
+  type: string;
   description?: string | null;
-  /** The raw ACP discriminator when `type` is `unsupported`. */
-  kind?: string | null;
+  supported: boolean;
 }
 
 export interface AgentAuthState {
   agent_id: string;
-  authenticated: boolean;
   methods: AgentAuthMethod[];
-  account?: string | null;
-  error?: string | null;
+  logout_supported: boolean;
+  terminal_supported: boolean;
 }
 
 export type AgentAuthFlowState =
-  | 'starting'
   | 'running'
   | 'succeeded'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'timed_out';
 
 export interface AgentAuthFlow {
   flow_id: string;
   agent_id: string;
   method_id: string;
-  method_name: string;
   state: AgentAuthFlowState;
   exit_code?: number | null;
-  error?: string | null;
+  reason?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
 }
 
 export type AgentAuthSocketIncoming =
   | { type: 'output'; data: string }
   | {
       type: 'state';
+      flow_id?: string;
+      agent_id?: string;
+      method_id?: string;
       state: AgentAuthFlowState;
       exit_code?: number | null;
-      error?: string | null;
+      reason?: string | null;
     };
 
 export type AgentAuthSocketOutgoing =

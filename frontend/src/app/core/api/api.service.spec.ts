@@ -116,31 +116,46 @@ describe('ApiService', () => {
     const statePromise = api.fetchAgentAuth('codex');
     const stateRequest = http.expectOne('/api/agents/codex/auth');
     expect(stateRequest.request.method).toBe('GET');
-    stateRequest.flush({ agent_id: 'codex', authenticated: false, methods: [] });
-    await expect(statePromise).resolves.toMatchObject({ authenticated: false });
+    stateRequest.flush({
+      agent_id: 'codex',
+      methods: [{ id: 'api-key', name: 'API Key', type: 'terminal', supported: true }],
+      logout_supported: true,
+      terminal_supported: true,
+    });
+    await expect(statePromise).resolves.toMatchObject({ logout_supported: true, terminal_supported: true });
 
     const loginPromise = api.authenticateAgent('codex', 'openai');
     const login = http.expectOne('/api/agents/codex/auth/openai');
     expect(login.request.method).toBe('POST');
-    login.flush({ agent_id: 'codex', authenticated: true, methods: [] });
-    await expect(loginPromise).resolves.toMatchObject({ authenticated: true });
+    login.flush({
+      agent_id: 'codex',
+      methods: [],
+      logout_supported: true,
+      terminal_supported: true,
+    });
+    await expect(loginPromise).resolves.toMatchObject({ logout_supported: true });
 
     const logoutPromise = api.logoutAgent('codex');
     const logout = http.expectOne('/api/agents/codex/logout');
     expect(logout.request.method).toBe('POST');
-    logout.flush({ agent_id: 'codex', authenticated: false, methods: [] });
-    await expect(logoutPromise).resolves.toMatchObject({ authenticated: false });
+    logout.flush({
+      agent_id: 'codex',
+      methods: [],
+      logout_supported: true,
+      terminal_supported: true,
+    });
+    await expect(logoutPromise).resolves.toMatchObject({ logout_supported: true });
 
     const flowPromise = api.startTerminalAuth('codex', 'api-key');
     const flow = http.expectOne('/api/agents/codex/auth/terminal/api-key');
     expect(flow.request.method).toBe('POST');
-    flow.flush({ flow_id: 'flow-1', agent_id: 'codex', method_id: 'api-key', method_name: 'API key', state: 'running' });
+    flow.flush({ flow_id: 'flow-1', agent_id: 'codex', method_id: 'api-key', state: 'running' });
     await expect(flowPromise).resolves.toMatchObject({ flow_id: 'flow-1' });
 
     const getFlowPromise = api.fetchAgentAuthFlow('flow-1');
     const getFlow = http.expectOne('/api/agent-auth/flow-1');
     expect(getFlow.request.method).toBe('GET');
-    getFlow.flush({ flow_id: 'flow-1', state: 'succeeded' });
+    getFlow.flush({ flow_id: 'flow-1', agent_id: 'codex', method_id: 'api-key', state: 'succeeded' });
     await expect(getFlowPromise).resolves.toMatchObject({ state: 'succeeded' });
 
     const cancelPromise = api.cancelAgentAuthFlow('flow-1');

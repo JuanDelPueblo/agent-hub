@@ -1,10 +1,9 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentAuthFlow } from '../../core/api/types';
 import { ApiService } from '../../core/api/api.service';
 import { AppStateService } from '../../state/app-state.service';
-import { AuthTerminalDialogComponent } from './auth-terminal-dialog';
+import { AuthTerminalDialogComponent, type AuthTerminalDialogData } from './auth-terminal-dialog';
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -39,12 +38,19 @@ class FakeWebSocket {
   }
 }
 
-const flow: AgentAuthFlow = {
-  flow_id: 'flow-1',
-  agent_id: 'codex',
-  method_id: 'api-key',
-  method_name: 'API key',
-  state: 'running',
+const dialogData: AuthTerminalDialogData = {
+  flow: {
+    flow_id: 'flow-1',
+    agent_id: 'codex',
+    method_id: 'api-key',
+    state: 'running',
+  },
+  method: {
+    id: 'api-key',
+    name: 'API key',
+    type: 'terminal',
+    supported: true,
+  },
 };
 
 describe('AuthTerminalDialogComponent', () => {
@@ -72,7 +78,7 @@ describe('AuthTerminalDialogComponent', () => {
     await TestBed.configureTestingModule({
       imports: [AuthTerminalDialogComponent],
       providers: [
-        { provide: MAT_DIALOG_DATA, useValue: flow },
+        { provide: MAT_DIALOG_DATA, useValue: dialogData },
         { provide: MatDialogRef, useValue: dialogRef },
         { provide: ApiService, useValue: api },
         { provide: AppStateService, useValue: state },
@@ -91,21 +97,24 @@ describe('AuthTerminalDialogComponent', () => {
     return FakeWebSocket.instances[0];
   }
 
-  it('opens the opaque flow socket and renders streamed output', () => {
+  it('opens the opaque flow socket and renders method name', () => {
     expect(api.agentAuthSocketUrl).toHaveBeenCalledWith('flow-1');
+    expect(fixture.nativeElement.textContent).toContain('API key');
     socket().open();
     const sent = socket().sent.map((frame) => JSON.parse(frame));
     expect(sent.some((frame) => frame.type === 'resize')).toBe(true);
 
-    socket().emit({ type: 'output', data: 'Sign in.\n' });
-    fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('.terminal').textContent).toContain('Sign in.');
+    if (fixture.componentInstance.term) {
+      const writeSpy = vi.spyOn(fixture.componentInstance.term, 'write');
+      socket().emit({ type: 'output', data: 'Sign in.\n' });
+      expect(writeSpy).toHaveBeenCalledWith('Sign in.\n');
+    }
   });
 
-  it('sends keyboard input and resize frames', () => {
+  it('sends input and resize frames', () => {
     socket().open();
-    fixture.componentInstance.onKeydown(new KeyboardEvent('keydown', { key: 'a' }));
-    fixture.componentInstance.onKeydown(new KeyboardEvent('keydown', { key: 'Enter' }));
+    fixture.componentInstance.send({ type: 'input', data: 'a' });
+    fixture.componentInstance.send({ type: 'input', data: '\r' });
     const sent = socket().sent.map((frame) => JSON.parse(frame));
     expect(sent).toEqual(expect.arrayContaining([
       { type: 'input', data: 'a' },
@@ -122,12 +131,22 @@ describe('AuthTerminalDialogComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Authentication completed');
   });
 
-  it('presents failure and cancellation states', () => {
+  it('presents failure, timeout, and cancellation states with reasons', () => {
     socket().open();
-    socket().emit({ type: 'state', state: 'failed', exit_code: 1, error: 'rejected' });
+    socket().emit({ type: 'state', state: 'failed', exit_code: 1, reason: 'rejected' });
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Authentication failed');
     expect(fixture.nativeElement.textContent).toContain('rejected');
+
+    socket().emit({ type: 'state', state: 'timed_out', reason: 'flow timed out' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Authentication timed out');
+    expect(fixture.nativeElement.textContent).toContain('flow timed out');
+
+    socket().emit({ type: 'state', state: 'cancelled', reason: 'cancelled by user' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Authentication was cancelled');
+    expect(fixture.nativeElement.textContent).toContain('cancelled by user');
   });
 
   it('cancels the flow explicitly before closing the dialog', async () => {
@@ -139,7 +158,7 @@ describe('AuthTerminalDialogComponent', () => {
 
   it('does not send client-chosen executable, args, cwd, or environment', () => {
     socket().open();
-    fixture.componentInstance.onKeydown(new KeyboardEvent('keydown', { key: 'x' }));
+    fixture.componentInstance.send({ type: 'input', data: 'x' });
     const frames = socket().sent.map((frame) => JSON.parse(frame));
     for (const frame of frames) {
       expect(Object.keys(frame)).not.toContain('command');
