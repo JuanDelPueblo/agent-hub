@@ -140,4 +140,33 @@ describe('RegistryBrowserComponent', () => {
       .filter((button) => button.textContent?.trim() === 'Install');
     expect(installButtons).toHaveLength(1);
   });
+
+  it('shows an enabled Retry button when no catalog is available', () => {
+    state.registry.set({
+      status: 'unavailable',
+      source_url: 'https://registry.example.invalid',
+      host: 'linux-x86_64',
+      rejected: [],
+      agents: [],
+      error: 'DNS lookup failed',
+    });
+    state.registryError.set('DNS lookup failed');
+    fixture.detectChanges();
+
+    const retry = buttonByText('Retry');
+    expect(retry.disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('DNS lookup failed');
+    retry.click();
+    expect(state.refreshRegistry).toHaveBeenCalled();
+  });
+
+  it('keeps the cached catalog and shows one refresh failure', () => {
+    state.registry.set({ ...catalog, error: 'Network is unreachable' });
+    state.registryError.set('Network is unreachable');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Example ACP');
+    expect(fixture.nativeElement.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(fixture.nativeElement.textContent).toContain('Network is unreachable');
+  });
 });

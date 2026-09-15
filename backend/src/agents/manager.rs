@@ -291,8 +291,8 @@ impl AgentManager {
 
     // ---------------------------------------------------------- registry
 
-    /// The registry catalog. `refresh` decides whether the network is tried;
-    /// either way the cache answers when the network cannot.
+    /// The registry catalog. A first browse fetches when no cache exists.
+    /// Later ordinary browses use the cache, and refresh always fetches.
     pub async fn registry_catalog(
         &self,
         refresh: bool,
@@ -300,8 +300,10 @@ impl AgentManager {
     ) -> RegistryCatalogView {
         let (cached, error) = if refresh {
             self.registry.refresh_or_cached().await
+        } else if let Some(cached) = self.registry.cached() {
+            (Some(cached), None)
         } else {
-            (self.registry.cached(), None)
+            self.registry.refresh_or_cached().await
         };
         let host = PlatformTarget::host();
         let installed = self.installed_registry_index();
@@ -312,9 +314,9 @@ impl AgentManager {
                 source_url: self.registry.url().to_string(),
                 registry_version: None,
                 fetched_at: None,
-                error: error.map(|error| error.to_string()).or_else(|| {
-                    Some("The registry has not been fetched on this machine yet.".into())
-                }),
+                error: error
+                    .map(|error| error.to_string())
+                    .or_else(|| Some("The ACP Registry is unavailable.".into())),
                 host_platform: host,
                 host: PlatformTarget::host_description(),
                 rejected: Vec::new(),
@@ -929,25 +931,47 @@ mod tests {
     // ------------------------------------------------------------ browsing
 
     #[tokio::test]
-    async fn browsing_reports_fresh_cached_and_unavailable() {
+    async fn browsing_bootstraps_and_preserves_cache_statuses() {
         let harness = harness();
-        // Nothing is cached and no refresh was asked for.
+        // A first ordinary browse fetches the catalog.
         let view = harness.manager.registry_catalog(false, None).await;
-        assert_eq!(view.status, RegistryStatus::Unavailable);
-        assert!(view.agents.is_empty());
-
-        let view = harness.manager.registry_catalog(true, None).await;
         assert_eq!(view.status, RegistryStatus::Fresh);
+        assert_eq!(view.agents.len(), 2);
+        assert_eq!(harness.http.call_count(), 1);
+
+        // A later ordinary browse uses the cache.
+        let view = harness.manager.registry_catalog(false, None).await;
+        assert_eq!(view.status, RegistryStatus::Cached);
         assert_eq!(view.agents.len(), 2);
         assert_eq!(view.registry_version.as_deref(), Some("1.0.0"));
         assert!(view.error.is_none());
+        assert_eq!(harness.http.call_count(), 1);
 
-        // An outage serves the cache and reports the failure beside it.
+        // A failed force refresh serves the cache and reports the failure.
         harness.http.set_failing(REGISTRY_URL, "offline");
         let view = harness.manager.registry_catalog(true, None).await;
         assert_eq!(view.status, RegistryStatus::Cached);
         assert_eq!(view.agents.len(), 2);
         assert!(view.error.unwrap().contains("offline"));
+
+        // A successful force refresh replaces the cache.
+        harness.http.set(REGISTRY_URL, document("2.0.0", None));
+        let view = harness.manager.registry_catalog(true, None).await;
+        assert_eq!(view.status, RegistryStatus::Fresh);
+        assert_eq!(view.registry_version.as_deref(), Some("1.0.0"));
+        assert_eq!(view.agents[0].version, "2.0.0");
+    }
+
+    #[tokio::test]
+    async fn browsing_reports_the_initial_fetch_failure_without_a_cache() {
+        let http = Arc::new(FixtureFetch::new().failing(REGISTRY_URL, "DNS lookup failed"));
+        let harness = harness_with(Arc::new(AgentCatalog::default()), http.clone());
+
+        let view = harness.manager.registry_catalog(false, None).await;
+        assert_eq!(view.status, RegistryStatus::Unavailable);
+        assert!(view.agents.is_empty());
+        assert_eq!(http.call_count(), 1);
+        assert!(view.error.unwrap().contains("DNS lookup failed"));
     }
 
     #[tokio::test]

@@ -333,7 +333,7 @@ function registryAgents({ url }) {
   return json(state.registryView(url.searchParams.get('q') ?? ''));
 }
 
-function refreshRegistry({ url }) { return registryAgents({ url }); }
+function refreshRegistry() { return json(state.registryView('', true)); }
 
 function installRegistryAgent({ body }) { return json(state.installRegistryAgent(body)); }
 

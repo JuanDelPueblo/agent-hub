@@ -86,6 +86,19 @@ describe('AgentStore', () => {
     expect(store.registry()?.status).toBe('fresh');
   });
 
+  it('keeps the fresh catalog from the first registry load', async () => {
+    api.fetchRegistry.mockResolvedValueOnce({
+      status: 'fresh',
+      source_url: 's',
+      host: 'h',
+      rejected: [],
+      agents: [],
+    });
+    await store.loadRegistry();
+    expect(store.registry()?.status).toBe('fresh');
+    expect(store.registryError()).toBeNull();
+  });
+
   it('installs, updates, and removes through the API and reloads the catalog', async () => {
     await store.installRegistryAgent({ registry_id: 'native-agent' });
     expect(api.installRegistryAgent).toHaveBeenCalledWith({ registry_id: 'native-agent' });

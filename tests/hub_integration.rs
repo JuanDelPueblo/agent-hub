@@ -17,6 +17,8 @@ use batey::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
@@ -32,8 +34,50 @@ impl HttpFetch for OfflineRegistry {
     }
 }
 
+struct FixtureRegistry {
+    response: Mutex<Result<Vec<u8>, String>>,
+    calls: AtomicUsize,
+}
+
+impl FixtureRegistry {
+    fn new(document: Vec<u8>) -> Self {
+        Self {
+            response: Mutex::new(Ok(document)),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn fail(&self, message: &str) {
+        *self.response.lock().unwrap() = Err(message.into());
+    }
+}
+
+impl HttpFetch for FixtureRegistry {
+    fn fetch(
+        &self,
+        _url: String,
+        _max_bytes: u64,
+    ) -> batey::agents::registry::client::FetchFuture<'_> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let response = self.response.lock().unwrap().clone();
+        Box::pin(async move { response.map_err(anyhow::Error::msg) })
+    }
+}
+
 fn managed_app(
     root: &std::path::Path,
+) -> (
+    axum::Router,
+    Arc<SessionManager>,
+    Arc<AgentCatalog>,
+    Arc<AgentManager>,
+) {
+    managed_app_with_registry(root, Arc::new(OfflineRegistry))
+}
+
+fn managed_app_with_registry(
+    root: &std::path::Path,
+    http: Arc<dyn HttpFetch>,
 ) -> (
     axum::Router,
     Arc<SessionManager>,
@@ -49,7 +93,6 @@ fn managed_app(
     let events = Arc::new(EventLog::persistent(store.clone()).unwrap());
     let agents = Arc::new(AgentCatalog::new([]));
     let sessions = SessionManager::with_store(agents.clone(), events, Some(store.clone()));
-    let http: Arc<dyn HttpFetch> = Arc::new(OfflineRegistry);
     let registry = Arc::new(RegistryClient::new(
         "https://registry.fixture.invalid/registry.json",
         paths.registry_cache.clone(),
@@ -82,6 +125,81 @@ fn managed_app(
         agents,
         agent_manager,
     )
+}
+
+#[tokio::test]
+async fn registry_api_fetches_on_first_browse_and_keeps_cache_on_refresh_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let document = serde_json::to_vec(&json!({
+        "version": "1.0.0",
+        "agents": [{
+            "id": "fixture-acp",
+            "name": "Fixture ACP",
+            "version": "1.0.0",
+            "description": "Fixture agent",
+            "distribution": {"npx": {"package": "fixture-acp@1.0.0"}}
+        }]
+    }))
+    .unwrap();
+    let fixture = Arc::new(FixtureRegistry::new(document));
+    let (app, sessions, _, _) = managed_app_with_registry(tmp.path(), fixture.clone());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/registry")
+                .header("host", "127.0.0.1:8765")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(body["status"], "fresh");
+    assert_eq!(body["agents"][0]["id"], "fixture-acp");
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/registry")
+                .header("host", "127.0.0.1:8765")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(body["status"], "cached");
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+
+    fixture.fail("container DNS lookup failed");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agents/registry/refresh")
+                .header("host", "127.0.0.1:8765")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap()).unwrap();
+    assert_eq!(body["status"], "cached");
+    assert_eq!(body["agents"][0]["id"], "fixture-acp");
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("container DNS lookup failed"));
+    sessions.shutdown_all().await;
 }
 
 fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {

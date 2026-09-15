@@ -282,6 +282,7 @@ export class FakeState {
     this.flows = new Map();
     // Editable Batey-managed definitions, including their launch environment.
     this.customDetails = new Map();
+    this.registryFetched = false;
 
     this.seed();
   }
@@ -632,7 +633,9 @@ export class FakeState {
   // -------------------------------------------------------- ACP Registry
 
   /** The browse view. Installed state is derived from the one catalog. */
-  registryView(query) {
+  registryView(query, forceRefresh = false) {
+    const firstFetch = !this.registryFetched;
+    this.registryFetched = true;
     const filter = (query ?? '').trim().toLowerCase();
     const installedByRegistry = new Map(
       AGENTS.filter((agent) => agent.registry_id).map((agent) => [agent.registry_id, agent]),
@@ -649,7 +652,7 @@ export class FakeState {
         };
       });
     return {
-      status: 'cached',
+      status: firstFetch || forceRefresh ? 'fresh' : 'cached',
       source_url: 'https://registry.example.invalid/registry.json',
       registry_version: '1.0.0',
       fetched_at: '2026-01-01T00:00:00Z',

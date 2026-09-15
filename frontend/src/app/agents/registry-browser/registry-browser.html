@@ -12,7 +12,7 @@
     </mat-form-field>
     <button mat-flat-button type="button" (click)="search()" [disabled]="loading()">Search</button>
     <button mat-button type="button" (click)="refresh()" [disabled]="loading()">
-      <mat-icon>refresh</mat-icon> Refresh
+      <mat-icon>refresh</mat-icon> {{ catalog()?.status === 'unavailable' ? 'Retry' : 'Refresh' }}
     </button>
   </div>
 
@@ -27,14 +27,16 @@
       <span>{{ cat.host }}</span>
       @if (cat.registry_version) { <span class="dot">•</span><span>registry v{{ cat.registry_version }}</span> }
     </div>
-    @if (cat.error) { <p class="notice" role="note">{{ cat.error }}</p> }
     @if (cat.rejected.length > 0) {
       <p class="notice" role="note">{{ cat.rejected.length }} registry entries were rejected by this build.</p>
     }
 
-    <ul class="entries">
-      @for (entry of cat.agents; track entry.id) {
-        <li class="entry">
+    @if (cat.status === 'unavailable') {
+      <p class="empty">No catalog is available. Select Retry after the network is ready.</p>
+    } @else {
+      <ul class="entries">
+        @for (entry of cat.agents; track entry.id) {
+          <li class="entry">
           <div class="entry-head">
             <div class="entry-title">
               <span class="entry-name">{{ entry.name }}</span>
@@ -101,10 +103,11 @@
               </button>
             }
           </div>
-        </li>
-      } @empty {
-        <li class="empty">No registry agents match this search.</li>
-      }
-    </ul>
+          </li>
+        } @empty {
+          <li class="empty">No registry agents match this search.</li>
+        }
+      </ul>
+    }
   }
 </section>

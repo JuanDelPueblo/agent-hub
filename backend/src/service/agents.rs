@@ -40,16 +40,9 @@ impl HubService {
         self.agent_manager.registry_catalog(refresh, query).await
     }
 
-    /// Fetches the registry now. Unlike `registry_catalog`, this reports the
-    /// failure as an error, because the caller asked for a refresh.
-    pub async fn refresh_registry(&self) -> ServiceResult<RegistryCatalogView> {
-        let view = self.agent_manager.registry_catalog(true, None).await;
-        match &view.error {
-            Some(error) => Err(ServiceError::Unavailable(format!(
-                "Could not refresh the ACP Registry: {error}"
-            ))),
-            None => Ok(view),
-        }
+    /// Fetches the registry now and keeps the last good catalog on failure.
+    pub async fn refresh_registry(&self) -> RegistryCatalogView {
+        self.agent_manager.registry_catalog(true, None).await
     }
 
     pub async fn install_registry_agent(

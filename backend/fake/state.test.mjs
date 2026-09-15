@@ -401,6 +401,7 @@ describe('fake backend seed history', () => {
   it('derives registry installed state from the one agent catalog', () => {
     const state = new FakeState();
     const view = state.registryView();
+    assert.equal(view.status, 'fresh');
     const installed = view.agents.find((entry) => entry.id === 'example-acp');
     assert.equal(installed.installed_as, 'example-acp');
     assert.equal(installed.installed_version, '1.0.0');
@@ -411,6 +412,8 @@ describe('fake backend seed history', () => {
     assert.equal('installed_as' in unsupported, false);
 
     assert.deepEqual(state.registryView('native').agents.map((entry) => entry.id), ['native-agent']);
+    assert.equal(state.registryView().status, 'cached');
+    assert.equal(state.registryView('', true).status, 'fresh');
   });
 
   it('installs, updates, and uninstalls registry agents', () => {

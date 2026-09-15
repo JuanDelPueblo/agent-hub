@@ -183,7 +183,8 @@ impl RegistryClient {
         let body = self
             .http
             .fetch(self.url.clone(), MAX_REGISTRY_BYTES)
-            .await?;
+            .await
+            .map_err(|error| anyhow::anyhow!(sanitize_fetch_error(&error.to_string())))?;
         let text = String::from_utf8(body)
             .map_err(|_| anyhow::anyhow!("Registry document is not valid UTF-8"))?;
         let catalog = parse_catalog(&text)?;
@@ -267,6 +268,34 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
             Err(error.into())
         }
     }
+}
+
+/// Remove URL user information from a fetch error.
+fn sanitize_fetch_error(message: &str) -> String {
+    let mut output = String::new();
+    let mut remaining = message;
+    while let Some(protocol_end) = remaining.find("://") {
+        let prefix_end = protocol_end + 3;
+        output.push_str(&remaining[..prefix_end]);
+        let after_protocol = &remaining[prefix_end..];
+        let authority_end = after_protocol
+            .find(|character: char| {
+                character == '/'
+                    || character == '?'
+                    || character == '#'
+                    || character.is_whitespace()
+            })
+            .unwrap_or(after_protocol.len());
+        let authority = &after_protocol[..authority_end];
+        if let Some(at) = authority.rfind('@') {
+            output.push_str("***@");
+            remaining = &after_protocol[at + 1..];
+        } else {
+            remaining = after_protocol;
+        }
+    }
+    output.push_str(remaining);
+    output
 }
 
 #[cfg(test)]
@@ -444,6 +473,27 @@ mod tests {
         let (catalog, error) = client.refresh_or_cached().await;
         assert!(catalog.is_none());
         assert!(error.unwrap().to_string().contains("offline"));
+    }
+
+    #[test]
+    fn fetch_errors_remove_url_user_information() {
+        let error = sanitize_fetch_error(
+            "request failed for https://secret:token@example.invalid/registry.json: DNS error",
+        );
+        assert_eq!(
+            error,
+            "request failed for https://***@example.invalid/registry.json: DNS error"
+        );
+        assert!(!error.contains("secret"));
+        assert!(!error.contains("token"));
+    }
+
+    #[test]
+    fn default_registry_url_is_the_official_latest_catalog() {
+        assert_eq!(
+            DEFAULT_REGISTRY_URL,
+            "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
+        );
     }
 
     #[tokio::test]

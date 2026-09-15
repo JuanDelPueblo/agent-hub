@@ -37,9 +37,10 @@ export class RegistryBrowserComponent {
 
   readonly catalog = this.state.registry;
   readonly loading = this.state.registryLoading;
-  readonly error = computed(() => this.actionError() || this.state.registryError());
+  readonly error = computed(() => this.actionError() || this.state.registryError() || this.catalog()?.error || null);
 
   async search(): Promise<void> {
+    this.actionError.set('');
     await this.state.loadRegistry(this.query());
   }
 

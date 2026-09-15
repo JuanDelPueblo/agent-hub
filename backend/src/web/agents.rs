@@ -37,7 +37,7 @@ pub async fn registry(
 }
 
 pub async fn refresh_registry(State(s): State<AppState>) -> Result<Json<RegistryCatalogView>> {
-    Ok(Json(hub(&s)?.refresh_registry().await?))
+    Ok(Json(hub(&s)?.refresh_registry().await))
 }
 
 pub async fn install_registry_agent(
