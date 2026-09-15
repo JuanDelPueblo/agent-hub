@@ -86,9 +86,9 @@ pub struct FlowAttachment {
 
 /// A synchronous hook that runs exactly once when a flow succeeds.
 ///
-/// It runs inside the transition to `succeeded`, before any client can
-/// observe that state. A hook must be cheap, because it holds up the
-/// transition.
+/// It runs under the status lock, before the state assignment, so no client
+/// can observe `succeeded` before the hook ends. A hook must be cheap,
+/// because it holds up both the transition and every status poller.
 pub type SuccessHook = Arc<dyn Fn() + Send + Sync>;
 
 struct OutputBuffer {
@@ -195,20 +195,21 @@ impl TerminalAuthFlow {
             if status.state.is_finished() {
                 return;
             }
+            // The hook runs under the status lock and before the state
+            // assignment, so the transition itself is the publication
+            // barrier: no poller of the status view can observe `succeeded`
+            // before the success has invalidated the cached auth state.
+            if state == TerminalFlowState::Succeeded {
+                if let Some(hook) = &self.on_success {
+                    hook();
+                }
+            }
             status.state = state;
             status.exit_code = exit_code;
             status.reason = reason;
             status.completed_at = Some(Utc::now());
         }
         self.handle.kill_tree();
-        // The hook runs before the transition becomes observable, so a
-        // client that reacts to `succeeded` can never read a state the
-        // success has not yet invalidated.
-        if state == TerminalFlowState::Succeeded {
-            if let Some(hook) = &self.on_success {
-                hook();
-            }
-        }
         // A send failure only means nobody is watching.
         let _ = self.status_tx.send(());
         tracing::info!(
@@ -604,5 +605,63 @@ mod tests {
         ] {
             assert!(state.is_finished(), "{state:?} should be finished");
         }
+    }
+
+    /// A status poller must never see `succeeded` before the success hook
+    /// ends. `GET /api/agent-auth/:flowId` reads the status view under the
+    /// same lock the transition takes, so the transition itself must be the
+    /// publication barrier.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_status_view_publishes_succeeded_only_after_the_hook() {
+        use std::sync::atomic::AtomicBool;
+
+        let hook_started = Arc::new(AtomicBool::new(false));
+        let hook_done = Arc::new(AtomicBool::new(false));
+        let hook_count = Arc::new(AtomicUsize::new(0));
+        let started = hook_started.clone();
+        let done = hook_done.clone();
+        let count = hook_count.clone();
+        let on_success: SuccessHook = Arc::new(move || {
+            started.store(true, Ordering::SeqCst);
+            count.fetch_add(1, Ordering::SeqCst);
+            // Hold the transition open long enough for a poller to race it.
+            std::thread::sleep(Duration::from_millis(100));
+            done.store(true, Ordering::SeqCst);
+        });
+
+        let flows = Arc::new(TerminalAuthFlows::new());
+        let flow = flows
+            .start("demo", "tui", &waiting_command(), Some(on_success))
+            .unwrap();
+
+        let poller_done = hook_done.clone();
+        let poller_flow = flow.clone();
+        let poller = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "the status view never showed a finished state"
+                );
+                let state = poller_flow.view().state;
+                if state == TerminalFlowState::Succeeded {
+                    assert!(
+                        poller_done.load(Ordering::SeqCst),
+                        "a status poller observed `succeeded` before the success hook ended"
+                    );
+                    return true;
+                }
+                assert!(!state.is_finished(), "the flow ended in {state:?}");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        flow.finish(TerminalFlowState::Succeeded, Some(0), None);
+        let observed = poller.join().unwrap();
+        assert!(observed, "the poller never observed `succeeded`");
+        assert!(hook_started.load(Ordering::SeqCst));
+        assert!(hook_done.load(Ordering::SeqCst));
+        assert_eq!(hook_count.load(Ordering::SeqCst), 1);
     }
 }
