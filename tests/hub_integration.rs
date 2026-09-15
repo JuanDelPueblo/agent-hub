@@ -286,9 +286,7 @@ async fn unsupported_resume_never_creates_another_conversation() {
         "unarchiving a live chat must preserve its process"
     );
     let error = s.change_connection_config(|_| Ok(())).await.unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("cannot restore its saved ACP session"));
+    assert!(error.to_string().contains("require a new chat"));
     assert_eq!(
         s.process_state().await,
         pueblo_hub::state::ProcessState::Running,

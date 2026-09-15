@@ -813,7 +813,7 @@ impl AcpSession {
         })?;
         if self.process_state().await.is_running() && !self.supports_resume().await {
             anyhow::bail!(
-                "This agent cannot restore its saved ACP session; stop the chat before changing connection configuration"
+                "This agent cannot restore its saved ACP session, so connection-level changes require a new chat"
             );
         }
         let store = self
