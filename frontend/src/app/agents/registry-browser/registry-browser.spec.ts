@@ -106,12 +106,13 @@ describe('RegistryBrowserComponent', () => {
     expect(state.refreshRegistry).toHaveBeenCalled();
   });
 
-  it('installs an uninstalled entry through the store', async () => {
+  it('installs an uninstalled entry through the store and reports success', async () => {
     await fixture.componentInstance.install(catalog.agents[1]);
     expect(state.installRegistryAgent).toHaveBeenCalledWith(expect.objectContaining({
       registry_id: 'native-agent',
       distribution: 'binary',
     }));
+    expect(fixture.componentInstance.notice()).toContain('Installed Native Agent');
   });
 
   it('updates an installed entry and reports when it is already current', async () => {
@@ -120,7 +121,7 @@ describe('RegistryBrowserComponent', () => {
 
     state.updateAgent.mockResolvedValueOnce({ updated: false, from_version: '1.2.0', to_version: '1.2.0', agent: { id: 'example-acp' } });
     await fixture.componentInstance.update(catalog.agents[0]);
-    expect(fixture.componentInstance.actionError()).toContain('already at the newest version');
+    expect(fixture.componentInstance.notice()).toContain('already at the newest version');
   });
 
   it('confirms before uninstalling an installed entry', async () => {

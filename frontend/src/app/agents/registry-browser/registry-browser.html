@@ -1,12 +1,4 @@
 <section class="registry" aria-label="ACP Registry">
-  <header class="registry-head">
-    <h3>ACP Registry</h3>
-    <span class="spacer"></span>
-    <button mat-button type="button" (click)="refresh()" [disabled]="loading()">
-      <mat-icon>refresh</mat-icon> Refresh
-    </button>
-  </header>
-
   <div class="search-row">
     <mat-form-field appearance="outline" class="search">
       <mat-label>Search the registry</mat-label>
@@ -19,9 +11,13 @@
       />
     </mat-form-field>
     <button mat-flat-button type="button" (click)="search()" [disabled]="loading()">Search</button>
+    <button mat-button type="button" (click)="refresh()" [disabled]="loading()">
+      <mat-icon>refresh</mat-icon> Refresh
+    </button>
   </div>
 
   @if (error()) { <div class="error" role="alert">{{ error() }}</div> }
+  @if (notice()) { <div class="notice-banner" role="status">{{ notice() }}</div> }
   @if (loading()) { <mat-progress-bar mode="indeterminate" aria-label="Loading the registry" /> }
 
   @if (catalog(); as cat) {

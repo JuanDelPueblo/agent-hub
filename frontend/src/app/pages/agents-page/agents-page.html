@@ -2,11 +2,16 @@
   <header class="page-head">
     <div class="head-text">
       <h1>Agents</h1>
-      <p>Manage installed ACP agents, browse the ACP Registry, and authenticate providers.</p>
+      <p>Manage installed ACP agents and their sign-in state.</p>
     </div>
-    <button mat-flat-button type="button" (click)="createCustom()">
-      <mat-icon>add</mat-icon> New custom agent
-    </button>
+    <div class="head-actions">
+      <a mat-stroked-button routerLink="/agents/registry">
+        <mat-icon>storefront</mat-icon> Get new agents
+      </a>
+      <button mat-flat-button type="button" (click)="createCustom()">
+        <mat-icon>add</mat-icon> New custom agent
+      </button>
+    </div>
   </header>
 
   @if (actionError()) { <div class="banner error" role="alert">{{ actionError() }}</div> }
@@ -20,7 +25,10 @@
   <section class="installed" aria-label="Installed agents">
     <h2>Installed <span class="count">{{ state.agents().length }}</span></h2>
     @if (state.agents().length === 0) {
-      <p class="empty">No agents are installed yet. Install one from the ACP Registry below.</p>
+      <p class="empty">
+        No agents are installed yet.
+        <a routerLink="/agents/registry">Get one from the ACP Registry</a>.
+      </p>
     } @else {
       <div class="cards">
         @for (agent of state.agents(); track agent.id) {
@@ -43,6 +51,4 @@
       </div>
     }
   </section>
-
-  <hub-registry-browser />
 </div>

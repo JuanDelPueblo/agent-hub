@@ -1,13 +1,16 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
-import { ActivatedRoute, convertToParamMap } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter, Router } from '@angular/router';
 import { BehaviorSubject, of } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentAuthState, AgentSummary } from '../../core/api/types';
 import { AppStateService } from '../../state/app-state.service';
 import { AuthTerminalDialogComponent } from '../../agents/auth-terminal-dialog/auth-terminal-dialog';
 import { AgentsPageComponent } from './agents-page';
+
+@Component({ template: '' })
+class RegistryPageStub {}
 
 const builtin: AgentSummary = {
   id: 'codex',
@@ -42,9 +45,6 @@ function makeState() {
     agents: signal<AgentSummary[]>([builtin, custom, registry]),
     agentError: signal<string | null>(null),
     agentsLoading: signal(false),
-    registry: signal(null),
-    registryLoading: signal(false),
-    registryError: signal<string | null>(null),
     authByAgent: signal<Record<string, AgentAuthState>>({
       codex: {
         agent_id: 'codex',
@@ -56,8 +56,6 @@ function makeState() {
     authLoading: signal<ReadonlySet<string>>(new Set()),
     authErrors: signal<Record<string, string>>({}),
     loadAgents: vi.fn(async () => undefined),
-    loadRegistry: vi.fn(async () => undefined),
-    refreshRegistry: vi.fn(async () => undefined),
     loadAgentAuth: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
     authenticateAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
     logoutAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
@@ -89,6 +87,7 @@ describe('AgentsPageComponent', () => {
     await TestBed.configureTestingModule({
       imports: [AgentsPageComponent],
       providers: [
+        provideRouter([{ path: '**', component: RegistryPageStub }]),
         { provide: AppStateService, useValue: state },
         { provide: MatDialog, useValue: dialog },
         { provide: ActivatedRoute, useValue: activatedRoute },
@@ -111,6 +110,33 @@ describe('AgentsPageComponent', () => {
     expect(state.loadAgents).toHaveBeenCalled();
   });
 
+  it('keeps the page focused on installed agents without the registry browser', () => {
+    expect(fixture.nativeElement.querySelector('hub-registry-browser')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[aria-label="ACP Registry"]')).toBeNull();
+  });
+
+  it('offers Get new agents next to New custom agent and navigates to the registry page', async () => {
+    const actions = Array.from(
+      fixture.nativeElement.querySelectorAll('.head-actions a, .head-actions button'),
+    ) as HTMLElement[];
+    const labels = actions.map((item) => item.textContent?.trim() ?? '').join(' | ');
+    expect(labels).toContain('Get new agents');
+    expect(labels).toContain('New custom agent');
+
+    const registryLink = fixture.nativeElement.querySelector('a[href="/agents/registry"]');
+    expect(registryLink).not.toBeNull();
+    registryLink.click();
+    await fixture.whenStable();
+    expect(TestBed.inject(Router).url).toBe('/agents/registry');
+  });
+
+  it('links the empty state to the registry', () => {
+    state.agents.set([]);
+    fixture.detectChanges();
+    expect((fixture.nativeElement.textContent as string)).toContain('No agents are installed yet.');
+    expect(fixture.nativeElement.querySelector('.empty a[href="/agents/registry"]')).not.toBeNull();
+  });
+
   it('consumes agent query param and targets the agent auth section', () => {
     expect(fixture.componentInstance.targetAgentId()).toBe('codex');
     const targeted = fixture.nativeElement.querySelector('.auth.targeted');
@@ -131,7 +157,7 @@ describe('AgentsPageComponent', () => {
   it('authenticates through the store and refreshes state', async () => {
     await fixture.componentInstance.authenticate(builtin, 'oauth');
     expect(state.authenticateAgent).toHaveBeenCalledWith('codex', 'oauth');
-    expect(fixture.componentInstance.notice()).toContain('authentication completed');
+    expect(fixture.componentInstance.notice()).toContain('Signed in to Codex');
   });
 
   it('logs out through the store', async () => {
