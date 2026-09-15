@@ -283,6 +283,8 @@ export class FakeState {
     // Editable Batey-managed definitions, including their launch environment.
     this.customDetails = new Map();
     this.registryFetched = false;
+    this.registryFetchedAt = null;
+    this.registryRefreshError = null;
 
     this.seed();
   }
@@ -635,7 +637,12 @@ export class FakeState {
   /** The browse view. Installed state is derived from the one catalog. */
   registryView(query, forceRefresh = false) {
     const firstFetch = !this.registryFetched;
-    this.registryFetched = true;
+    const fetch = firstFetch || forceRefresh;
+    const error = fetch ? this.registryRefreshError : null;
+    if (fetch && !error) {
+      this.registryFetched = true;
+      this.registryFetchedAt = new Date().toISOString();
+    }
     const filter = (query ?? '').trim().toLowerCase();
     const installedByRegistry = new Map(
       AGENTS.filter((agent) => agent.registry_id).map((agent) => [agent.registry_id, agent]),
@@ -652,14 +659,15 @@ export class FakeState {
         };
       });
     return {
-      status: firstFetch || forceRefresh ? 'fresh' : 'cached',
+      status: !this.registryFetched ? 'unavailable' : fetch && !error ? 'fresh' : 'cached',
       source_url: 'https://registry.example.invalid/registry.json',
       registry_version: '1.0.0',
-      fetched_at: '2026-01-01T00:00:00Z',
+      ...(this.registryFetchedAt ? { fetched_at: this.registryFetchedAt } : {}),
+      ...(error ? { error } : {}),
       host_platform: 'linux-x86_64',
       host: 'linux-x86_64 (fake)',
       rejected: [],
-      agents,
+      agents: this.registryFetched ? agents : [],
     };
   }
 

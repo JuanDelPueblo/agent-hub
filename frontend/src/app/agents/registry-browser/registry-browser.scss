@@ -1,6 +1,7 @@
 .registry { display: flex; flex-direction: column; gap: 12px; }
 .search-row { display: flex; align-items: center; gap: 12px; }
-.search { flex: 1 1 auto; }
+.search { flex: 1 1 auto; min-width: 0; }
+.search-row > button { flex-shrink: 0; min-height: 48px; }
 .status { display: flex; gap: 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); flex-wrap: wrap; }
 .dot { opacity: 0.6; }
 .notice { margin: 0; color: var(--mat-sys-on-surface-variant); }

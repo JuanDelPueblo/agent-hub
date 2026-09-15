@@ -79,8 +79,8 @@ describe('AgentStore', () => {
   });
 
   it('loads and refreshes the registry catalog', async () => {
-    await store.loadRegistry('native');
-    expect(api.fetchRegistry).toHaveBeenCalledWith('native');
+    await store.loadRegistry();
+    expect(api.fetchRegistry).toHaveBeenCalledWith();
     await store.refreshRegistry();
     expect(api.refreshRegistry).toHaveBeenCalled();
     expect(store.registry()?.status).toBe('fresh');

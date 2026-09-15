@@ -77,7 +77,7 @@ impl From<CatalogCollision> for AgentError {
 pub enum RegistryStatus {
     /// Fetched from the registry during this call.
     Fresh,
-    /// Served from the durable cache. A refresh may have failed.
+    /// The catalog came from memory or disk after an earlier successful fetch.
     Cached,
     /// Never fetched on this machine, and the network could not answer.
     Unavailable,
@@ -138,7 +138,6 @@ pub struct RegistryCatalogView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_platform: Option<PlatformTarget>,
     pub host: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rejected: Vec<RegistryRejection>,
     pub agents: Vec<RegistryEntryView>,
 }
@@ -307,6 +306,10 @@ impl AgentManager {
         };
         let host = PlatformTarget::host();
         let installed = self.installed_registry_index();
+        let rejected = error
+            .as_ref()
+            .and_then(|error| error.downcast_ref::<super::registry::client::EmptyCatalog>())
+            .map(|error| error.rejected.clone());
 
         let Some(cached) = cached else {
             return RegistryCatalogView {
@@ -319,7 +322,7 @@ impl AgentManager {
                     .or_else(|| Some("The ACP Registry is unavailable.".into())),
                 host_platform: host,
                 host: PlatformTarget::host_description(),
-                rejected: Vec::new(),
+                rejected: rejected.unwrap_or_default(),
                 agents: Vec::new(),
             };
         };
@@ -334,7 +337,9 @@ impl AgentManager {
             .collect();
 
         RegistryCatalogView {
-            status: if cached.from_cache {
+            status: if cached.catalog.agents.is_empty() {
+                RegistryStatus::Unavailable
+            } else if cached.from_cache {
                 RegistryStatus::Cached
             } else {
                 RegistryStatus::Fresh
@@ -342,10 +347,14 @@ impl AgentManager {
             source_url: cached.metadata.source_url.clone(),
             registry_version: Some(cached.catalog.version.clone()),
             fetched_at: Some(cached.metadata.fetched_at),
-            error: error.map(|error| error.to_string()),
+            error: error.map(|error| error.to_string()).or_else(|| {
+                cached.catalog.agents.is_empty().then(|| {
+                    super::registry::client::EmptyCatalog::from_catalog(&cached.catalog).to_string()
+                })
+            }),
             host_platform: host,
             host: PlatformTarget::host_description(),
-            rejected: cached.catalog.rejected.clone(),
+            rejected: rejected.unwrap_or_else(|| cached.catalog.rejected.clone()),
             agents,
         }
     }
@@ -929,6 +938,70 @@ mod tests {
     }
 
     // ------------------------------------------------------------ browsing
+
+    #[tokio::test]
+    async fn production_shape_returns_entries_and_explicit_rejections() {
+        let harness = harness();
+        harness.http.set(
+            REGISTRY_URL,
+            include_str!("../../../tests/fixtures/registry-v1-current.json"),
+        );
+        let view = harness.manager.registry_catalog(false, None).await;
+        assert_eq!(view.status, RegistryStatus::Fresh);
+        assert_eq!(view.agents.len(), 8);
+        assert_eq!(view.rejected.len(), 2);
+        assert!(view.agents.iter().any(|agent| agent.id == "codex-acp"));
+        assert!(view.agents.iter().any(|agent| agent.id == "claude-acp"));
+        assert!(view.fetched_at.is_some());
+        harness.http.set(REGISTRY_URL, document("2.0.0", None));
+        let view = harness.manager.registry_catalog(true, None).await;
+        let response = serde_json::to_value(&view).unwrap();
+        assert_eq!(response["rejected"], serde_json::json!([]));
+        assert_eq!(response["agents"].as_array().unwrap().len(), 2);
+        assert_eq!(response["status"], "fresh");
+    }
+
+    #[tokio::test]
+    async fn zero_accepted_entries_report_diagnostics_and_preserve_good_entries() {
+        let harness = harness();
+        let bad = r#"{"version":"1.0.0","agents":[{"id":"bad"}]}"#;
+        harness.http.set(REGISTRY_URL, bad);
+        let view = harness.manager.registry_catalog(false, None).await;
+        assert_eq!(view.status, RegistryStatus::Unavailable);
+        assert!(view
+            .error
+            .unwrap()
+            .contains("zero accepted entries (1 rejected)"));
+        assert_eq!(view.rejected[0].reason, "missing name");
+        assert!(harness.manager.registry.cached().is_none());
+
+        harness.http.set(REGISTRY_URL, document("1.0.0", None));
+        let first = harness.manager.registry_catalog(true, None).await;
+        harness.http.set(REGISTRY_URL, bad);
+        let failed = harness.manager.registry_catalog(true, None).await;
+        assert_eq!(failed.status, RegistryStatus::Cached);
+        assert_eq!(failed.agents, first.agents);
+        assert_eq!(failed.fetched_at, first.fetched_at);
+        assert_eq!(failed.rejected[0].id.as_deref(), Some("bad"));
+        assert!(failed.error.unwrap().contains("zero accepted"));
+    }
+
+    #[tokio::test]
+    async fn an_old_empty_cache_cannot_appear_as_a_normal_catalog() {
+        let harness = harness();
+        let cache = harness.manager.registry.cache_dir();
+        std::fs::create_dir_all(cache).unwrap();
+        std::fs::write(
+            cache.join("registry.json"),
+            r#"{"version":"1.0.0","agents":[{"id":"bad"}]}"#,
+        )
+        .unwrap();
+        harness.http.set_failing(REGISTRY_URL, "offline");
+        let view = harness.manager.registry_catalog(false, None).await;
+        assert_eq!(view.status, RegistryStatus::Unavailable);
+        assert!(view.error.unwrap().contains("zero accepted"));
+        assert_eq!(view.rejected.len(), 1);
+    }
 
     #[tokio::test]
     async fn browsing_bootstraps_and_preserves_cache_statuses() {

@@ -57,10 +57,10 @@ export class AgentStore {
     }
   }
 
-  async loadRegistry(query?: string, refresh = false): Promise<void> {
+  async loadRegistry(refresh = false): Promise<void> {
     this.registryLoading.set(true);
     try {
-      this.registry.set(refresh ? await this.api.refreshRegistry() : await this.api.fetchRegistry(query));
+      this.registry.set(refresh ? await this.api.refreshRegistry() : await this.api.fetchRegistry());
       this.registryError.set(this.registry()?.error ?? null);
     } catch (error) {
       this.registryError.set(this.message(error, 'Failed to load the ACP Registry'));
@@ -70,13 +70,13 @@ export class AgentStore {
   }
 
   async refreshRegistry(): Promise<void> {
-    await this.loadRegistry(undefined, true);
+    await this.loadRegistry(true);
   }
 
   async installRegistryAgent(input: InstallRegistryAgentInput): Promise<AgentSummary> {
     const installed = await this.api.installRegistryAgent(input);
     await this.loadInstalled();
-    await this.loadRegistry(undefined, true);
+    await this.loadRegistry(true);
     return installed;
   }
 

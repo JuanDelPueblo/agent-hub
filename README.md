@@ -468,9 +468,8 @@ Open `http://localhost:8765`. Inspect logs with `docker compose logs -f`.
 Stop the instance with `docker compose down`. Erase all local test state with
 `rm -rf .batey-docker`.
 
-To verify Registry first use, remove `.batey-docker/data`, start Compose, and
-open `http://localhost:8765/agents/registry`. Confirm that entries load before
-you select **Refresh**.
+Use the [Registry OCI test](docs/registry-oci-test.md) to verify the production
+Registry, local search, refresh, and the durable cache.
 
 The default project mount is `./.batey-docker/projects:/projects`. Add a
 disposable Git repository there for the first test. To mount a development

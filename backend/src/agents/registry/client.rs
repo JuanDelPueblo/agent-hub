@@ -4,7 +4,7 @@
 //! on disk and in memory, installed agents keep their pinned launch data, and
 //! live sessions are untouched. `RegistryClient` therefore answers a catalog
 //! query from the cache whenever the network cannot answer it.
-use super::manifest::{parse_catalog, RegistryCatalog};
+use super::manifest::{parse_catalog, RegistryCatalog, RegistryRejection};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -23,6 +23,33 @@ pub const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
 const CATALOG_FILE: &str = "registry.json";
 const METADATA_FILE: &str = "registry-meta.json";
+
+#[derive(Debug)]
+pub struct EmptyCatalog {
+    pub count: usize,
+    pub rejected: Vec<RegistryRejection>,
+}
+
+impl std::fmt::Display for EmptyCatalog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "The Registry contains zero accepted entries ({} rejected).",
+            self.count
+        )
+    }
+}
+
+impl std::error::Error for EmptyCatalog {}
+
+impl EmptyCatalog {
+    pub fn from_catalog(catalog: &RegistryCatalog) -> Self {
+        Self {
+            count: catalog.rejected.len(),
+            rejected: catalog.rejected.clone(),
+        }
+    }
+}
 
 pub type FetchFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Vec<u8>>> + Send + 'a>>;
 
@@ -188,6 +215,9 @@ impl RegistryClient {
         let text = String::from_utf8(body)
             .map_err(|_| anyhow::anyhow!("Registry document is not valid UTF-8"))?;
         let catalog = parse_catalog(&text)?;
+        if catalog.agents.is_empty() {
+            return Err(EmptyCatalog::from_catalog(&catalog).into());
+        }
         let metadata = CacheMetadata {
             source_url: self.url.clone(),
             fetched_at: chrono::Utc::now(),
@@ -386,6 +416,32 @@ mod tests {
 
     fn client(tmp: &tempfile::TempDir, http: Arc<FixtureFetch>) -> RegistryClient {
         RegistryClient::new(URL, tmp.path().join("registry-cache"), http)
+    }
+
+    #[tokio::test]
+    async fn zero_accepted_entries_never_replace_the_last_good_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let http = Arc::new(FixtureFetch::new().with(URL, document("1.0.0", "example")));
+        let client = client(&tmp, http.clone());
+        let first = client.refresh().await.unwrap();
+        http.set(URL, r#"{"version":"1.0.0","agents":[{"id":"bad"}]}"#);
+        let (cached, error) = client.refresh_or_cached().await;
+        let error = error.unwrap();
+        let empty = error.downcast_ref::<EmptyCatalog>().unwrap();
+        assert_eq!(empty.count, 1);
+        assert_eq!(empty.rejected[0].reason, "missing name");
+        assert_eq!(cached.unwrap().catalog, first.catalog);
+        let offline = Arc::new(FixtureFetch::new().failing(URL, "offline"));
+        let restarted =
+            RegistryClient::new(URL, tmp.path().join("registry-cache"), offline.clone());
+        let cached = restarted.cached().unwrap();
+        assert!(cached.from_cache);
+        assert_eq!(cached.catalog, first.catalog);
+        assert_eq!(cached.metadata, first.metadata);
+        assert_eq!(offline.call_count(), 0);
+        let (cached, error) = restarted.refresh_or_cached().await;
+        assert_eq!(cached.unwrap().catalog, first.catalog);
+        assert!(error.is_some());
     }
 
     #[tokio::test]

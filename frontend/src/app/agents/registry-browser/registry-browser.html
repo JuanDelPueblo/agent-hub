@@ -1,16 +1,19 @@
 <section class="registry" aria-label="ACP Registry">
   <div class="search-row">
-    <mat-form-field appearance="outline" class="search">
+    <mat-form-field appearance="outline" class="search" subscriptSizing="dynamic">
       <mat-label>Search the registry</mat-label>
       <input
         matInput
         [value]="query()"
         (input)="query.set($any($event.target).value)"
-        (keyup.enter)="search()"
         aria-label="Search the registry"
       />
+      @if (query()) {
+        <button mat-icon-button matSuffix type="button" aria-label="Clear search" (click)="query.set('')">
+          <mat-icon>close</mat-icon>
+        </button>
+      }
     </mat-form-field>
-    <button mat-flat-button type="button" (click)="search()" [disabled]="loading()">Search</button>
     <button mat-button type="button" (click)="refresh()" [disabled]="loading()">
       <mat-icon>refresh</mat-icon> {{ catalog()?.status === 'unavailable' ? 'Retry' : 'Refresh' }}
     </button>
@@ -26,16 +29,27 @@
       <span class="dot">•</span>
       <span>{{ cat.host }}</span>
       @if (cat.registry_version) { <span class="dot">•</span><span>registry v{{ cat.registry_version }}</span> }
+      @if (cat.fetched_at) {
+        <span class="dot">•</span>
+        <span>Last fetched <time [attr.datetime]="cat.fetched_at">{{ cat.fetched_at | date:'medium' }}</time></span>
+      }
     </div>
-    @if (cat.rejected.length > 0) {
-      <p class="notice" role="note">{{ cat.rejected.length }} registry entries were rejected by this build.</p>
+    @if (cat.rejected?.length) {
+      <details class="notice">
+        <summary>Batey rejected {{ cat.rejected.length }} registry entries.</summary>
+        <ul>
+          @for (entry of cat.rejected; track $index) {
+            <li>{{ entry.id ?? 'Unknown entry' }}: {{ entry.reason }}</li>
+          }
+        </ul>
+      </details>
     }
 
     @if (cat.status === 'unavailable') {
-      <p class="empty">No catalog is available. Select Retry after the network is ready.</p>
+      <p class="empty">No usable catalog is available. Select Retry to fetch the Registry again.</p>
     } @else {
       <ul class="entries">
-        @for (entry of cat.agents; track entry.id) {
+        @for (entry of entries(); track entry.id) {
           <li class="entry">
           <div class="entry-head">
             <div class="entry-title">

@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -14,6 +15,7 @@ import { ConfirmDialogComponent } from '../confirm-dialog/confirm-dialog';
 @Component({
   selector: 'hub-registry-browser',
   imports: [
+    DatePipe,
     MatButtonModule,
     MatFormFieldModule,
     MatIconModule,
@@ -39,10 +41,12 @@ export class RegistryBrowserComponent {
   readonly loading = this.state.registryLoading;
   readonly error = computed(() => this.actionError() || this.state.registryError() || this.catalog()?.error || null);
 
-  async search(): Promise<void> {
-    this.actionError.set('');
-    await this.state.loadRegistry(this.query());
-  }
+  readonly entries = computed(() => {
+    const query = this.query().trim().toLowerCase();
+    return (this.catalog()?.agents ?? []).filter((entry) =>
+      [entry.name, entry.id, entry.description].some((value) => value.toLowerCase().includes(query)),
+    );
+  });
 
   async refresh(): Promise<void> {
     this.actionError.set('');

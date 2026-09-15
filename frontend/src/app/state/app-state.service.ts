@@ -92,7 +92,7 @@ export class AppStateService {
   setShowArchived(show: boolean): void { this.uiStore.setShowArchived(show); }
   loadProjects(): Promise<void> { return this.projectStore.loadProjects(); }
   loadAgents(): Promise<void> { return this.agentStore.loadInstalled(); }
-  loadRegistry(query?: string, refresh = false): Promise<void> { return this.agentStore.loadRegistry(query, refresh); }
+  loadRegistry(): Promise<void> { return this.agentStore.loadRegistry(); }
   refreshRegistry(): Promise<void> { return this.agentStore.refreshRegistry(); }
   installRegistryAgent(input: import('../core/api/types').InstallRegistryAgentInput) { return this.agentStore.installRegistryAgent(input); }
   updateAgent(id: string) { return this.agentStore.updateAgent(id); }
