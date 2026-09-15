@@ -2,6 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
+use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
 use pueblo_hub::{
     agents::registry::{HttpFetch, RegistryClient},
@@ -84,6 +85,10 @@ fn managed_app(
 }
 
 fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
+    manager_with_mode(root, if can_load { "load" } else { "no-load" })
+}
+
+fn manager_with_mode(root: &std::path::Path, mode: &str) -> Arc<SessionManager> {
     let store = Arc::new(Store::open(&root.join("hub.db")).unwrap());
     let log = Arc::new(EventLog::persistent(store.clone()).unwrap());
     let history = root.join("history");
@@ -93,10 +98,76 @@ fn manager(root: &std::path::Path, can_load: bool) -> Arc<SessionManager> {
         .with_args(vec![
             format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
             history.display().to_string(),
-            if can_load { "load" } else { "no-load" }.into(),
+            mode.into(),
         ])
         .with_idle_timeout(Duration::ZERO);
     SessionManager::with_store(Arc::new(AgentRegistry::new([agent])), log, Some(store))
+}
+
+#[tokio::test]
+async fn rich_prompt_http_body_limit_accepts_encoded_media_and_rejects_oversize() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let mgr = manager_with_mode(&root, "load");
+    let mut config = Config::default();
+    config.web.project_roots = vec![root.display().to_string()];
+    let app = router(AppState::new(mgr.clone(), Arc::new(config), 8765));
+    let project = mgr
+        .store
+        .as_ref()
+        .unwrap()
+        .create_project("uploads".into(), root.display().to_string())
+        .unwrap();
+    let chat = mgr
+        .store
+        .as_ref()
+        .unwrap()
+        .create_chat(project.id, "codex".into(), Some("uploads".into()))
+        .unwrap();
+
+    let mut png = vec![0_u8; pueblo_hub::content::MAX_MEDIA_BYTES];
+    png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+    let body = serde_json::to_vec(&json!({"content": [
+        {"type": "text", "text": "attachment"},
+        {"type": "image", "data": encoded, "mimeType": "image/png"}
+    ]}))
+    .unwrap();
+    assert!(body.len() > 2 * 1024 * 1024);
+    assert!(body.len() < pueblo_hub::content::MAX_RICH_PROMPT_HTTP_BYTES);
+    let accepted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/chats/{}/prompt", chat.id))
+                .header("host", "127.0.0.1:8765")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), axum::http::StatusCode::ACCEPTED);
+
+    let rejected = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/chats/{}/prompt", chat.id))
+                .header("host", "127.0.0.1:8765")
+                .header("content-type", "application/json")
+                .body(Body::from(vec![
+                    b'x';
+                    pueblo_hub::content::MAX_RICH_PROMPT_HTTP_BYTES
+                        + 1
+                ]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    mgr.shutdown_all().await;
 }
 
 #[tokio::test]
@@ -424,6 +495,7 @@ async fn chat_history_is_bounded_chat_scoped_and_survives_a_large_global_log() {
             payload: EventPayload::MessageChunk {
                 message_id: None,
                 text: index.to_string(),
+                content: vec![],
             },
         };
         transaction
@@ -503,6 +575,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "old".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -516,6 +589,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "between startup and baseline".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -584,6 +658,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "live".into(),
+                content: vec![],
             },
         )
         .unwrap();
@@ -603,6 +678,7 @@ async fn fresh_websocket_subscribes_at_the_live_baseline_without_global_history(
             EventPayload::MessageChunk {
                 message_id: None,
                 text: "missed while disconnected".into(),
+                content: vec![],
             },
         )
         .unwrap();

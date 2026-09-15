@@ -485,17 +485,50 @@ function promptChat({ params, body }) {
     });
   }
   const text = typeof body.text === 'string' ? body.text : '';
-  if (!text.trim() || text.length > 100_000) {
+  const content = Array.isArray(body.content) ? body.content : null;
+  if ((content && typeof body.text === 'string') || (!content && (!text.trim() || text.length > 100_000))) {
     throw httpError(400, 'Prompt must contain 1–100000 bytes');
   }
+  if (content && !validRichContent(content)) throw httpError(400, 'Unsupported or oversized rich prompt content');
   if (isRunning(chat.id)) {
     throw httpError(409, 'Wait for the active turn to finish');
   }
 
   ensureRunning(chat);
-  startTurn(state, chat, text, options.latency);
+  startTurn(state, chat, content ? content.map((block) => block.type === 'text' ? block.text : '').join('\n') : text, options.latency, content ?? undefined);
   // The backend answers 202 and streams the result on the WebSocket.
   return json({ accepted: true }, 202);
+}
+
+function validRichContent(content) {
+  if (!content.length) return false;
+  let total = 0;
+  for (const block of content) {
+    if (!block || typeof block.type !== 'string') return false;
+    if (block.type === 'text' && typeof block.text === 'string') { total += block.text.length; continue; }
+    if ((block.type === 'image' || block.type === 'audio') && typeof block.data === 'string' && typeof block.mimeType === 'string') {
+      const allowed = block.type === 'image' ? ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] : ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm'];
+      if (!allowed.includes(block.mimeType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(block.data)) return false;
+      const bytes = Buffer.from(block.data, 'base64');
+      const imageOk = block.mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+        : block.mimeType === 'image/jpeg' ? bytes.subarray(0, 3).equals(Buffer.from([255,216,255]))
+        : block.mimeType === 'image/gif' ? bytes.subarray(0, 3).toString() === 'GIF'
+        : block.mimeType === 'image/webp' ? bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP'
+        : block.mimeType === 'audio/mpeg' ? bytes.subarray(0, 3).toString() === 'ID3' || bytes[0] === 255
+        : block.mimeType === 'audio/wav' ? bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE'
+        : block.mimeType === 'audio/ogg' ? bytes.subarray(0, 4).toString() === 'OggS'
+        : bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+      if (!imageOk) return false;
+      total += bytes.length; if (total > 4 * 1024 * 1024 || bytes.length > 2 * 1024 * 1024) return false; continue;
+    }
+    if (block.type === 'resource' && block.resource && typeof block.resource.uri === 'string' && (typeof block.resource.text === 'string' || typeof block.resource.blob === 'string')) {
+      const bytes = typeof block.resource.text === 'string' ? Buffer.byteLength(block.resource.text) : Buffer.from(block.resource.blob, 'base64').length;
+      total += bytes; if (bytes > 512 * 1024) return false; continue;
+    }
+    if (block.type === 'resource_link' && typeof block.uri === 'string' && /^https?:\/\//i.test(block.uri)) { total += block.uri.length; continue; }
+    return false;
+  }
+  return total <= 4 * 1024 * 1024;
 }
 
 function cancelChat({ params }) {

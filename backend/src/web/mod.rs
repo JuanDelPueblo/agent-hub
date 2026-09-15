@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::service::HubService;
 use crate::session::SessionManager;
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{get, post},
     Router,
@@ -118,7 +119,12 @@ pub fn router(state: AppState) -> Router {
                 .delete(hub::delete_chat),
         )
         .route("/api/chats/:id/history", get(hub::history))
-        .route("/api/chats/:id/prompt", post(hub::prompt))
+        .route(
+            "/api/chats/:id/prompt",
+            post(hub::prompt).layer(DefaultBodyLimit::max(
+                crate::content::MAX_RICH_PROMPT_HTTP_BYTES,
+            )),
+        )
         .route("/api/chats/:id/cancel", post(hub::cancel))
         .route("/api/chats/:id/resume", post(hub::resume))
         .route(

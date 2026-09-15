@@ -7,11 +7,12 @@ import { MarkdownComponent } from '../../shared/markdown/markdown.component';
 import { ElicitationCardComponent } from '../elicitation-card/elicitation-card';
 import { PlanViewComponent } from '../plan-view/plan-view';
 import { ToolCallComponent } from '../tool-call/tool-call';
+import { RichContentComponent } from '../rich-content/rich-content';
 
 /** Renders the ordered, streaming entries inside one agent turn. */
 @Component({
   selector: 'hub-turn-entries',
-  imports: [ElicitationCardComponent, MatExpansionModule, MatIconModule, MarkdownComponent, PermissionCardComponent, PlanViewComponent, ToolCallComponent],
+  imports: [ElicitationCardComponent, MatExpansionModule, MatIconModule, MarkdownComponent, PermissionCardComponent, PlanViewComponent, RichContentComponent, ToolCallComponent],
   templateUrl: './turn-entries.html',
   styleUrl: './turn-entries.scss',
 })

@@ -10,6 +10,7 @@
     </div>
   }
   <form class="composer" (submit)="$event.preventDefault(); send()">
+    <input #attachmentInput class="attachment-input" type="file" [accept]="attachmentAccept()" (change)="addAttachment($event)" aria-label="Choose attachment" />
     <textarea
       class="message-input"
       [formControl]="message"
@@ -22,6 +23,9 @@
     ></textarea>
     <div class="composer-footer">
       <div class="selectors">
+        <button mat-icon-button type="button" aria-label="Attach image" matTooltip="Attach image" [disabled]="unavailable()" (click)="chooseAttachment('image', attachmentInput)"><mat-icon>image</mat-icon></button>
+        <button mat-icon-button type="button" aria-label="Attach audio" matTooltip="Attach audio" [disabled]="unavailable()" (click)="chooseAttachment('audio', attachmentInput)"><mat-icon>audio_file</mat-icon></button>
+        <button mat-icon-button type="button" aria-label="Attach text resource" matTooltip="Attach text resource" [disabled]="unavailable()" (click)="chooseAttachment('resource', attachmentInput)"><mat-icon>attach_file</mat-icon></button>
         @if (modelOption(); as model) {
           <button mat-button class="selector" type="button" [matMenuTriggerFor]="modelMenu" [disabled]="!canConfigure()" [attr.aria-label]="'Model: ' + optionLabel(model)">
             <span>{{ optionLabel(model) }}</span><mat-icon>expand_more</mat-icon>
@@ -62,5 +66,7 @@
       }
     </div>
   </form>
+  @if (attachments().length) { <div class="attachments" aria-label="Selected attachments">@for (attachment of attachments(); track $index) { <span>{{ attachmentLabel(attachment) }} <button mat-icon-button type="button" [attr.aria-label]="'Remove ' + attachmentLabel(attachment)" (click)="removeAttachment($index)"><mat-icon>close</mat-icon></button></span> }</div> }
+  @if (attachmentError(); as error) { <p class="attachment-error" role="alert">{{ error }}</p> }
   <p class="hint">Press Enter to send, Shift+Enter or Ctrl+J for a new line</p>
 </div>

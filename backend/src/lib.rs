@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod agents;
 pub mod config;
+pub mod content;
 pub mod events;
 pub mod service;
 pub mod session;

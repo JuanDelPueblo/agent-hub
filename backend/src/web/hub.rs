@@ -360,14 +360,26 @@ pub async fn delete_chat(State(s): State<AppState>, Path(id): Path<String>) -> R
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Prompt {
-    text: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    content: Option<Vec<::agent_client_protocol_schema::v1::ContentBlock>>,
 }
 pub async fn prompt(
     State(s): State<AppState>,
     Path(id): Path<String>,
     Json(p): Json<Prompt>,
 ) -> Result<(StatusCode, Json<Value>)> {
-    hub(&s)?.prompt_chat(&id, p.text).await?;
+    match (p.text, p.content) {
+        (Some(text), None) => hub(&s)?.prompt_chat(&id, text).await?,
+        (None, Some(content)) => hub(&s)?.prompt_chat_content(&id, content).await?,
+        _ => {
+            return Err(crate::service::ServiceError::Invalid(
+                "Provide exactly one of text or content".into(),
+            )
+            .into())
+        }
+    }
     Ok((StatusCode::ACCEPTED, Json(json!({"accepted":true}))))
 }
 pub async fn resume(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<ChatView>> {

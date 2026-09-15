@@ -2,15 +2,15 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { ChatComposerComponent } from './chat-composer';
 import { AppStateService } from '../../state/app-state.service';
-import type { ConfigOption } from '../../core/api/types';
+import type { ConfigOption, RichContentBlock } from '../../core/api/types';
 
 describe('ChatComposerComponent', () => {
   let fixture: ComponentFixture<ChatComposerComponent>;
   let component: ChatComposerComponent;
   let resumed: string[] = [];
-  const sendPrompt = async (_id: string, text: string) => sent.push(text);
+  const sendPrompt = async (_id: string, text: string | RichContentBlock[]) => sent.push(text);
   const connectChat = async (id: string) => { resumed.push(id); };
-  const sent: string[] = [];
+  const sent: Array<string | RichContentBlock[]> = [];
 
   beforeEach(async () => {
     sent.length = 0;
@@ -142,5 +142,27 @@ describe('ChatComposerComponent', () => {
 
     expect(component.message.value).toBe('failed prompt text');
     expect(textarea.value).toBe('failed prompt text');
+  });
+
+  it('accepts verified audio attachments and reports rejected types before send', async () => {
+    const input = document.createElement('input');
+    vi.spyOn(input, 'click');
+    component.chooseAttachment('audio', input);
+    const audio = new File([new Uint8Array([73, 68, 51])], 'note.mp3', { type: 'audio/mpeg' });
+    Object.defineProperty(input, 'files', { value: [audio] });
+    await component.addAttachment({ target: input } as unknown as Event);
+    expect(component.attachmentError()).toBeNull();
+    expect(component.attachments()).toEqual([
+      expect.objectContaining({ type: 'audio', mimeType: 'audio/mpeg' }),
+    ]);
+
+    const rejectedInput = document.createElement('input');
+    vi.spyOn(rejectedInput, 'click');
+    component.chooseAttachment('image', rejectedInput);
+    const executable = new File(['not an image'], 'bad.exe', { type: 'application/octet-stream' });
+    Object.defineProperty(rejectedInput, 'files', { value: [executable] });
+    await component.addAttachment({ target: rejectedInput } as unknown as Event);
+    expect(component.attachmentError()).toBe('This file type is not supported');
+    expect(component.attachments()).toHaveLength(1);
   });
 });

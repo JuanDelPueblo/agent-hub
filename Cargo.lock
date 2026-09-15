@@ -1539,6 +1539,7 @@ dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
  "axum 0.7.9",
+ "base64 0.22.1",
  "bzip2",
  "chrono",
  "clap",

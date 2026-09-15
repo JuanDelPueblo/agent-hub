@@ -3,11 +3,12 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import type { DisplayError, DisplayItem, DisplayTurn, DisplayUserMessage } from '../../core/api/types';
 import { TurnEntriesComponent } from '../turn-entries/turn-entries';
+import { RichContentComponent } from '../rich-content/rich-content';
 import { formatLocalDateTime } from '../../state/chat-activity';
 
 @Component({
   selector: 'hub-message-item',
-  imports: [MatIconModule, MatProgressSpinnerModule, TurnEntriesComponent],
+  imports: [MatIconModule, MatProgressSpinnerModule, RichContentComponent, TurnEntriesComponent],
   templateUrl: './message-item.html',
   styleUrl: './message-item.scss',
 })

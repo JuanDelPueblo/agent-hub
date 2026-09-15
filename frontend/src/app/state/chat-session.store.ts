@@ -327,7 +327,7 @@ export class ChatSessionStore {
     await this.api.deleteRemoteSession(chatId, remoteId);
   }
 
-  async sendPrompt(chatId: string, text: string): Promise<void> {
+  async sendPrompt(chatId: string, text: string | import('../core/api/types').RichContentBlock[]): Promise<void> {
     try {
       await this.api.promptChat(chatId, text);
       this.clearError(chatId);

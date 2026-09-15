@@ -429,9 +429,22 @@ impl HubService {
                 "Prompt must contain 1–{MAX_PROMPT_BYTES} bytes"
             )));
         }
+        self.prompt_chat_content(chat_id, vec![crate::content::text(text)])
+            .await
+    }
+
+    /// Stable ACP rich prompt surface. `prompt_chat` remains the text-only
+    /// shorthand for callers that predate content blocks.
+    pub async fn prompt_chat_content(
+        &self,
+        chat_id: &str,
+        content: Vec<::agent_client_protocol_schema::v1::ContentBlock>,
+    ) -> ServiceResult<()> {
+        crate::content::validate_prompt(&content)
+            .map_err(|error| ServiceError::Invalid(error.to_string()))?;
         let live = self.live(chat_id).await?;
         let timeout = self.prompt_timeout;
-        if let Err(error) = live.start_turn(text, timeout).await {
+        if let Err(error) = live.start_turn_content(content, timeout).await {
             if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
                 return Err(ServiceError::SavedConfigRejected {
                     option_id: rejected.option_id.clone(),
