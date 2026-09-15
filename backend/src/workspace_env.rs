@@ -217,6 +217,33 @@ pub fn merge_launch_env(
     env
 }
 
+/// Overlays the process environment values named by `pass_env`.
+///
+/// A name present in the process wins over the workspace and launch maps, so
+/// a systemd `EnvironmentFile` can supply per-agent secrets without storing
+/// them in a declarative file. A name absent from the process leaves the base
+/// map unchanged.
+pub fn apply_pass_env(
+    base: HashMap<String, String>,
+    pass_env: &[String],
+) -> HashMap<String, String> {
+    let source: HashMap<String, String> = std::env::vars().collect();
+    apply_pass_env_from(base, pass_env, &source)
+}
+
+pub(crate) fn apply_pass_env_from(
+    mut base: HashMap<String, String>,
+    pass_env: &[String],
+    source: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    for name in pass_env {
+        if let Some(value) = source.get(name) {
+            base.insert(name.clone(), value.clone());
+        }
+    }
+    base
+}
+
 pub fn merge_terminal_env(
     base: &HashMap<String, String>,
     req_env: &[agent_client_protocol_schema::v1::EnvVariable],
@@ -253,6 +280,21 @@ mod tests {
         )];
         let term_merged = merge_terminal_env(&merged, &terminal_overlay);
         assert_eq!(term_merged.get("OVERRIDE").unwrap(), "terminal");
+    }
+
+    #[test]
+    fn test_pass_env_overlays_process_values_and_keeps_missing() {
+        let mut base = HashMap::new();
+        base.insert("SECRET".to_string(), "workspace".to_string());
+        base.insert("KEEP".to_string(), "base".to_string());
+        let mut source = HashMap::new();
+        source.insert("SECRET".to_string(), "runtime".to_string());
+
+        let merged =
+            apply_pass_env_from(base, &["SECRET".to_string(), "ABSENT".to_string()], &source);
+        assert_eq!(merged.get("SECRET").unwrap(), "runtime");
+        assert_eq!(merged.get("KEEP").unwrap(), "base");
+        assert!(!merged.contains_key("ABSENT"));
     }
 
     #[tokio::test]

@@ -225,8 +225,9 @@ impl AcpSession {
                 },
             }
         };
-        let agent_env =
+        let merged =
             crate::workspace_env::merge_launch_env(&workspace_env, &self.runtime.launch.env);
+        let agent_env = crate::workspace_env::apply_pass_env(merged, &self.runtime.launch.pass_env);
 
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy
@@ -1304,8 +1305,9 @@ impl SessionManager {
             // A stopped materialized chat has no ACP process and may safely
             // be rebuilt from the current catalog. This makes edits/updates
             // apply to the next launch while a starting/running session keeps
-            // its stable runtime handle.
-            if session.process_state().await.can_start() {
+            // its stable runtime handle. Legacy sessions without a store have
+            // nothing to rebuild from, so they are returned as-is.
+            if self.store.is_some() && session.process_state().await.can_start() {
                 self.remove_session(session_id).await;
             } else {
                 return Some(session);

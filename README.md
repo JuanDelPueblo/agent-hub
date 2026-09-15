@@ -75,6 +75,15 @@ Build the complete application with embedded frontend assets:
 nix build .#pueblo-hub
 ```
 
+Run it directly from the flake without building first:
+
+```sh
+nix run .#pueblo-hub -- --project-root /path/to/projects
+```
+
+`nix run` launches the same canonical package binary that `nix build`
+produces. `nix run .#pueblo-hub -- --help` shows every option.
+
 This produces `result/bin/pueblo-hub`, which includes the embedded production
 frontend:
 
@@ -216,6 +225,193 @@ Built-in and `agents.json` definitions are read-only through this API. Agent
 summaries report source, availability, mutability, display metadata, and an
 unavailable reason when applicable; launch commands and environment values are
 never returned.
+
+Deployments can also supply `--declarative-agents-file` (or
+`PUEBLO_HUB_DECLARATIVE_AGENTS_FILE`). It has the same shape as `agents.json`
+plus `pass_env`, `default_permission_policy`, and `description`, feeds the
+same catalog with `AgentSource::Declarative`, and stays read-only in the
+management APIs. An `npx` or `uvx` agent is just a pinned manual launch such
+as `command = "npx"` with `args = ["--yes", "package-acp@1.2.3", "--acp"]`,
+so no live registry lookup happens. The NixOS module generates this file for
+you; see the production deployment section below.
+
+## Production deployment
+
+Pueblo Hub behaves like a normal nixpkgs-style package and NixOS service.
+Another flake can consume it directly without copying packaging code. The OCI
+image is built from exactly the same package.
+
+### Flake package and overlay
+
+```sh
+nix build .#pueblo-hub
+nix run .#pueblo-hub -- --help
+```
+
+The version comes from `Cargo.toml`, so there is one authoritative source.
+
+A downstream flake can use the package through the overlay:
+
+```nix
+{
+  inputs.pueblo-hub.url = "github:JuanDelPueblo/pueblo-hub";
+  outputs = { nixpkgs, pueblo-hub, ... }: {
+    # makes pkgs.pueblo-hub available with the same derivation
+    nixpkgs.overlays = [ pueblo-hub.overlays.default ];
+  };
+}
+```
+
+Or override the service package with the canonical build:
+
+```nix
+services.pueblo-hub.package = pueblo-hub.packages.${system}.pueblo-hub;
+```
+
+### Minimal NixOS configuration
+
+```nix
+{
+  inputs.pueblo-hub.url = "github:JuanDelPueblo/pueblo-hub";
+  outputs = { nixpkgs, pueblo-hub, ... }: {
+    nixosConfigurations.server = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        pueblo-hub.nixosModules.default
+        {
+          services.pueblo-hub.enable = true;
+          services.pueblo-hub.projectRoots = [ "/srv/projects" ];
+        }
+      ];
+    };
+  };
+}
+```
+
+That is the whole thing for a standard deployment. Add network options only
+when you need them, such as `services.pueblo-hub.host`, `.port`, or
+`.publicOrigin`. The module also exposes typed options for prompt timeout,
+registry URL, data/state/config/log/worktree locations, runtime packages,
+environment values, environment files, and declarative agents. Run
+`nixos-option services.pueblo-hub` to browse them.
+
+The service starts at the normal multi-user target, restarts on failure,
+shuts down gracefully on SIGTERM, and cleans up supervised ACP descendants
+through its control group, so no agent processes are left behind after a
+stop or restart. Sandboxing is intentionally light: agents must still work
+in project roots, use Git, start terminal tasks, and resolve workspace
+environments.
+
+Nix workspace environments work out of the box. The service PATH provides
+`direnv` and the Nix tooling needed for `use flake` and nix-direnv style
+`.envrc` files without a custom Pueblo package. Your system still needs
+flakes enabled (`nix.settings.experimental-features = [ "nix-command" "flakes" ]`).
+Pueblo Hub never auto-authorizes `.envrc` files. When an environment is
+blocked, authorize it from the chat UI, which runs `direnv allow` against
+the verified workspace path.
+
+Supported registry `npx` and `uvx` agents work with the generic runtimes in
+`services.pueblo-hub.runtimePackages`, which defaults to Node (`npx`) and
+`uv` (`uvx`). Extend or override that list for your deployment, but do not
+expect project toolchains there. Remove an entry and its agents are reported
+deterministically unavailable instead of failing at session start.
+
+### Service user and paths
+
+By default the module creates a dedicated `pueblo-hub` system user and group
+and gives it a stable HOME at `/var/lib/pueblo-hub`. Agent authentication
+and configuration stored there survives restarts and package upgrades.
+Persistent Pueblo state lives under systemd directory management
+(`StateDirectory=pueblo-hub`), with deterministic `--data-dir`,
+`--state-dir`, and `--config-dir` instead of root's HOME.
+
+To run as an existing account instead:
+
+```nix
+services.pueblo-hub.user = "alice";
+services.pueblo-hub.group = "users";
+```
+
+An explicitly selected user or group is assumed to exist and is never
+redefined. Give that account read and write access to every entry in
+`services.pueblo-hub.projectRoots`, and make sure its HOME persists if your
+agents keep auth there.
+
+### Declarative agents
+
+```nix
+services.pueblo-hub.agents.my-agent = {
+  command = "${pkgs.my-agent}/bin/my-acp";
+  args = [ "--stdio" ];
+  displayName = "My agent";
+  idleTimeout = 300;
+  usageProvider = "internal";
+  defaultPermissionPolicy = "ask";
+  description = "Our own agent";
+  env.REGION = "eu";
+  passEnv = [ "MY_AGENT_TOKEN" ];
+};
+services.pueblo-hub.agents.pkg = {
+  npx.package = "package-acp@1.2.3";
+  npx.args = [ "--acp" ];
+};
+```
+
+Each agent sets exactly one of `command`, `npx`, or `uvx`. A Nix package
+path works naturally as `command`. Pinned `npx` (`pkg@1.2.3`) and `uvx`
+(`pkg==1.2.3`) launches are reproducible and never fetch a mutable
+`latest` entry during evaluation or startup. Binary registry installs are
+covered the same way: point `command` at a Nix-provided store path with an
+explicit source instead of downloading latest. Declarative agents appear
+with source `declarative`, stay read-only in the web management APIs, and
+live happily beside web-managed custom and registry agents. An id that any
+other source already owns fails clearly at startup instead of silently
+winning.
+
+### Secrets and environment files
+
+Never put API keys, tokens, or passwords in `env`. Those values land in the
+Nix store. Name them with `passEnv` and supply the values at runtime:
+
+```nix
+services.pueblo-hub.environmentFiles = [ "/run/secrets/pueblo-hub.env" ];
+services.pueblo-hub.agents.my-agent.passEnv = [ "MY_AGENT_TOKEN" ];
+```
+
+Where `/run/secrets/pueblo-hub.env` holds `MY_AGENT_TOKEN=...`. Use
+`services.pueblo-hub.environment` only for non-secret values.
+
+### Containers
+
+```sh
+nix build .#pueblo-hub-oci
+docker load -i result  # prints the tag, e.g. pueblo-hub:0.3.0
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -v pueblo-data:/data \
+  -v "$PWD/projects:/projects" \
+  pueblo-hub:0.3.0
+```
+
+The image is built with `dockerTools` from the canonical package, not a
+second compiler path, and there is no Dockerfile to drift. It runs non-root,
+binds `0.0.0.0:8765`, keeps HOME and state in `/data`, and expects projects
+in `/projects`:
+
+```sh
+docker load -i result
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -v pueblo-data:/data \
+  -v "$PWD/projects:/projects" \
+  pueblo-hub:latest
+```
+
+Persist `/data` if you want the database and ACP-agent auth to survive
+container replacement. A named volume inherits the image's non-root
+ownership and just works; a host bind mount must be writable by UID 65534
+(the image user). Mount each project root under `/projects` (or pass
+your own `--project-root` flags plus matching mounts). A runtime smoke test
+lives in `nix/oci-smoke.sh` and checks `/api/status` plus the embedded
+frontend with temporary mounts.
 
 ### Developing Pueblo Hub
 
