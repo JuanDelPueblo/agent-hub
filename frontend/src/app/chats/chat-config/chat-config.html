@@ -14,61 +14,65 @@
       </section>
       <mat-divider />
     }
-    @if (showModes() && modes(); as sessionModes) {
-      <div class="config-item">
-        <mat-form-field appearance="outline">
-          <mat-label>Session mode</mat-label>
-          <mat-select [value]="sessionModes.current_mode_id" (selectionChange)="changeMode($event.value)">
-            @for (mode of sessionModes.available_modes; track mode.id) {
-              <mat-option [value]="mode.id">{{ mode.name }}</mat-option>
-            }
-          </mat-select>
-        </mat-form-field>
-        <p>Legacy mode selector. Hidden when a mode config option already covers it.</p>
+
+    <section class="workspace-section" aria-labelledby="additional-roots-heading">
+      <h3 id="additional-roots-heading"><mat-icon aria-hidden="true">folder_shared</mat-icon> Additional workspace roots</h3>
+      <p>Registered Pueblo projects only. Saving roots reconnects the idle agent; they never load another project's environment.</p>
+      @for (root of additionalRoots(); track root.project_id) {
+        <div class="root-row"><span>{{ projectName(root.project_id) }}</span><button mat-button type="button" (click)="removeRoot(root.project_id)">Remove</button></div>
+      }
+      <div class="root-row">
+        <mat-form-field appearance="outline"><mat-label>Add registered project</mat-label><mat-select [value]="selectedRoot()" (selectionChange)="rootSelected($event.value)">@for (project of projects(); track project.id) { @if (project.id !== chat.project_id && !additionalRoots().some(root => root.project_id === project.id)) { <mat-option [value]="project.id">{{ project.name }}</mat-option> } }</mat-select></mat-form-field>
+        <button mat-button type="button" [disabled]="!selectedRoot()" (click)="addRoot()">Add</button>
       </div>
+    </section>
+    <mat-divider />
+
+    <section class="workspace-section" aria-labelledby="mcp-heading">
+      <h3 id="mcp-heading"><mat-icon aria-hidden="true">extension</mat-icon> ACP MCP servers</h3>
+      <p>Changes reconnect the idle agent immediately. Secrets are intentionally redacted after saving.</p>
+      @if (!mcpServers().length) { <p class="no-options">No MCP servers configured.</p> }
+      @for (server of mcpServers(); track server.id) {
+        <div class="root-row"><span>{{ server.position + 1 }}. {{ server.name }} ({{ server.transport }}) @if (server.secrets.length) { — secrets configured }</span><span><button mat-button type="button" [disabled]="$first" (click)="moveMcp(server.id, -1)">Up</button><button mat-button type="button" [disabled]="$last" (click)="moveMcp(server.id, 1)">Down</button><button mat-button type="button" (click)="beginMcpEdit(server.id)">Edit</button><button mat-button type="button" (click)="removeMcp(server.id)">Remove</button></span></div>
+      }
+      @if (editingServer(); as server) {
+        <section class="mcp-form" aria-label="Edit MCP server">
+          <mat-form-field appearance="outline"><mat-label>Name</mat-label><input matInput [value]="editName()" (input)="editName.set($any($event.target).value)"></mat-form-field>
+          <mat-form-field appearance="outline"><mat-label>Transport</mat-label><mat-select [value]="editTransport()" (selectionChange)="editTransport.set($event.value)"><mat-option value="stdio">Stdio</mat-option><mat-option value="http">HTTP</mat-option><mat-option value="sse">SSE</mat-option></mat-select></mat-form-field>
+          <mat-form-field appearance="outline"><mat-label>URL</mat-label><input matInput [value]="editUrl()" (input)="editUrl.set($any($event.target).value)"></mat-form-field>
+          <mat-form-field appearance="outline"><mat-label>Absolute command</mat-label><input matInput [value]="editCommand()" (input)="editCommand.set($any($event.target).value)"></mat-form-field>
+          <mat-form-field appearance="outline"><mat-label>Arguments, one per line</mat-label><textarea matInput [value]="editArgs()" (input)="editArgs.set($any($event.target).value)"></textarea></mat-form-field>
+          <div class="secret-editor"><strong>Secrets</strong><p>Existing values are never displayed. Keep, replace, or remove each named field.</p>
+            @for (secret of editSecrets(); track $index; let index = $index) { <div class="secret-row"><input [value]="secret.name" aria-label="Secret name" (input)="setSecret(index, 'name', $any($event.target).value)"><mat-select [value]="secret.action" aria-label="Secret action" (selectionChange)="setSecret(index, 'action', $event.value)"><mat-option value="keep">Keep</mat-option><mat-option value="replace">Replace</mat-option><mat-option value="remove">Remove</mat-option></mat-select><input type="password" [disabled]="secret.action !== 'replace'" aria-label="Replacement secret value" (input)="setSecret(index, 'value', $any($event.target).value)"><button mat-button type="button" (click)="removeSecret(index)">Remove field</button></div> }
+            <button mat-button type="button" (click)="addSecret()">Add secret field</button>
+          </div>
+          <button mat-button type="button" (click)="saveAdvancedMcp()">Save and reconnect</button>
+        </section>
+      }
+      <section class="mcp-form" aria-label="Add MCP server">
+        <mat-form-field appearance="outline"><mat-label>Name</mat-label><input matInput #mcpName></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>Transport</mat-label><mat-select #mcpTransport value="stdio"><mat-option value="stdio">Stdio</mat-option><mat-option value="http">HTTP</mat-option><mat-option value="sse">SSE</mat-option></mat-select></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>URL</mat-label><input matInput #mcpUrl></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>Absolute command</mat-label><input matInput #mcpCommand></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>Arguments, one per line</mat-label><textarea matInput [value]="createArgs()" (input)="createArgs.set($any($event.target).value)"></textarea></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>Initial secret name</mat-label><input matInput #mcpSecretName></mat-form-field>
+        <mat-form-field appearance="outline"><mat-label>Initial secret value</mat-label><input matInput type="password" #mcpSecretValue></mat-form-field>
+        <button mat-button type="button" (click)="addMcp(mcpName.value, mcpTransport.value, mcpUrl.value, mcpCommand.value, mcpSecretName.value, mcpSecretValue.value)">Add server</button>
+      </section>
+    </section>
+    <mat-divider />
+
+    @if (showModes() && modes(); as sessionModes) {
+      <div class="config-item"><mat-form-field appearance="outline"><mat-label>Session mode</mat-label><mat-select [value]="sessionModes.current_mode_id" (selectionChange)="changeMode($event.value)">@for (mode of sessionModes.available_modes; track mode.id) { <mat-option [value]="mode.id">{{ mode.name }}</mat-option> }</mat-select></mat-form-field><p>Legacy mode selector. Hidden when a mode config option already covers it.</p></div>
       <mat-divider />
     }
-    <div class="config-item">
-      <mat-form-field appearance="outline">
-        <mat-label>Permission policy</mat-label>
-        <mat-select [value]="chat.permission_policy" (selectionChange)="changePolicy($event.value)">
-          <mat-option value="ask">Ask every time</mat-option>
-          <mat-option value="read-only">Read-only (deny writes)</mat-option>
-          <mat-option value="auto-approve">Auto-approve all permissions</mat-option>
-          <mat-option value="deny-all">Deny all actions</mat-option>
-        </mat-select>
-      </mat-form-field>
-      <p>Controls whether the agent must ask before running commands or editing files.</p>
-    </div>
+    <div class="config-item"><mat-form-field appearance="outline"><mat-label>Permission policy</mat-label><mat-select [value]="chat.permission_policy" (selectionChange)="changePolicy($event.value)"><mat-option value="ask">Ask every time</mat-option><mat-option value="read-only">Read-only (deny writes)</mat-option><mat-option value="auto-approve">Auto-approve all permissions</mat-option><mat-option value="deny-all">Deny all actions</mat-option></mat-select></mat-form-field><p>Controls whether the agent must ask before running commands or editing files.</p></div>
     <mat-divider />
-    @if (!additionalOptions().length) {
-      <p class="no-options">No additional agent configuration options advertised.</p>
-    } @else {
+    @if (!additionalOptions().length) { <p class="no-options">No additional agent configuration options advertised.</p> } @else {
       @for (option of additionalOptions(); track option.id) {
-        @if (option.type === 'select') {
-          <div class="config-item">
-            <mat-form-field appearance="outline">
-              <mat-label>{{ option.name }}</mat-label>
-              <mat-select [value]="option.currentValue" (selectionChange)="changeOption(option, $event.value)">
-                @for (item of option.options ?? []; track $index) {
-                  @if (isGroup(item)) {
-                    <mat-optgroup [label]="item.group">
-                      @for (child of item.options; track $index) { <mat-option [value]="child.value">{{ child.name }}</mat-option> }
-                    </mat-optgroup>
-                  } @else { <mat-option [value]="item.value">{{ item.name }}</mat-option> }
-                }
-              </mat-select>
-            </mat-form-field>
-            @if (option.description) { <p>{{ option.description }}</p> }
-          </div>
-        } @else if (option.type === 'boolean') {
-          <div class="boolean-item">
-            <div><strong>{{ option.name }}</strong>@if (option.description) { <p>{{ option.description }}</p> }</div>
-            <mat-slide-toggle [checked]="!!option.currentValue" (change)="changeOption(option, $event.checked)" [attr.aria-label]="option.name" />
-          </div>
-        } @else {
-          <div class="config-item"><strong>{{ option.name }}</strong><div class="unsupported">{{ option.currentValue }} (type: {{ option.type }})</div></div>
-        }
+        @if (option.type === 'select') { <div class="config-item"><mat-form-field appearance="outline"><mat-label>{{ option.name }}</mat-label><mat-select [value]="option.currentValue" (selectionChange)="changeOption(option, $event.value)">@for (item of option.options ?? []; track $index) { @if (isGroup(item)) { <mat-optgroup [label]="item.group">@for (child of item.options; track $index) { <mat-option [value]="child.value">{{ child.name }}</mat-option> }</mat-optgroup> } @else { <mat-option [value]="item.value">{{ item.name }}</mat-option> } }</mat-select></mat-form-field>@if (option.description) { <p>{{ option.description }}</p> }</div> }
+        @else if (option.type === 'boolean') { <div class="boolean-item"><div><strong>{{ option.name }}</strong>@if (option.description) { <p>{{ option.description }}</p> }</div><mat-slide-toggle [checked]="!!option.currentValue" (change)="changeOption(option, $event.checked)" [attr.aria-label]="option.name" /></div> }
+        @else { <div class="config-item"><strong>{{ option.name }}</strong><div class="unsupported">{{ option.currentValue }} (type: {{ option.type }})</div></div> }
       }
     }
   </section>

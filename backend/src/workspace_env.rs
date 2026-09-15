@@ -451,6 +451,29 @@ printf '{%s}\n' "$json"
     }
 
     #[tokio::test]
+    async fn additional_root_envrc_is_not_consulted_for_primary_workspace() {
+        let primary = tempfile::tempdir().unwrap();
+        let additional = tempfile::tempdir().unwrap();
+        std::fs::write(
+            additional.path().join(".envrc"),
+            "export LEAKED_FROM_ADDITIONAL_ROOT=1\n",
+        )
+        .unwrap();
+
+        // Session startup resolves only its primary cwd/boundary. An envrc in
+        // an attached root is neither discovered nor handed to direnv.
+        assert!(!has_envrc(primary.path(), primary.path()));
+        assert!(has_envrc(additional.path(), additional.path()));
+        let env = resolve_workspace_env(primary.path(), primary.path())
+            .await
+            .unwrap();
+        assert_ne!(
+            env.get("LEAKED_FROM_ADDITIONAL_ROOT"),
+            Some(&"1".to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn test_missing_direnv_executable() {
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::write(temp_dir.path().join(".envrc"), "export TEST_VAR=123\n").unwrap();

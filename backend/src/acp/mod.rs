@@ -8,9 +8,10 @@ use ::agent_client_protocol_schema::v1 as agent_client_protocol_schema;
 use ::agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::{
     CancelNotification, ContentBlock, CreateTerminalRequest, InitializeRequest, InitializeResponse,
-    KillTerminalRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-    ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionRequest, SessionId,
-    SessionNotification, SessionUpdate, TerminalOutputRequest, ToolCallContent,
+    KillTerminalRequest, LoadSessionRequest, McpServer, McpServerHttp, McpServerSse,
+    McpServerStdio, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+    ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionRequest,
+    SessionId, SessionNotification, SessionUpdate, TerminalOutputRequest, ToolCallContent,
     WaitForTerminalExitRequest, WriteTextFileRequest, CLIENT_METHOD_NAMES,
 };
 use std::collections::HashMap;
@@ -111,6 +112,7 @@ impl AcpClient {
         event_log: Arc<EventLog>,
         store: Option<Arc<crate::store::Store>>,
         task_tracker: Arc<crate::tasks::TerminalTaskTracker>,
+        effective_roots: Vec<std::path::PathBuf>,
     ) -> anyhow::Result<Self> {
         let proc = AcpProcess::spawn(command, args, env_vars, cwd)?;
 
@@ -119,12 +121,13 @@ impl AcpClient {
             Arc::new(Mutex::new(HashMap::new()));
         let connected = Arc::new(AtomicBool::new(true));
 
-        let callback_handler = Arc::new(CallbackHandler::new(
+        let callback_handler = Arc::new(CallbackHandler::new_with_roots(
             policy,
             session_id.clone(),
             agent_name.clone(),
             event_log.clone(),
             cwd.to_path_buf(),
+            effective_roots,
             Arc::new(env_vars.clone()),
             task_tracker,
         ));
@@ -342,13 +345,18 @@ impl AcpClient {
     }
 
     /// Preserve the agent's identity. Never fall back to session/new on resume failure.
-    pub async fn open_session(&self, cwd: &Path, saved: Option<&str>) -> anyhow::Result<String> {
+    pub async fn open_session(
+        &self,
+        cwd: &Path,
+        saved: Option<&str>,
+        mcp_servers: Vec<McpServer>,
+        additional_directories: Vec<std::path::PathBuf>,
+    ) -> anyhow::Result<String> {
         // Clear transient dynamic state BEFORE load/resume so updates that
         // arrive as part of ACP replay are retained rather than wiped by a
         // reset that runs after the request returns.
         *self.available_commands.write().await = serde_json::json!([]);
         *self.last_usage.write().await = serde_json::Value::Null;
-        let params = serde_json::json!({"cwd":cwd,"mcpServers":[],"sessionId":saved});
         let result = if let Some(id) = saved {
             let caps = self.capabilities.read().await.clone();
             let method = if caps["loadSession"] == true {
@@ -364,15 +372,33 @@ impl AcpClient {
             // Our durable event log already contains the displayed history.
             // Loading still restores agent-owned state; do not append its replay twice.
             self.replaying.store(true, Ordering::SeqCst);
-            let result = self
-                .send_request_with_timeout(method, params, std::time::Duration::from_secs(60))
-                .await;
+            let result = if method == "session/load" {
+                self.send_request_with_timeout(
+                    method,
+                    LoadSessionRequest::new(id.to_owned(), cwd.to_path_buf())
+                        .mcp_servers(mcp_servers)
+                        .additional_directories(additional_directories),
+                    std::time::Duration::from_secs(60),
+                )
+                .await
+            } else {
+                self.send_request_with_timeout(
+                    method,
+                    ResumeSessionRequest::new(id.to_owned(), cwd.to_path_buf())
+                        .mcp_servers(mcp_servers)
+                        .additional_directories(additional_directories),
+                    std::time::Duration::from_secs(60),
+                )
+                .await
+            };
             self.replaying.store(false, Ordering::SeqCst);
             result?
         } else {
             self.send_request_with_timeout(
                 "session/new",
-                NewSessionRequest::new(cwd.to_path_buf()),
+                NewSessionRequest::new(cwd.to_path_buf())
+                    .mcp_servers(mcp_servers)
+                    .additional_directories(additional_directories),
                 std::time::Duration::from_secs(60),
             )
             .await?
@@ -716,6 +742,84 @@ fn validate_prompt_capabilities(
         }
     }
     Ok(())
+}
+
+/// Converts Pueblo's typed durable records into the stable-v1 wire variants.
+/// ACP-over-ACP is deliberately absent: it is not stable v1.
+pub fn configured_mcp_servers(
+    values: &[crate::store::McpServerConfig],
+) -> anyhow::Result<Vec<McpServer>> {
+    values
+        .iter()
+        .map(|value| {
+            anyhow::ensure!(!value.name.trim().is_empty(), "Invalid stored MCP server");
+            match value.transport {
+                crate::store::McpTransport::Http => Ok(McpServer::Http(
+                    McpServerHttp::new(
+                        &value.name,
+                        value
+                            .url
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid stored HTTP MCP server"))?,
+                    )
+                    .headers(
+                        value
+                            .secrets
+                            .iter()
+                            .map(|s| {
+                                agent_client_protocol_schema::HttpHeader::new(&s.name, &s.value)
+                            })
+                            .collect(),
+                    ),
+                )),
+                crate::store::McpTransport::Sse => Ok(McpServer::Sse(
+                    McpServerSse::new(
+                        &value.name,
+                        value
+                            .url
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid stored SSE MCP server"))?,
+                    )
+                    .headers(
+                        value
+                            .secrets
+                            .iter()
+                            .map(|s| {
+                                agent_client_protocol_schema::HttpHeader::new(&s.name, &s.value)
+                            })
+                            .collect(),
+                    ),
+                )),
+                crate::store::McpTransport::Stdio => Ok(McpServer::Stdio(
+                    McpServerStdio::new(
+                        &value.name,
+                        value
+                            .command
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid stored stdio MCP server"))?,
+                    )
+                    .args(value.args.clone())
+                    .env(
+                        value
+                            .secrets
+                            .iter()
+                            .map(|s| {
+                                agent_client_protocol_schema::EnvVariable::new(&s.name, &s.value)
+                            })
+                            .collect(),
+                    ),
+                )),
+            }
+        })
+        .collect()
+}
+
+/// Stable ACP v1 advertises additional directories with an object. Both an
+/// absent field and `null` explicitly mean unsupported.
+pub fn supports_additional_directories(capabilities: &serde_json::Value) -> bool {
+    capabilities
+        .pointer("/sessionCapabilities/additionalDirectories")
+        .is_some_and(serde_json::Value::is_object)
 }
 
 impl Drop for AcpClient {
@@ -2023,5 +2127,18 @@ mod tests {
         assert!(validate_config_value(&options, "model", &serde_json::json!("big")).is_err());
         assert!(validate_config_value(&options, "web", &serde_json::json!(true)).is_ok());
         assert!(validate_config_value(&options, "web", &serde_json::json!("yes")).is_err());
+    }
+
+    #[test]
+    fn additional_directories_requires_an_object_capability() {
+        assert!(!supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {}})
+        ));
+        assert!(!supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {"additionalDirectories": null}})
+        ));
+        assert!(supports_additional_directories(
+            &serde_json::json!({"sessionCapabilities": {"additionalDirectories": {}}})
+        ));
     }
 }

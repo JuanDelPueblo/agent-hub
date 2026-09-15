@@ -356,6 +356,14 @@ async fn unsupported_resume_never_creates_another_conversation() {
         pueblo_hub::state::ProcessState::Running,
         "unarchiving a live chat must preserve its process"
     );
+    let error = s.change_connection_config(|_| Ok(())).await.unwrap_err();
+    assert!(error.to_string().contains("require a new chat"));
+    assert_eq!(
+        s.process_state().await,
+        pueblo_hub::state::ProcessState::Running,
+        "a rejected connection edit must not strand a non-resumable chat"
+    );
+    assert_eq!(db.chat(&chat.id).unwrap().acp_session_id, saved);
     s.stop().await.unwrap();
     assert!(s
         .resume()

@@ -211,6 +211,14 @@ export class ApiService {
     });
   }
 
+  fetchMcpServers(chatId: string): Promise<import('./types').McpServer[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/mcp-servers`); }
+  createMcpServer(chatId: string, input: import('./types').McpServerInput): Promise<import('./types').McpServer[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/mcp-servers`, { method: 'POST', body: input }); }
+  editMcpServer(chatId: string, serverId: string, input: import('./types').McpServerInput): Promise<import('./types').McpServer[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/mcp-servers/${encodeURIComponent(serverId)}`, { method: 'PATCH', body: input }); }
+  deleteMcpServer(chatId: string, serverId: string): Promise<void> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/mcp-servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' }); }
+  orderMcpServers(chatId: string, ids: string[]): Promise<import('./types').McpServer[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/mcp-servers/order`, { method: 'PUT', body: { ids } }); }
+  fetchAdditionalRoots(chatId: string): Promise<import('./types').AdditionalRoot[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/additional-roots`); }
+  setAdditionalRoots(chatId: string, projectIds: string[]): Promise<import('./types').AdditionalRoot[]> { return this.request(`/api/chats/${encodeURIComponent(chatId)}/additional-roots`, { method: 'PUT', body: { project_ids: projectIds } }); }
+
   fetchChatCommands(chatId: string): Promise<import('./types').AvailableCommand[]> {
     return this.request<import('./types').AvailableCommand[]>(`/api/chats/${encodeURIComponent(chatId)}/commands`);
   }

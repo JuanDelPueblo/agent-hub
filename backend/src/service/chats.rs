@@ -3,7 +3,10 @@ use super::{
     workspaces::workspace_error, ChatHistoryPage, ChatView, HubService, ServiceError, ServiceResult,
 };
 use crate::acp::callbacks::CallbackPolicy;
-use crate::store::{validate_name, Chat, ChatWorkspace, WorkspaceMode};
+use crate::store::{
+    validate_name, AdditionalRoot, Chat, ChatWorkspace, McpServerConfig, McpServerInput,
+    McpServerView, McpTransport, SecretEdit, SecretField, WorkspaceMode,
+};
 use crate::workspace::{self, BranchInfo, ManagedPaths, RepoInfo};
 use serde::Deserialize;
 use serde_json::Value;
@@ -29,6 +32,66 @@ pub struct ChatEdit {
 /// A prompt must fit this range. The limit keeps one request from filling the
 /// event log and the agent's context at once.
 const MAX_PROMPT_BYTES: usize = 100_000;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AdditionalRootView {
+    pub project_id: String,
+    pub position: i64,
+}
+
+fn validate_mcp_input(input: &McpServerInput) -> ServiceResult<()> {
+    if input.name.trim().is_empty() || input.name.len() > 256 {
+        return Err(ServiceError::Invalid("MCP server name is required".into()));
+    }
+    match input.transport {
+        McpTransport::Http | McpTransport::Sse => {
+            let url = input.url.as_deref().ok_or_else(|| {
+                ServiceError::Invalid("HTTP and SSE MCP servers require a URL".into())
+            })?;
+            // Avoid parsing/exposing a raw URL in errors: userinfo is a credential.
+            let scheme = url.split("://").next().unwrap_or("");
+            if !matches!(scheme, "http" | "https")
+                || url.split("://").nth(1).is_none()
+                || url.split("://").nth(1).is_some_and(|rest| {
+                    rest.split('/')
+                        .next()
+                        .is_some_and(|authority| authority.contains('@'))
+                })
+            {
+                return Err(ServiceError::Invalid(
+                    "MCP URL must be an http(s) URL without userinfo".into(),
+                ));
+            }
+            if input.command.is_some() {
+                return Err(ServiceError::Invalid(
+                    "HTTP and SSE MCP servers cannot include a command".into(),
+                ));
+            }
+        }
+        McpTransport::Stdio => {
+            let command = input.command.as_deref().ok_or_else(|| {
+                ServiceError::Invalid("Stdio MCP servers require an absolute command path".into())
+            })?;
+            if !std::path::Path::new(command).is_absolute() || input.url.is_some() {
+                return Err(ServiceError::Invalid(
+                    "Stdio MCP command must be absolute and cannot include a URL".into(),
+                ));
+            }
+        }
+    }
+    for secret in &input.secrets {
+        if secret.name.trim().is_empty() || secret.name.contains(['\r', '\n']) {
+            return Err(ServiceError::Invalid("MCP secret name is invalid".into()));
+        }
+        if secret.action == SecretEdit::Replace && secret.value.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(ServiceError::Invalid(
+                "A replacement MCP secret value is required".into(),
+            ));
+        }
+    }
+    Ok(())
+}
 pub const DEFAULT_HISTORY_PAGE_SIZE: usize = 100;
 pub const MAX_HISTORY_PAGE_SIZE: usize = 200;
 
@@ -98,6 +161,165 @@ impl HubService {
     pub async fn get_chat(&self, chat_id: &str) -> ServiceResult<ChatView> {
         let chat = self.store.chat(chat_id)?;
         Ok(self.view(chat).await)
+    }
+
+    pub fn mcp_servers(&self, chat_id: &str) -> ServiceResult<Vec<McpServerView>> {
+        self.store.chat(chat_id)?;
+        Ok(self
+            .store
+            .mcp_servers(chat_id)?
+            .iter()
+            .map(McpServerConfig::redacted)
+            .collect())
+    }
+
+    pub async fn create_mcp_server(
+        &self,
+        chat_id: &str,
+        input: McpServerInput,
+    ) -> ServiceResult<Vec<McpServerView>> {
+        validate_mcp_input(&input)?;
+        let live = self.live(chat_id).await?;
+        let mut existing = self.store.mcp_servers(chat_id)?;
+        let secrets = input
+            .secrets
+            .into_iter()
+            .filter_map(|s| {
+                s.value.map(|value| SecretField {
+                    name: s.name,
+                    value,
+                })
+            })
+            .collect();
+        let value = McpServerConfig {
+            id: uuid::Uuid::new_v4().to_string(),
+            chat_id: chat_id.into(),
+            position: existing.len() as i64,
+            name: input.name.trim().into(),
+            transport: input.transport,
+            url: input.url,
+            command: input.command,
+            args: input.args,
+            secrets,
+        };
+        let saved = value.clone();
+        live.change_connection_config(move |store| store.insert_mcp_server(&saved))
+            .await?;
+        existing.push(value);
+        self.notify_metadata_changed();
+        Ok(existing.iter().map(McpServerConfig::redacted).collect())
+    }
+
+    pub async fn edit_mcp_server(
+        &self,
+        chat_id: &str,
+        id: &str,
+        input: McpServerInput,
+    ) -> ServiceResult<Vec<McpServerView>> {
+        validate_mcp_input(&input)?;
+        let live = self.live(chat_id).await?;
+        let mut value = self.store.mcp_server(chat_id, id)?;
+        let mut secrets = value.secrets.clone();
+        for edit in input.secrets {
+            match edit.action {
+                SecretEdit::Keep => {
+                    if !secrets.iter().any(|s| s.name == edit.name) {
+                        return Err(ServiceError::Invalid(
+                            "Cannot keep an unknown MCP secret".into(),
+                        ));
+                    }
+                }
+                SecretEdit::Remove => secrets.retain(|s| s.name != edit.name),
+                SecretEdit::Replace => {
+                    secrets.retain(|s| s.name != edit.name);
+                    secrets.push(SecretField {
+                        name: edit.name,
+                        value: edit.value.unwrap(),
+                    });
+                }
+            }
+        }
+        value.name = input.name.trim().into();
+        value.transport = input.transport;
+        value.url = input.url;
+        value.command = input.command;
+        value.args = input.args;
+        value.secrets = secrets;
+        live.change_connection_config(move |store| store.update_mcp_server(&value))
+            .await?;
+        self.notify_metadata_changed();
+        self.mcp_servers(chat_id)
+    }
+    pub async fn delete_mcp_server(&self, chat_id: &str, id: &str) -> ServiceResult<()> {
+        let live = self.live(chat_id).await?;
+        let id = id.to_string();
+        let chat = chat_id.to_string();
+        live.change_connection_config(move |store| store.delete_mcp_server(&chat, &id))
+            .await?;
+        self.notify_metadata_changed();
+        Ok(())
+    }
+    pub async fn reorder_mcp_servers(
+        &self,
+        chat_id: &str,
+        ids: Vec<String>,
+    ) -> ServiceResult<Vec<McpServerView>> {
+        let live = self.live(chat_id).await?;
+        let chat = chat_id.to_string();
+        live.change_connection_config(move |store| store.reorder_mcp_servers(&chat, &ids))
+            .await?;
+        self.notify_metadata_changed();
+        self.mcp_servers(chat_id)
+    }
+    pub fn additional_roots(&self, chat_id: &str) -> ServiceResult<Vec<AdditionalRootView>> {
+        self.store.chat(chat_id)?;
+        Ok(self
+            .store
+            .additional_roots(chat_id)?
+            .into_iter()
+            .map(|r| AdditionalRootView {
+                project_id: r.project_id,
+                position: r.position,
+            })
+            .collect())
+    }
+    pub async fn set_additional_roots(
+        &self,
+        chat_id: &str,
+        project_ids: Vec<String>,
+    ) -> ServiceResult<Vec<AdditionalRootView>> {
+        let mut roots = Vec::new();
+        for (position, id) in project_ids.iter().enumerate() {
+            let project = self.store.project(id)?;
+            let canonical = std::path::Path::new(&project.path)
+                .canonicalize()
+                .map_err(|_| {
+                    ServiceError::Invalid("An additional project directory no longer exists".into())
+                })?;
+            if canonical.to_string_lossy() != project.path {
+                return Err(ServiceError::Invalid(
+                    "An additional project path changed; re-register it before use".into(),
+                ));
+            };
+            roots.push(AdditionalRoot {
+                chat_id: chat_id.into(),
+                position: position as i64,
+                project_id: id.clone(),
+                canonical_path: project.path,
+            });
+        }
+        let mut seen = std::collections::HashSet::new();
+        if !project_ids.iter().all(|id| seen.insert(id)) {
+            return Err(ServiceError::Invalid(
+                "Additional projects must be unique".into(),
+            ));
+        };
+        let live = self.live(chat_id).await?;
+        let chat = chat_id.to_string();
+        live.change_connection_config(move |store| store.replace_additional_roots(&chat, &roots))
+            .await?;
+        self.notify_metadata_changed();
+        self.additional_roots(chat_id)
     }
 
     pub fn chat_history(

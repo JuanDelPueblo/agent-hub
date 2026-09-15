@@ -153,8 +153,10 @@ export class ChatSessionStore {
     return promise;
   }
 
-  retryConnection(chatId: string): Promise<void> {
-    return this.loadChatConfig(chatId).then(() => undefined).catch(() => undefined);
+  async retryConnection(chatId: string): Promise<void> {
+    // Connection-configuration changes stop the idle ACP process. Reloading
+    // config alone does not apply them; session/resume does.
+    await this.connectChat(chatId);
   }
 
   async authorizeChatEnvironment(chatId: string): Promise<void> {

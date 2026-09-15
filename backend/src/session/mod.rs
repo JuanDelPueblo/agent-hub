@@ -100,6 +100,34 @@ impl AcpSession {
         self.cached_env.read().await.clone()
     }
 
+    async fn additional_roots(&self) -> anyhow::Result<Vec<PathBuf>> {
+        let Some(store) = &self.store else {
+            return Ok(Vec::new());
+        };
+        let roots = store.additional_roots(&self.id)?;
+        let mut effective = Vec::with_capacity(roots.len());
+        for root in roots {
+            let project = store.project(&root.project_id)?;
+            anyhow::ensure!(
+                project.path == root.canonical_path,
+                "Configured additional project has moved; update the chat configuration"
+            );
+            let actual = Path::new(&project.path).canonicalize().map_err(|_| {
+                anyhow::anyhow!("Configured additional project directory no longer exists")
+            })?;
+            anyhow::ensure!(
+                actual == Path::new(&root.canonical_path),
+                "Configured additional project path is symlink-escaped or tampered"
+            );
+            anyhow::ensure!(
+                actual.is_dir(),
+                "Configured additional project is not a directory"
+            );
+            effective.push(actual);
+        }
+        Ok(effective)
+    }
+
     pub async fn invalidate_cached_env(&self) {
         *self.cached_env.write().await = None;
     }
@@ -231,6 +259,16 @@ impl AcpSession {
         self.set_states(ProcessState::Starting, TurnState::Idle)
             .await?;
 
+        // Additional roots are project identities, never browser paths. Revalidate
+        // every one before process start; they intentionally never feed direnv.
+        let additional_roots = self.additional_roots().await?;
+        let mut effective_roots = vec![self.key.cwd.canonicalize()?];
+        effective_roots.extend(additional_roots.iter().cloned());
+        let mcp_servers = if let Some(store) = &self.store {
+            crate::acp::configured_mcp_servers(&store.mcp_servers(&self.id)?)?
+        } else {
+            Vec::new()
+        };
         let workspace_env = {
             let cached = self.cached_env.read().await.clone();
             match cached {
@@ -283,6 +321,7 @@ impl AcpSession {
             self.event_log.clone(),
             self.store.clone(),
             self.task_tracker.clone(),
+            effective_roots,
         )
         .await
         {
@@ -311,6 +350,50 @@ impl AcpSession {
             return Err(e);
         }
 
+        if !additional_roots.is_empty()
+            && !crate::acp::supports_additional_directories(&*client.capabilities.read().await)
+        {
+            client.shutdown().await;
+            *self.child_root_pid.write().await = None;
+            self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+            anyhow::bail!("This agent does not support additional workspace directories");
+        }
+        for config in self
+            .store
+            .as_ref()
+            .map(|s| s.mcp_servers(&self.id))
+            .transpose()?
+            .unwrap_or_default()
+        {
+            let supported = match config.transport {
+                crate::store::McpTransport::Stdio => true,
+                crate::store::McpTransport::Http => {
+                    client
+                        .capabilities
+                        .read()
+                        .await
+                        .pointer("/mcpCapabilities/http")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                }
+                crate::store::McpTransport::Sse => {
+                    client
+                        .capabilities
+                        .read()
+                        .await
+                        .pointer("/mcpCapabilities/sse")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                }
+            };
+            if !supported {
+                client.shutdown().await;
+                *self.child_root_pid.write().await = None;
+                self.set_states(ProcessState::Dead, TurnState::Idle).await?;
+                anyhow::bail!("The selected agent does not support this configured MCP transport");
+            }
+        }
+
         let saved = self
             .acp_session_id
             .read()
@@ -318,7 +401,12 @@ impl AcpSession {
             .as_ref()
             .map(|s| s.to_string());
         let new_session = match client
-            .open_session(&self.key.cwd, saved.as_deref())
+            .open_session(
+                &self.key.cwd,
+                saved.as_deref(),
+                mcp_servers,
+                additional_roots,
+            )
             .await
             .map_err(|error| {
                 if error.is::<RequestTimedOut>() {
@@ -745,6 +833,32 @@ impl AcpSession {
             .map_err(|_| anyhow::anyhow!("Chat is busy"))?;
         self.touch().await;
         self.ensure_running().await
+    }
+
+    /// Session-setup edits are serialized with turn admission.  A successful
+    /// edit tears down only an idle connection, retaining the durable ACP ID
+    /// so load/resume can restore it on the next connection.
+    pub async fn change_connection_config<F>(&self, edit: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(&crate::store::Store) -> crate::store::StoreResult<()>,
+    {
+        let _guard = self.turn_guard.try_lock().map_err(|_| {
+            anyhow::anyhow!("Wait for the active turn before changing connection configuration")
+        })?;
+        if self.process_state().await.is_running() && !self.supports_resume().await {
+            anyhow::bail!(
+                "This agent cannot restore its saved ACP session, so connection-level changes require a new chat"
+            );
+        }
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Chat is not persistent"))?;
+        edit(store)?;
+        if self.process_state().await.is_running() {
+            self.shutdown().await;
+        }
+        Ok(())
     }
 
     pub async fn stop(&self) -> anyhow::Result<()> {

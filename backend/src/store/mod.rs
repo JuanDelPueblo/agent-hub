@@ -9,11 +9,16 @@ mod chats;
 mod events;
 pub mod migrations;
 mod projects;
+mod session_config;
 mod validation;
 mod workspaces;
 
 pub use chats::Chat;
 pub use projects::Project;
+pub use session_config::{
+    AdditionalRoot, McpServerConfig, McpServerInput, McpServerView, McpTransport, SecretEdit,
+    SecretField, SecretInput,
+};
 pub use validation::{validate_name, validate_project_path};
 pub use workspaces::{ChatWorkspace, WorkspaceMode};
 
@@ -253,6 +258,38 @@ impl Store {
 
     pub fn list_project_workspaces(&self, project_id: &str) -> StoreResult<Vec<ChatWorkspace>> {
         workspaces::list_for_project(&self.conn.lock().unwrap(), project_id)
+    }
+
+    pub fn mcp_servers(&self, chat_id: &str) -> StoreResult<Vec<McpServerConfig>> {
+        session_config::mcp_list(&self.conn.lock().unwrap(), chat_id)
+    }
+    pub fn mcp_server(&self, chat_id: &str, id: &str) -> StoreResult<McpServerConfig> {
+        session_config::mcp_get(&self.conn.lock().unwrap(), chat_id, id)
+    }
+    pub fn insert_mcp_server(&self, value: &McpServerConfig) -> StoreResult<()> {
+        session_config::mcp_insert(&self.conn.lock().unwrap(), value)
+    }
+    pub fn update_mcp_server(&self, value: &McpServerConfig) -> StoreResult<()> {
+        session_config::mcp_update(&self.conn.lock().unwrap(), value)
+    }
+    pub fn delete_mcp_server(&self, chat_id: &str, id: &str) -> StoreResult<()> {
+        session_config::mcp_delete(&self.conn.lock().unwrap(), chat_id, id)
+    }
+    pub fn reorder_mcp_servers(&self, chat_id: &str, ids: &[String]) -> StoreResult<()> {
+        session_config::mcp_reorder(&mut self.conn.lock().unwrap(), chat_id, ids)
+    }
+    pub fn additional_roots(&self, chat_id: &str) -> StoreResult<Vec<AdditionalRoot>> {
+        session_config::roots_list(&self.conn.lock().unwrap(), chat_id)
+    }
+    pub fn replace_additional_roots(
+        &self,
+        chat_id: &str,
+        roots: &[AdditionalRoot],
+    ) -> StoreResult<()> {
+        session_config::roots_replace(&mut self.conn.lock().unwrap(), chat_id, roots)
+    }
+    pub fn additional_root_references_project(&self, project_id: &str) -> StoreResult<bool> {
+        session_config::roots_reference_project(&self.conn.lock().unwrap(), project_id)
     }
 
     /// Every installed-agent record, sorted by id. This is the durable half

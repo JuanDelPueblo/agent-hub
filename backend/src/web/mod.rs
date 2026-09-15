@@ -156,6 +156,22 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/chats/:id/usage", get(hub::chat_usage))
         .route("/api/chats/:id/session-info", get(hub::chat_session_info))
+        .route(
+            "/api/chats/:id/mcp-servers",
+            get(hub::mcp_servers).post(hub::create_mcp_server),
+        )
+        .route(
+            "/api/chats/:id/mcp-servers/order",
+            axum::routing::put(hub::reorder_mcp_servers),
+        )
+        .route(
+            "/api/chats/:id/mcp-servers/:server_id",
+            axum::routing::patch(hub::edit_mcp_server).delete(hub::delete_mcp_server),
+        )
+        .route(
+            "/api/chats/:id/additional-roots",
+            get(hub::additional_roots).put(hub::set_additional_roots),
+        )
         .route("/api/chats/:id/elicitations", get(hub::list_elicitations))
         .route(
             "/api/chats/:id/elicitations/:eid/respond",

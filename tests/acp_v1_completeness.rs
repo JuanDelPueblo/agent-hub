@@ -643,6 +643,7 @@ async fn timed_out_requests_emit_cancel_request() {
         Arc::new(EventLog::new(100)),
         None,
         tracker,
+        vec![tmp.path().canonicalize().unwrap()],
     )
     .await
     .unwrap();

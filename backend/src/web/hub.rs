@@ -464,6 +464,69 @@ pub async fn chat_session_info(
 ) -> Result<Json<Value>> {
     Ok(Json(hub(&s)?.chat_session_info(&id).await?))
 }
+
+pub async fn mcp_servers(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>> {
+    Ok(Json(json!(hub(&s)?.mcp_servers(&id)?)))
+}
+pub async fn create_mcp_server(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<crate::store::McpServerInput>,
+) -> Result<Json<Value>> {
+    Ok(Json(json!(hub(&s)?.create_mcp_server(&id, input).await?)))
+}
+pub async fn edit_mcp_server(
+    State(s): State<AppState>,
+    Path((id, server_id)): Path<(String, String)>,
+    Json(input): Json<crate::store::McpServerInput>,
+) -> Result<Json<Value>> {
+    Ok(Json(json!(
+        hub(&s)?.edit_mcp_server(&id, &server_id, input).await?
+    )))
+}
+pub async fn delete_mcp_server(
+    State(s): State<AppState>,
+    Path((id, server_id)): Path<(String, String)>,
+) -> Result<StatusCode> {
+    hub(&s)?.delete_mcp_server(&id, &server_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpOrder {
+    ids: Vec<String>,
+}
+pub async fn reorder_mcp_servers(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<McpOrder>,
+) -> Result<Json<Value>> {
+    Ok(Json(json!(
+        hub(&s)?.reorder_mcp_servers(&id, input.ids).await?
+    )))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdditionalRoots {
+    project_ids: Vec<String>,
+}
+pub async fn additional_roots(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    Ok(Json(json!(hub(&s)?.additional_roots(&id)?)))
+}
+pub async fn set_additional_roots(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<AdditionalRoots>,
+) -> Result<Json<Value>> {
+    Ok(Json(json!(
+        hub(&s)?
+            .set_additional_roots(&id, input.project_ids)
+            .await?
+    )))
+}
 pub async fn list_elicitations(
     State(s): State<AppState>,
     Path(id): Path<String>,

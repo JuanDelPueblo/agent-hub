@@ -59,6 +59,7 @@ pub struct CallbackHandler {
     agent_name: String,
     event_log: Arc<EventLog>,
     cwd: PathBuf,
+    roots: Vec<PathBuf>,
     base_env: Arc<HashMap<String, String>>,
     pub pending_permissions: Arc<RwLock<HashMap<String, PendingPermission>>>,
     pending_elicitations: Arc<RwLock<HashMap<String, PendingElicitation>>>,
@@ -82,12 +83,36 @@ impl CallbackHandler {
         base_env: Arc<HashMap<String, String>>,
         task_tracker: Arc<TerminalTaskTracker>,
     ) -> Self {
+        let roots = vec![cwd.canonicalize().unwrap_or_else(|_| cwd.clone())];
+        Self::new_with_roots(
+            policy,
+            session_id,
+            agent_name,
+            event_log,
+            cwd,
+            roots,
+            base_env,
+            task_tracker,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_roots(
+        policy: CallbackPolicy,
+        session_id: String,
+        agent_name: String,
+        event_log: Arc<EventLog>,
+        cwd: PathBuf,
+        roots: Vec<PathBuf>,
+        base_env: Arc<HashMap<String, String>>,
+        task_tracker: Arc<TerminalTaskTracker>,
+    ) -> Self {
         Self {
             policy: std::sync::RwLock::new(policy),
             session_id,
             agent_name,
             event_log,
             cwd,
+            roots,
             base_env,
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             pending_elicitations: Arc::new(RwLock::new(HashMap::new())),
@@ -139,13 +164,6 @@ impl CallbackHandler {
         path: &std::path::Path,
         allow_missing_leaf: bool,
     ) -> Result<(), agent_client_protocol_schema::Error> {
-        let canonical_cwd = self.cwd.canonicalize().map_err(|e| {
-            agent_client_protocol_schema::Error::new(
-                -32002,
-                format!("Failed to canonicalize cwd: {}", e),
-            )
-        })?;
-
         let canonical_target = if allow_missing_leaf && !path.exists() {
             let parent = path.parent().ok_or_else(|| {
                 agent_client_protocol_schema::Error::new(-32002, "Path has no parent")
@@ -169,14 +187,14 @@ impl CallbackHandler {
             })?
         };
 
-        if !canonical_target.starts_with(&canonical_cwd) {
+        if !self
+            .roots
+            .iter()
+            .any(|root| canonical_target.starts_with(root))
+        {
             return Err(agent_client_protocol_schema::Error::new(
                 -32003,
-                format!(
-                    "Path {} is outside allowed workspace {}",
-                    path.display(),
-                    self.cwd.display()
-                ),
+                "Path is outside the configured workspace roots",
             ));
         }
 
@@ -1348,6 +1366,65 @@ mod tests {
         handler.handle_write_file(req).await.unwrap();
 
         assert_eq!(std::fs::read_to_string(target).unwrap(), "created");
+    }
+
+    #[tokio::test]
+    async fn additional_roots_are_independently_authorized_and_symlink_escapes_are_rejected() {
+        let primary = tempfile::tempdir().unwrap();
+        let additional = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let event_log = Arc::new(crate::events::EventLog::new(100));
+        let tracker = Arc::new(TerminalTaskTracker::default());
+        let handler = CallbackHandler::new_with_roots(
+            CallbackPolicy::AutoApprove,
+            "test-session".into(),
+            "test-agent".into(),
+            event_log,
+            primary.path().to_path_buf(),
+            vec![
+                primary.path().canonicalize().unwrap(),
+                additional.path().canonicalize().unwrap(),
+            ],
+            Arc::new(std::env::vars().collect()),
+            tracker,
+        );
+        let additional_file = additional.path().join("shared.txt");
+        std::fs::write(&additional_file, "shared").unwrap();
+
+        let read = handler
+            .handle_read_file(ReadTextFileRequest::new("s1", additional_file.clone()))
+            .await
+            .unwrap();
+        assert_eq!(read.content, "shared");
+        handler
+            .handle_write_file(WriteTextFileRequest::new(
+                "s1",
+                additional_file.clone(),
+                "updated",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&additional_file).unwrap(),
+            "updated"
+        );
+
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, "outside").unwrap();
+        assert!(handler
+            .handle_read_file(ReadTextFileRequest::new("s1", outside_file.clone()))
+            .await
+            .is_err());
+
+        #[cfg(unix)]
+        {
+            let escape = additional.path().join("escape");
+            std::os::unix::fs::symlink(outside.path(), &escape).unwrap();
+            assert!(handler
+                .handle_read_file(ReadTextFileRequest::new("s1", escape.join("outside.txt")))
+                .await
+                .is_err());
+        }
     }
 
     #[tokio::test]
