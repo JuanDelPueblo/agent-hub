@@ -101,7 +101,7 @@ describe('AgentCardComponent', () => {
     expect(disabledButtons[1]?.disabled).toBe(true);
   });
 
-  it('shows logout when logout is supported', () => {
+  it('shows logout action when logout capability is supported without claiming an active session', () => {
     const logout = vi.fn();
     fixture.componentInstance.logout.subscribe(logout);
     render(summary('builtin'), {
@@ -111,7 +111,8 @@ describe('AgentCardComponent', () => {
       methods: [],
     });
     const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('Active session');
+    expect(text).not.toContain('Active session');
+    expect(text).toContain('Clear active credentials or stored session');
     const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
       .find((item) => (item as HTMLButtonElement).textContent?.includes('Log out')) as HTMLButtonElement;
     expect(button).toBeDefined();

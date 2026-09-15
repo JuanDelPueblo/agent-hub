@@ -68,9 +68,11 @@
       </div>
     } @else if (auth(); as state) {
       @if (logoutSupported()) {
-        <div class="auth-row">
-          <mat-icon>verified_user</mat-icon>
-          <span>Active session</span>
+        <div class="auth-row method">
+          <div class="method-text">
+            <span class="method-name">Log out</span>
+            <span class="method-description">Clear active credentials or stored session</span>
+          </div>
           <span class="spacer"></span>
           <button mat-stroked-button type="button" (click)="logout.emit()">Log out</button>
         </div>

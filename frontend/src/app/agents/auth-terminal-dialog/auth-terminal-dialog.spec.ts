@@ -62,11 +62,58 @@ describe('AuthTerminalDialogComponent', () => {
   let state: { loadAgentAuth: ReturnType<typeof vi.fn> };
   let dialogRef: { close: ReturnType<typeof vi.fn> };
   let originalWebSocket: unknown;
+  let origMatchMedia: unknown;
+  let origRaf: unknown;
+  let origCaf: unknown;
 
   beforeEach(async () => {
     originalWebSocket = (globalThis as unknown as { WebSocket: unknown }).WebSocket;
     FakeWebSocket.instances = [];
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeWebSocket;
+
+    origMatchMedia = (window as unknown as { matchMedia?: unknown }).matchMedia;
+    origRaf = (window as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    origCaf = (window as unknown as { cancelAnimationFrame?: unknown }).cancelAnimationFrame;
+
+    window.matchMedia = window.matchMedia || ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    window.requestAnimationFrame = window.requestAnimationFrame || ((cb: FrameRequestCallback) => setTimeout(cb, 0));
+    window.cancelAnimationFrame = window.cancelAnimationFrame || ((id: number) => clearTimeout(id));
+
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      get() {
+        if (this.classList?.contains('xterm-char-measure-element')) return 32 * 8;
+        return 640;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      get() {
+        if (this.classList?.contains('xterm-char-measure-element')) return 16;
+        return 384;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      get() {
+        return this.offsetWidth;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      get() {
+        return this.offsetHeight;
+      },
+      configurable: true,
+    });
 
     api = {
       agentAuthSocketUrl: vi.fn(() => 'ws://localhost/api/agent-auth/flow-1/ws'),
@@ -91,24 +138,56 @@ describe('AuthTerminalDialogComponent', () => {
 
   afterEach(() => {
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+
+    if (origMatchMedia) (window as unknown as { matchMedia?: unknown }).matchMedia = origMatchMedia;
+    else delete (window as unknown as { matchMedia?: unknown }).matchMedia;
+
+    if (origRaf) (window as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame = origRaf;
+    else delete (window as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+
+    if (origCaf) (window as unknown as { cancelAnimationFrame?: unknown }).cancelAnimationFrame = origCaf;
+    else delete (window as unknown as { cancelAnimationFrame?: unknown }).cancelAnimationFrame;
+
+    delete (HTMLElement.prototype as unknown as { offsetWidth?: unknown }).offsetWidth;
+    delete (HTMLElement.prototype as unknown as { offsetHeight?: unknown }).offsetHeight;
+    delete (HTMLElement.prototype as unknown as { clientWidth?: unknown }).clientWidth;
+    delete (HTMLElement.prototype as unknown as { clientHeight?: unknown }).clientHeight;
   });
 
   function socket(): FakeWebSocket {
     return FakeWebSocket.instances[0];
   }
 
-  it('opens the opaque flow socket and renders method name', () => {
+  it('opens the opaque flow socket, renders method name, and initializes terminal with usable dimensions', () => {
     expect(api.agentAuthSocketUrl).toHaveBeenCalledWith('flow-1');
     expect(fixture.nativeElement.textContent).toContain('API key');
+
+    const term = fixture.componentInstance.term;
+    expect(term).toBeDefined();
+    expect(term!.cols).toBeGreaterThanOrEqual(20);
+    expect(term!.rows).toBeGreaterThanOrEqual(6);
+
+    const terminalEl = fixture.nativeElement.querySelector('.terminal') as HTMLElement;
+    expect(terminalEl).toBeTruthy();
+    const screen = terminalEl.querySelector('.xterm-screen') as HTMLElement;
+    const viewport = terminalEl.querySelector('.xterm-viewport') as HTMLElement;
+    expect(screen).toBeTruthy();
+    expect(viewport).toBeTruthy();
+
+    const screenWidth = parseInt(screen.style.width, 10) || screen.clientWidth;
+    const screenHeight = parseInt(screen.style.height, 10) || screen.clientHeight;
+    expect(screenWidth).toBeGreaterThan(0);
+    expect(screenHeight).toBeGreaterThan(0);
+    expect(viewport.clientWidth).toBeGreaterThan(0);
+    expect(viewport.clientHeight).toBeGreaterThan(0);
+
     socket().open();
     const sent = socket().sent.map((frame) => JSON.parse(frame));
-    expect(sent.some((frame) => frame.type === 'resize')).toBe(true);
+    expect(sent.some((frame) => frame.type === 'resize' && frame.cols > 0 && frame.rows > 0)).toBe(true);
 
-    if (fixture.componentInstance.term) {
-      const writeSpy = vi.spyOn(fixture.componentInstance.term, 'write');
-      socket().emit({ type: 'output', data: 'Sign in.\n' });
-      expect(writeSpy).toHaveBeenCalledWith('Sign in.\n');
-    }
+    const writeSpy = vi.spyOn(term!, 'write');
+    socket().emit({ type: 'output', data: 'Sign in.\n' });
+    expect(writeSpy).toHaveBeenCalledWith('Sign in.\n');
   });
 
   it('sends input and resize frames', () => {
