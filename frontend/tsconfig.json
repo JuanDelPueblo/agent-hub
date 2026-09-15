@@ -13,6 +13,8 @@
     "target": "ES2022",
     "module": "preserve",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
     "importHelpers": true,
     "useDefineForClassFields": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]

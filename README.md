@@ -444,11 +444,11 @@ should be stripped but injected nowhere belong in
 
 ```sh
 nix build .#batey-oci
-docker load -i result  # prints the tag, e.g. batey:0.3.0
+docker load -i result  # prints the tag, e.g. batey:0.4.0
 docker run --rm -p 127.0.0.1:8765:8765 \
   -v batey-data:/data \
   -v "$PWD/projects:/projects" \
-  batey:0.3.0
+  batey:0.4.0
 ```
 
 The image is built with `dockerTools` from the canonical package, not a

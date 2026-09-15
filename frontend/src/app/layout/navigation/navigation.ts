@@ -17,6 +17,7 @@ import { ProjectDialogComponent } from '../../projects/project-dialog/project-di
 import { ConnectionStatusComponent } from '../connection-status/connection-status';
 import { ThemeService } from '../../core/theme.service';
 import { ActivityClockService } from '../../shared/chat-status-badge/activity-clock.service';
+import { APP_VERSION } from '../../version';
 
 /**
  * The navigation drawer for a selected project. It holds the project switcher
@@ -44,6 +45,7 @@ import { ActivityClockService } from '../../shared/chat-status-badge/activity-cl
 })
 export class NavigationComponent {
   readonly closeRequested = output<void>();
+  readonly appVersion = APP_VERSION;
   readonly state = inject(AppStateService);
   readonly theme = inject(ThemeService);
   private readonly dialog = inject(MatDialog);

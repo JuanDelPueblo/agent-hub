@@ -9,7 +9,7 @@ pkgs.buildNpmPackage {
   pname = "batey-frontend";
   inherit version;
   src = ../frontend;
-  npmDepsHash = "sha256-GYGyh6hphURRcrUlhpmQs4LZnyz40MoFtf2q701/uLM=";
+  npmDepsHash = "sha256-5d2Cc4F0UONLi0pGH44/xmKOdi7b8eiYC5bqhTb/ADg=";
   preBuild = ''
     export NG_CLI_ANALYTICS=false
   '';

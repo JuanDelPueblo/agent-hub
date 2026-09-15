@@ -6,6 +6,7 @@ import { ThemeService } from '../../core/theme.service';
 import { Router, provideRouter } from '@angular/router';
 import { MatDialog } from '@angular/material/dialog';
 import { signal } from '@angular/core';
+import { APP_VERSION } from '../../version';
 
 describe('NavigationComponent DOM check', () => {
   let fixture: ComponentFixture<NavigationComponent>;
@@ -110,6 +111,11 @@ describe('NavigationComponent DOM check', () => {
     const link = fixture.nativeElement.querySelector('a[href="/agents"]') as HTMLAnchorElement;
     expect(link).toBeTruthy();
     expect(link.getAttribute('aria-label')).toBe('Manage agents');
+  });
+
+  it('shows the version from the frontend package metadata', () => {
+    const version = fixture.nativeElement.querySelector('.version');
+    expect(version?.textContent?.trim()).toBe(`v${APP_VERSION}`);
   });
 
   it('capitalizes agent names for display only', () => {
