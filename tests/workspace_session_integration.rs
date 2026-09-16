@@ -456,3 +456,99 @@ async fn legacy_sessions_keep_the_project_directory() {
     session.ask("hello".into(), None).await.unwrap();
     fixture.manager.shutdown_all().await;
 }
+
+/// T132 regression: a legacy (pre-workspace-metadata) chat whose registered
+/// project directory no longer exists must fail with a message that names
+/// the path and explains the failure, never a bare OS error string.
+#[tokio::test]
+async fn legacy_chat_with_deleted_project_directory_fails_with_contextual_error() {
+    let fixture = Fixture::new();
+    let project = fixture.project();
+    let chat = fixture
+        .store
+        .create_chat(project.id.clone(), "codex".into(), None)
+        .unwrap();
+    let session = fixture.manager.get_by_id(&chat.id).await.unwrap();
+    std::fs::remove_dir_all(&project.path).unwrap();
+
+    let error = session.ask("hello".into(), None).await.unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains(&project.path),
+        "message should name the missing path: {message}"
+    );
+    assert!(
+        message.contains("is not available in this environment"),
+        "message should explain the failure, not just relay the bare OS error: {message}"
+    );
+    fixture.manager.shutdown_all().await;
+}
+
+/// A managed chat's registered (source) project directory disappearing is a
+/// different condition from its worktree disappearing, and must keep the
+/// existing distinct message rather than a bare OS error.
+#[tokio::test]
+async fn managed_chat_with_deleted_registered_project_reports_missing_project() {
+    let fixture = Fixture::new();
+    let (chat, _metadata) = fixture.managed_chat();
+    let session = fixture.manager.get_by_id(&chat.id).await.unwrap();
+    std::fs::remove_dir_all(fixture.repository.join("nested")).unwrap();
+
+    let error = session.ask("hello".into(), None).await.unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("managed workspace repository no longer exists"));
+    fixture.manager.shutdown_all().await;
+}
+
+/// A managed worktree that is itself intact and correctly registered, but
+/// whose effective project subdirectory was deleted from inside it, must be
+/// reported as a missing effective directory rather than a missing worktree
+/// or a bare OS error.
+#[tokio::test]
+async fn managed_worktree_with_deleted_project_subdirectory_reports_effective_directory() {
+    let fixture = Fixture::new();
+    let (chat, metadata) = fixture.managed_chat();
+    let session = fixture.manager.get_by_id(&chat.id).await.unwrap();
+    std::fs::remove_dir_all(Path::new(&metadata.workspace_path).join("nested")).unwrap();
+
+    let error = session.ask("hello".into(), None).await.unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("effective workspace directory") && message.contains("does not exist"),
+        "unexpected message: {message}"
+    );
+    fixture.manager.shutdown_all().await;
+}
+
+/// A genuinely missing agent executable must keep its own classification
+/// (T129) and never be reported as a workspace failure, even though both
+/// surface as ENOENT at the OS level.
+#[tokio::test]
+async fn missing_agent_executable_is_not_reclassified_as_a_workspace_error() {
+    let fixture = Fixture::new();
+    let project = fixture.project();
+    let chat = fixture
+        .store
+        .create_chat(project.id, "missing".into(), None)
+        .unwrap();
+    let agents = Arc::new(AgentRegistry::new([AgentDefinition::new(
+        "missing",
+        "batey-test-definitely-absent-t132",
+    )]));
+    let events = Arc::new(EventLog::persistent(fixture.store.clone()).unwrap());
+    let manager = SessionManager::with_store(agents, events, Some(fixture.store.clone()));
+
+    let session = manager.get_by_id(&chat.id).await.unwrap();
+    let error = session.ask("hello".into(), None).await.unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("executable not found"),
+        "unexpected message: {message}"
+    );
+    assert!(
+        !message.to_lowercase().contains("workspace"),
+        "an executable failure was misreported as a workspace error: {message}"
+    );
+    manager.shutdown_all().await;
+}

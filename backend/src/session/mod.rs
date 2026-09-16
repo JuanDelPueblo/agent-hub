@@ -262,7 +262,12 @@ impl AcpSession {
         // Additional roots are project identities, never browser paths. Revalidate
         // every one before process start; they intentionally never feed direnv.
         let additional_roots = self.additional_roots().await?;
-        let mut effective_roots = vec![self.key.cwd.canonicalize()?];
+        let mut effective_roots = vec![self.key.cwd.canonicalize().map_err(|e| {
+            anyhow::anyhow!(
+                "Workspace directory {} is not available: {e}",
+                self.key.cwd.display()
+            )
+        })?];
         effective_roots.extend(additional_roots.iter().cloned());
         let mcp_servers = if let Some(store) = &self.store {
             crate::acp::configured_mcp_servers(&store.mcp_servers(&self.id)?)?
@@ -1406,8 +1411,17 @@ pub(crate) fn validate_persistent_workspace(
 ) -> anyhow::Result<()> {
     let Some(workspace) = workspace else {
         // Keep the pre-workspace behavior for chats created by older builds.
+        let canonical_project_path = Path::new(&project.path).canonicalize().map_err(|e| {
+            anyhow::anyhow!(
+                "Registered project path {} is not available in this environment ({e}). \
+                 It may have been deleted, or this deployment does not have access to it \
+                 (for example, a path from a different host or container). Update or \
+                 re-register the project.",
+                project.path
+            )
+        })?;
         anyhow::ensure!(
-            Path::new(&project.path).canonicalize()? == key_cwd,
+            canonical_project_path == key_cwd,
             "Project directory changed; review the project path"
         );
         return Ok(());
