@@ -151,6 +151,27 @@ export class AgentsPageComponent implements OnInit {
     }
   }
 
+  async editEnvironment(agent: AgentSummary): Promise<void> {
+    this.actionError.set('');
+    this.notice.set('');
+    try {
+      const presence = await this.state.loadAgentEnv(agent.id);
+      const { AgentEnvDialogComponent } = await import(
+        '../../agents/agent-env-dialog/agent-env-dialog'
+      );
+      const ref = this.dialog.open(AgentEnvDialogComponent, {
+        data: { agent, presence },
+        width: 'min(720px, calc(100vw - 24px))',
+        maxWidth: '96vw',
+      });
+      ref.afterClosed().subscribe((saved) => {
+        if (saved) this.notice.set(`Environment saved for ${agent.display_name}.`);
+      });
+    } catch (error: unknown) {
+      this.actionError.set(this.message(error, `Failed to load environment for ${agent.display_name}`));
+    }
+  }
+
   async removeCustom(agent: AgentSummary): Promise<void> {
     const confirmed = await this.confirm(
       `Remove ${agent.display_name}`,

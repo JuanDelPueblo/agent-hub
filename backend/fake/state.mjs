@@ -282,6 +282,9 @@ export class FakeState {
     this.flows = new Map();
     // Editable Batey-managed definitions, including their launch environment.
     this.customDetails = new Map();
+    // Private per-agent environment overrides: agent id -> Map(name -> value).
+    // Presence views never expose values, mirroring the Rust redaction.
+    this.agentEnv = new Map();
     this.registryFetched = false;
     this.registryFetchedAt = null;
     this.registryRefreshError = null;
@@ -628,8 +631,68 @@ export class FakeState {
     AGENTS.splice(index, 1);
     this.customDetails.delete(id);
     this.authByAgent.delete(id);
+    this.agentEnv.delete(id);
     this.metadataChanged();
     return { id, deleted: true, retained_chats: 0 };
+  }
+
+  agentEnvPresence(id) {
+    const agent = this.agent(id);
+    if (!agent) throw Object.assign(new Error('Agent not found'), { status: 404 });
+    if (agent.mutability !== 'editable' && agent.mutability !== 'registry_managed') {
+      throw Object.assign(
+        new Error(`Agent '${id}' is not an installed agent. Only Registry-managed and Batey-managed agents take private environment overrides.`),
+        { status: 409 },
+      );
+    }
+    const values = this.agentEnv.get(id) ?? new Map();
+    return [...values.keys()].sort().map((name) => ({ name, present: true }));
+  }
+
+  applyAgentEnvEdits(id, edits) {
+    this.agentEnvPresence(id);
+    let values = this.agentEnv.get(id);
+    if (!values) {
+      values = new Map();
+      this.agentEnv.set(id, values);
+    }
+    for (const edit of edits ?? []) {
+      const rawName = typeof edit.name === 'string' ? edit.name.trim() : '';
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(rawName) || rawName.length > 256) {
+        throw Object.assign(
+          new Error(`The environment variable '${rawName}' has an unusable name.`),
+          { status: 400 },
+        );
+      }
+      const action = edit.action ?? 'replace';
+      if (action === 'keep') {
+        if (edit.value !== undefined) {
+          throw Object.assign(new Error(`The environment variable '${rawName}' is kept, so it takes no value.`), { status: 400 });
+        }
+        if (!values.has(rawName)) {
+          throw Object.assign(new Error(`Cannot keep the unknown environment variable '${rawName}'.`), { status: 400 });
+        }
+      } else if (action === 'remove') {
+        if (edit.value !== undefined) {
+          throw Object.assign(new Error(`The environment variable '${rawName}' is removed, so it takes no value.`), { status: 400 });
+        }
+        values.delete(rawName);
+      } else if (action === 'replace') {
+        if (typeof edit.value !== 'string') {
+          throw Object.assign(new Error(`A replacement value is required for the environment variable '${rawName}'.`), { status: 400 });
+        }
+        if (edit.value.includes('\0')) {
+          throw Object.assign(new Error('An environment value holds no null byte.'), { status: 400 });
+        }
+        if (!values.has(rawName) && values.size >= 256) {
+          throw Object.assign(new Error('An agent takes at most 256 environment overrides.'), { status: 400 });
+        }
+        values.set(rawName, edit.value);
+      } else {
+        throw Object.assign(new Error(`Unknown environment action '${action}'.`), { status: 400 });
+      }
+    }
+    return this.agentEnvPresence(id);
   }
 
   // -------------------------------------------------------- ACP Registry

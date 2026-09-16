@@ -42,6 +42,8 @@ function makeApi() {
       method_id: 'm',
       state: 'running' as const,
     })),
+    fetchAgentEnv: vi.fn(async () => [{ name: 'CODEX_API_KEY', present: true }]),
+    updateAgentEnv: vi.fn(async () => [{ name: 'CODEX_API_KEY', present: true }]),
   };
 }
 
@@ -147,5 +149,19 @@ describe('AgentStore', () => {
     expect(flow.flow_id).toBe('f');
     expect(api.startTerminalAuth).toHaveBeenCalledWith('codex', 'api-key');
     expect(api.fetchAgentAuth).toHaveBeenCalledWith('codex');
+  });
+
+  it('loads and saves private environment as presence only', async () => {
+    const presence = await store.loadAgentEnv('codex');
+    expect(api.fetchAgentEnv).toHaveBeenCalledWith('codex');
+    expect(presence).toEqual([{ name: 'CODEX_API_KEY', present: true }]);
+    expect(store.envByAgent()['codex']).toEqual([{ name: 'CODEX_API_KEY', present: true }]);
+    expect(JSON.stringify(store.envByAgent())).not.toContain('secret');
+
+    const edits = [{ name: 'CODEX_API_KEY', action: 'replace' as const, value: 'secret' }];
+    await store.updateAgentEnv('codex', edits);
+    expect(api.updateAgentEnv).toHaveBeenCalledWith('codex', edits);
+    // The stored response is presence only; values never enter frontend state.
+    expect(JSON.stringify(store.envByAgent()['codex'])).not.toContain('secret');
   });
 });

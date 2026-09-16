@@ -110,6 +110,19 @@ describe('ApiService', () => {
     expect(remove.request.method).toBe('DELETE');
     remove.flush({ id: 'native-agent', deleted: true, retained_chats: 0 });
     await expect(removePromise).resolves.toMatchObject({ deleted: true });
+
+    const envPromise = api.fetchAgentEnv('codex');
+    const env = http.expectOne('/api/agents/codex/environment');
+    expect(env.request.method).toBe('GET');
+    env.flush([{ name: 'CODEX_API_KEY', present: true }]);
+    await expect(envPromise).resolves.toEqual([{ name: 'CODEX_API_KEY', present: true }]);
+
+    const savePromise = api.updateAgentEnv('codex', [{ name: 'CODEX_API_KEY', action: 'replace', value: 'secret' }]);
+    const save = http.expectOne('/api/agents/codex/environment');
+    expect(save.request.method).toBe('PATCH');
+    expect(save.request.body).toEqual([{ name: 'CODEX_API_KEY', action: 'replace', value: 'secret' }]);
+    save.flush([{ name: 'CODEX_API_KEY', present: true }]);
+    await expect(savePromise).resolves.toEqual([{ name: 'CODEX_API_KEY', present: true }]);
   });
 
   it('preserves the T111 authentication contract', async () => {

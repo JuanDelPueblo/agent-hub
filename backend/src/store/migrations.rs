@@ -108,6 +108,19 @@ pub const MIGRATIONS: &[Migration] = &[
         );",
         precondition: None,
     },
+    Migration {
+        version: 3,
+        name: "agent_env_overrides",
+        sql: "
+        CREATE TABLE IF NOT EXISTS agent_env_overrides (
+            agent_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (agent_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_env_overrides_agent ON agent_env_overrides(agent_id);",
+        precondition: None,
+    },
 ];
 
 pub fn latest_version() -> i64 {
@@ -246,6 +259,7 @@ mod tests {
         assert_eq!(user_version(&conn).unwrap(), latest_version());
         let tables = table_names(&conn);
         for expected in [
+            "agent_env_overrides",
             "chats",
             "chat_additional_roots",
             "chat_mcp_servers",

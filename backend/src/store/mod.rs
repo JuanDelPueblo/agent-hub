@@ -4,6 +4,7 @@
 //! the SQL for one entity and takes a `&Connection`, so this facade decides how
 //! long the lock is held and which calls share a transaction. Domain modules
 //! never take the lock themselves, because `std::sync::Mutex` is not reentrant.
+mod agent_env;
 mod agents;
 mod chats;
 mod envrc_grants;
@@ -14,6 +15,10 @@ mod session_config;
 mod validation;
 mod workspaces;
 
+pub use agent_env::{
+    is_valid_env_name, AgentEnvAction, AgentEnvEdit, AgentEnvPresence, MAX_AGENT_ENV_VALUE_LENGTH,
+    MAX_AGENT_ENV_VARS,
+};
 pub use chats::Chat;
 pub use envrc_grants::ProjectEnvrcGrant;
 pub use projects::Project;
@@ -359,6 +364,37 @@ impl Store {
         &self,
     ) -> StoreResult<Vec<(String, crate::agents::AgentSource)>> {
         agents::sources(&self.conn.lock().unwrap())
+    }
+
+    /// Private per-agent environment values, for the process-spawn path only.
+    /// API output must use `agent_env_presence`.
+    pub fn agent_env(
+        &self,
+        agent_id: &str,
+    ) -> StoreResult<std::collections::BTreeMap<String, String>> {
+        agent_env::list(&self.conn.lock().unwrap(), agent_id)
+    }
+
+    /// Names and presence only, sorted by name. Values never leave the store.
+    pub fn agent_env_presence(&self, agent_id: &str) -> StoreResult<Vec<AgentEnvPresence>> {
+        agent_env::presence(&self.conn.lock().unwrap(), agent_id)
+    }
+
+    /// Applies `Keep`/`Replace`/`Remove` edits and returns the presence view.
+    pub fn apply_agent_env_edits(
+        &self,
+        agent_id: &str,
+        edits: &[AgentEnvEdit],
+    ) -> StoreResult<Vec<AgentEnvPresence>> {
+        let conn = self.conn.lock().unwrap();
+        agent_env::apply_edits(&conn, agent_id, edits)?;
+        agent_env::presence(&conn, agent_id)
+    }
+
+    /// Deletes every override for one agent. Uninstall calls this when the
+    /// installed row goes away.
+    pub fn delete_agent_env_for_agent(&self, agent_id: &str) -> StoreResult<()> {
+        agent_env::delete_for_agent(&self.conn.lock().unwrap(), agent_id)
     }
 
     pub fn save_event(&self, event: &crate::events::SessionEvent) -> StoreResult<()> {

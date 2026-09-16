@@ -98,6 +98,10 @@ export class AppStateService {
   updateAgent(id: string) { return this.agentStore.updateAgent(id); }
   removeAgent(id: string) { return this.agentStore.removeAgent(id); }
   fetchAgentDetail(id: string) { return this.agentStore.fetchDetail(id); }
+  loadAgentEnv(id: string) { return this.agentStore.loadAgentEnv(id); }
+  updateAgentEnv(id: string, edits: import('../core/api/types').AgentEnvEdit[]) {
+    return this.agentStore.updateAgentEnv(id, edits);
+  }
   validateCustomAgent(input: import('../core/api/types').CustomAgentInput) { return this.agentStore.validateCustomAgent(input); }
   createCustomAgent(input: import('../core/api/types').CustomAgentInput) { return this.agentStore.createCustomAgent(input); }
   editCustomAgent(id: string, input: import('../core/api/types').CustomAgentInput) { return this.agentStore.editCustomAgent(id, input); }

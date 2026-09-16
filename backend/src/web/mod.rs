@@ -206,6 +206,10 @@ pub fn router(state: AppState) -> Router {
                 .delete(agents::remove_agent),
         )
         .route("/api/agents/:id/update", post(agents::update_agent))
+        .route(
+            "/api/agents/:id/environment",
+            get(agents::agent_env).patch(agents::update_agent_env),
+        )
         // Agent-level authentication. The static `terminal` segment comes
         // before the method id, so a terminal start never matches the
         // `authenticate` route.

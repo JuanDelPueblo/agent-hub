@@ -312,19 +312,26 @@ impl AcpSession {
             }
         };
         // Scrub every stashed secret name first, then inject only this
-        // agent's pass_env. Without the scrub, a secret that reached the
-        // workspace base (for example through an environment file) would leak
-        // to every agent and to web-managed definitions.
+        // agent's pass_env, then apply this agent's private overrides.
+        // Without the scrub, a secret that reached the workspace base (for
+        // example through an environment file) would leak to every agent and
+        // to web-managed definitions. Overrides win even over a stashed name
+        // or a `direnv` value, but only for the agent id that owns them.
         let secrets = self
             .secret_env
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_default();
-        let agent_env = crate::workspace_env::resolve_agent_env(
+        let overrides: HashMap<String, String> = match &self.store {
+            Some(store) => store.agent_env(&self.key.agent)?.into_iter().collect(),
+            None => HashMap::new(),
+        };
+        let agent_env = crate::workspace_env::resolve_agent_env_with_overrides(
             &workspace_env,
             &self.runtime.launch.env,
             &self.runtime.launch.pass_env,
             &secrets,
+            &overrides,
         );
         let policy = if let Some(store) = &self.store {
             store.chat(&self.id)?.permission_policy

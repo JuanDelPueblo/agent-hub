@@ -129,6 +129,10 @@ export interface UpdateOutcome {
   previous_install_dir?: string | null;
 }
 
+export interface AgentEnvPresence { name: string; present: boolean; }
+export type AgentEnvAction = 'keep' | 'replace' | 'remove';
+export interface AgentEnvEdit { name: string; value?: string; action?: AgentEnvAction; }
+
 export interface RemoveOutcome {
   id: string;
   deleted: boolean;

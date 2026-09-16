@@ -419,12 +419,57 @@ pub fn resolve_agent_env(
     pass_env: &[String],
     secrets: &HashMap<String, String>,
 ) -> HashMap<String, String> {
+    resolve_agent_env_with_overrides(
+        workspace_env,
+        launch_env,
+        pass_env,
+        secrets,
+        &HashMap::new(),
+    )
+}
+
+/// The complete environment with Batey-owned per-agent overrides.
+///
+/// Deterministic precedence, lowest to highest:
+///
+/// - the base/workspace environment (inherited process env plus `direnv`);
+/// - the installed Registry/definition launch environment;
+/// - the host-secret `pass_env` injection for names this agent lists;
+/// - the Batey private per-agent override for this agent id, which wins even
+///   when the same name is a stashed host secret or came from `direnv`;
+/// - the auth-method-specific terminal environment, applied later by
+///   `terminal_command` for terminal authentication only.
+///
+/// Overrides are scoped by Batey agent id: a value for Codex never reaches
+/// Claude, OpenCode, Antigravity, Copilot, MCP servers, terminal tasks, or
+/// unrelated processes, because each spawn passes only its own agent's map.
+/// A workspace `direnv` cannot reintroduce a globally inherited secret: the
+/// scrub step removes every stashed name before overrides are applied, and
+/// overrides only add back the names this agent owns.
+pub fn resolve_agent_env_with_overrides(
+    workspace_env: &HashMap<String, String>,
+    launch_env: &HashMap<String, String>,
+    pass_env: &[String],
+    secrets: &HashMap<String, String>,
+    overrides: &HashMap<String, String>,
+) -> HashMap<String, String> {
     let merged = merge_launch_env(workspace_env, launch_env);
     let scrubbed: HashMap<String, String> = merged
         .into_iter()
         .filter(|(name, _)| !secrets.contains_key(name))
         .collect();
-    apply_pass_env_from(scrubbed, pass_env, secrets)
+    let with_pass = apply_pass_env_from(scrubbed, pass_env, secrets);
+    apply_overrides(with_pass, overrides)
+}
+
+fn apply_overrides(
+    mut base: HashMap<String, String>,
+    overrides: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    for (name, value) in overrides {
+        base.insert(name.clone(), value.clone());
+    }
+    base
 }
 
 pub(crate) fn apply_pass_env_from(
@@ -583,6 +628,49 @@ printf '{%s}\n' "$json"
         assert!(!env_plain.contains_key("AGENT_A_TOKEN"));
         assert!(!env_plain.contains_key("AGENT_B_TOKEN"));
         assert_eq!(env_plain.get("PATH").map(String::as_str), Some("/bin"));
+    }
+
+    #[test]
+    fn per_agent_overrides_win_with_deterministic_precedence() {
+        let workspace: HashMap<String, String> = HashMap::from([
+            ("SHARED".to_string(), "workspace".to_string()),
+            ("WORKSPACE_ONLY".to_string(), "w".to_string()),
+            ("DIRTY_SECRET".to_string(), "from-workspace".to_string()),
+        ]);
+        let launch: HashMap<String, String> = HashMap::from([
+            ("SHARED".to_string(), "launch".to_string()),
+            ("LAUNCH_ONLY".to_string(), "l".to_string()),
+        ]);
+        let secrets: HashMap<String, String> =
+            HashMap::from([("DIRTY_SECRET".to_string(), "stashed".to_string())]);
+        let overrides: HashMap<String, String> = HashMap::from([
+            ("SHARED".to_string(), "override".to_string()),
+            ("CODEX_API_KEY".to_string(), "private".to_string()),
+            // An override wins even when the name is a stashed host secret.
+            ("DIRTY_SECRET".to_string(), "override-wins".to_string()),
+        ]);
+
+        let env = resolve_agent_env_with_overrides(&workspace, &launch, &[], &secrets, &overrides);
+        assert_eq!(env.get("SHARED").map(String::as_str), Some("override"));
+        assert_eq!(env.get("WORKSPACE_ONLY").map(String::as_str), Some("w"));
+        assert_eq!(env.get("LAUNCH_ONLY").map(String::as_str), Some("l"));
+        assert_eq!(
+            env.get("CODEX_API_KEY").map(String::as_str),
+            Some("private")
+        );
+        assert_eq!(
+            env.get("DIRTY_SECRET").map(String::as_str),
+            Some("override-wins")
+        );
+
+        // A sibling agent with no overrides never observes them.
+        let sibling =
+            resolve_agent_env_with_overrides(&workspace, &launch, &[], &secrets, &HashMap::new());
+        assert!(!sibling.contains_key("CODEX_API_KEY"));
+        assert!(
+            !sibling.contains_key("DIRTY_SECRET")
+                || sibling.get("DIRTY_SECRET").map(String::as_str) != Some("override-wins")
+        );
     }
 
     #[test]

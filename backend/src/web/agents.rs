@@ -6,8 +6,8 @@
 use super::hub::{hub, Result};
 use super::AppState;
 use crate::agents::{
-    AgentManagementDetail, AgentSummary, CustomAgentInput, InstallRequest, RegistryCatalogView,
-    RemoveOutcome, UpdateOutcome, ValidationReport,
+    AgentEnvEdit, AgentEnvPresence, AgentManagementDetail, AgentSummary, CustomAgentInput,
+    InstallRequest, RegistryCatalogView, RemoveOutcome, UpdateOutcome, ValidationReport,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -59,6 +59,21 @@ pub async fn agent_detail(
     Path(id): Path<String>,
 ) -> Result<Json<AgentManagementDetail>> {
     Ok(Json(hub(&s)?.agent_management_detail(&id)?))
+}
+
+pub async fn agent_env(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<AgentEnvPresence>>> {
+    Ok(Json(hub(&s)?.agent_env_presence(&id)?))
+}
+
+pub async fn update_agent_env(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(edits): Json<Vec<AgentEnvEdit>>,
+) -> Result<Json<Vec<AgentEnvPresence>>> {
+    Ok(Json(hub(&s)?.update_agent_env(&id, edits).await?))
 }
 
 pub async fn remove_agent(

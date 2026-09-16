@@ -145,6 +145,9 @@
   </section>
 
   <footer class="card-actions">
+    @if (canManageEnv()) {
+      <button mat-button type="button" (click)="environment.emit()"><mat-icon>key</mat-icon> Environment</button>
+    }
     @switch (mutability()) {
       @case ('editable') {
         <button mat-button type="button" (click)="edit.emit()"><mat-icon>edit</mat-icon> Edit</button>

@@ -341,6 +341,13 @@ impl AgentAuthService {
         });
     }
 
+    /// Drops the cached authentication state of one agent. Environment
+    /// overrides call this after a change, so the next probe observes the new
+    /// launch environment instead of the stale 15-second entry.
+    pub fn invalidate_agent(&self, agent_id: &str) {
+        self.invalidate_auth_cache(agent_id);
+    }
+
     /// Drops the cached state of one agent and records when it happened.
     ///
     /// A terminal success calls this inside the transition to `succeeded`.
@@ -483,17 +490,41 @@ impl AgentAuthService {
     /// The sanitized environment one authentication process starts with.
     ///
     /// The base is the Batey process environment, which startup already
-    /// emptied of every stashed secret. `resolve_agent_env` scrubs the stashed
-    /// names again and injects only the names this agent's `pass_env` lists,
-    /// so one agent never observes another agent's secret.
+    /// emptied of every stashed secret. The resolver scrubs the stashed names
+    /// again, injects only the names this agent's `pass_env` lists, and then
+    /// applies this agent's private overrides, so one agent never observes
+    /// another agent's value. Terminal authentication later overlays the
+    /// method-specific environment on top of this base.
     fn agent_env(&self, runtime: &AgentRuntime) -> HashMap<String, String> {
         let base: HashMap<String, String> = std::env::vars().collect();
-        crate::workspace_env::resolve_agent_env(
+        let overrides = self.agent_env_overrides(&runtime.id);
+        crate::workspace_env::resolve_agent_env_with_overrides(
             &base,
             &runtime.launch.env,
             &runtime.launch.pass_env,
             &self.sessions.secret_env(),
+            &overrides,
         )
+    }
+
+    /// Private per-agent overrides for one agent id. A store failure leaves
+    /// the process without overrides rather than without authentication, and
+    /// values never reach logs or errors.
+    fn agent_env_overrides(&self, agent_id: &str) -> HashMap<String, String> {
+        match self.sessions.store.as_ref() {
+            Some(store) => match store.agent_env(agent_id) {
+                Ok(values) => values.into_iter().collect(),
+                Err(error) => {
+                    tracing::warn!(
+                        agent = agent_id,
+                        %error,
+                        "Could not read agent environment overrides; continuing without them"
+                    );
+                    HashMap::new()
+                }
+            },
+            None => HashMap::new(),
+        }
     }
 
     fn work_dir(&self) -> AuthResult<PathBuf> {

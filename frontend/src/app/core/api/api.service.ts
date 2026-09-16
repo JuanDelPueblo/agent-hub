@@ -338,6 +338,22 @@ export class ApiService {
     });
   }
 
+  fetchAgentEnv(id: string): Promise<import('./types').AgentEnvPresence[]> {
+    return this.request<import('./types').AgentEnvPresence[]>(
+      `/api/agents/${encodeURIComponent(id)}/environment`,
+    );
+  }
+
+  updateAgentEnv(
+    id: string,
+    edits: import('./types').AgentEnvEdit[],
+  ): Promise<import('./types').AgentEnvPresence[]> {
+    return this.request<import('./types').AgentEnvPresence[]>(
+      `/api/agents/${encodeURIComponent(id)}/environment`,
+      { method: 'PATCH', body: edits },
+    );
+  }
+
   fetchAgentAuth(id: string): Promise<AgentAuthState> {
     return this.request<AgentAuthState>(`/api/agents/${encodeURIComponent(id)}/auth`);
   }

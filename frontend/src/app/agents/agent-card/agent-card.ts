@@ -36,6 +36,7 @@ export class AgentCardComponent {
   readonly remove = output<void>();
   readonly update = output<void>();
   readonly uninstall = output<void>();
+  readonly environment = output<void>();
   readonly retryAuth = output<void>();
 
   readonly mutability = computed<AgentMutability>(() => {
@@ -49,6 +50,10 @@ export class AgentCardComponent {
   readonly targeted = input(false);
   readonly available = computed(() => this.agent().availability === 'available');
   readonly logoutSupported = computed(() => this.auth()?.logout_supported === true);
+  readonly canManageEnv = computed(() => {
+    const mutability = this.mutability();
+    return mutability === 'editable' || mutability === 'registry_managed';
+  });
 
   sourceLabel(source: string): string {
     switch (source) {

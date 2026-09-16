@@ -41,6 +41,7 @@ describe('AgentCardComponent', () => {
     expect(actionLabels).not.toContain('Edit');
     expect(actionLabels).not.toContain('Remove');
     expect(actionLabels).not.toContain('Uninstall');
+    expect(actionLabels).not.toContain('Environment');
   });
 
   it('offers edit and remove for an editable custom agent', () => {
@@ -65,7 +66,18 @@ describe('AgentCardComponent', () => {
     expect(text).toContain('Registry-managed');
     expect(text).toContain('Update');
     expect(text).toContain('Uninstall');
+    expect(text).toContain('Environment');
     expect(text).not.toContain('Edit');
+  });
+
+  it('offers environment settings for editable and registry-managed agents', () => {
+    const environment = vi.fn();
+    fixture.componentInstance.environment.subscribe(environment);
+    render(summary('batey_managed'));
+    let buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
+    expect(buttons.map((button) => button.textContent?.trim() ?? '').join(' ')).toContain('Environment');
+    buttons.find((button) => button.textContent?.includes('Environment'))?.click();
+    expect(environment).toHaveBeenCalled();
   });
 
   it('shows an unavailable reason', () => {

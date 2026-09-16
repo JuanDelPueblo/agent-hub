@@ -5,8 +5,9 @@
 //! operation therefore never reaches a running chat.
 use super::{HubService, ServiceError, ServiceResult};
 use crate::agents::{
-    AgentError, AgentManagementDetail, AgentSummary, CustomAgentInput, InstallRequest,
-    RegistryCatalogView, RemoveOutcome, UpdateOutcome, ValidationReport,
+    AgentEnvEdit, AgentEnvPresence, AgentError, AgentManagementDetail, AgentSummary,
+    CustomAgentInput, InstallRequest, RegistryCatalogView, RemoveOutcome, UpdateOutcome,
+    ValidationReport,
 };
 
 impl From<AgentError> for ServiceError {
@@ -103,6 +104,31 @@ impl HubService {
 
     pub fn agent_management_detail(&self, id: &str) -> ServiceResult<AgentManagementDetail> {
         Ok(self.agent_manager.management_detail(id)?)
+    }
+
+    /// Names and presence of private per-agent overrides, never values.
+    pub fn agent_env_presence(&self, id: &str) -> ServiceResult<Vec<AgentEnvPresence>> {
+        Ok(self.agent_manager.agent_env_presence(id)?)
+    }
+
+    /// Applies `Keep`/`Replace`/`Remove` edits to private per-agent overrides.
+    ///
+    /// Changing an override invalidates the cached authentication state and
+    /// the stopped sessions for that agent, so the next launch observes it.
+    /// A live session keeps the environment it started with; only the next
+    /// launch changes. Removing an override removes it from future launches.
+    pub async fn update_agent_env(
+        &self,
+        id: &str,
+        edits: Vec<AgentEnvEdit>,
+    ) -> ServiceResult<Vec<AgentEnvPresence>> {
+        let presence = self.agent_manager.apply_agent_env_edits(id, edits).await?;
+        self.agent_auth.invalidate_agent(id);
+        self.sessions
+            .invalidate_stopped_sessions_for_agent(id)
+            .await;
+        self.notify_metadata_changed();
+        Ok(presence)
     }
 
     pub async fn create_custom_agent(

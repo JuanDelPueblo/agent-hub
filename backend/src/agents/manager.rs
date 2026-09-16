@@ -193,6 +193,7 @@ pub struct RemoveOutcome {
 /// Authenticated management data for an editable Batey-managed definition.
 /// Unlike `AgentSummary`, this intentionally includes launch environment
 /// values; it is exposed only by the authenticated per-agent management route.
+/// Private per-agent overrides stay separate and are never part of this view.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AgentManagementDetail {
     pub id: String,
@@ -206,6 +207,12 @@ pub struct AgentManagementDetail {
     pub default_permission_policy: CallbackPolicy,
     pub description: Option<String>,
 }
+
+/// Presence of private per-agent environment overrides. Values never leave
+/// the store; the API returns names and presence only.
+pub type AgentEnvPresence = crate::store::AgentEnvPresence;
+/// One override edit with the shared Keep/Replace/Remove pattern.
+pub type AgentEnvEdit = crate::store::AgentEnvEdit;
 
 pub struct AgentManager {
     store: Arc<Store>,
@@ -633,6 +640,9 @@ impl AgentManager {
             let summary = definition.summary();
             self.catalog.replace(definition)?;
             self.remove_install_files(install_dir.as_deref());
+            // A retired row keeps its private overrides while the historical
+            // record exists, but they are inert: a retired agent never starts
+            // a new process. Deleting the row deletes the overrides.
             return Ok(RemoveOutcome {
                 id: id.to_string(),
                 deleted: false,
@@ -642,6 +652,13 @@ impl AgentManager {
         }
 
         self.store.delete_agent(id)?;
+        // No retained historical record requires the overrides anymore, so
+        // they go away with the row and never linger as orphan secret rows.
+        // A best-effort cleanup: the row is already gone, so a failure here
+        // must not turn a successful uninstall into an error.
+        if let Err(error) = self.store.delete_agent_env_for_agent(id) {
+            tracing::warn!(agent = id, %error, "Could not clean up agent environment overrides");
+        }
         self.catalog.remove(id);
         self.remove_install_files(install_dir.as_deref());
         Ok(RemoveOutcome {
@@ -736,6 +753,45 @@ impl AgentManager {
 
     pub fn installed_record(&self, id: &str) -> AgentResult<Option<InstalledAgent>> {
         Ok(self.store.installed_agent(id)?)
+    }
+
+    /// Names and presence of private per-agent overrides, never values.
+    /// It supports Registry-managed and Batey-managed agents, including
+    /// retired rows (which keep their overrides inertly while history exists).
+    pub fn agent_env_presence(&self, id: &str) -> AgentResult<Vec<AgentEnvPresence>> {
+        self.require_installed_for_env(id)?;
+        Ok(self.store.agent_env_presence(id)?)
+    }
+
+    /// Applies `Keep`/`Replace`/`Remove` edits to private per-agent overrides.
+    /// Registry snapshots stay immutable and pinned: only this table changes.
+    /// Values never return to the caller; the answer is presence only.
+    pub async fn apply_agent_env_edits(
+        &self,
+        id: &str,
+        edits: Vec<AgentEnvEdit>,
+    ) -> AgentResult<Vec<AgentEnvPresence>> {
+        let _guard = self.mutation_lock.lock().await;
+        self.require_installed_for_env(id)?;
+        Ok(self.store.apply_agent_env_edits(id, &edits)?)
+    }
+
+    fn require_installed_for_env(&self, id: &str) -> AgentResult<InstalledAgent> {
+        match self.store.installed_agent(id)? {
+            Some(record) => match record.source {
+                AgentSource::Registry | AgentSource::BateyManaged => Ok(record),
+                other => Err(AgentError::Conflict(format!(
+                    "Agent '{id}' comes from the {other} source, so it has no Batey-owned environment."
+                ))),
+            },
+            None => match self.catalog.source_of(id) {
+                Some(source) => Err(AgentError::Conflict(format!(
+                    "Agent '{id}' comes from the {source} source and is not an installed agent. \
+                     Only Registry-managed and Batey-managed agents take private environment overrides."
+                ))),
+                None => Err(AgentError::NotFound(format!("Agent '{id}' not found"))),
+            },
+        }
     }
 
     pub fn management_detail(&self, id: &str) -> AgentResult<AgentManagementDetail> {
@@ -1752,6 +1808,99 @@ mod tests {
         assert!(matches!(error, AgentError::Conflict(_)));
         assert!(error.to_string().contains("shared"), "{error}");
         assert!(error.to_string().contains("file"), "{error}");
+    }
+
+    // ------------------------------------------- per-agent environment
+
+    #[tokio::test]
+    async fn env_overrides_are_scoped_redacted_and_survive_updates() {
+        use crate::store::{AgentEnvAction, AgentEnvEdit};
+        let harness = harness();
+        harness
+            .manager
+            .install(InstallRequest {
+                registry_id: "package-acp".into(),
+                agent_id: Some("pkg".into()),
+                ..InstallRequest::default()
+            })
+            .await
+            .unwrap();
+        let before = harness.store.installed_agent("pkg").unwrap().unwrap();
+        let snapshot_env = before.registry.clone().unwrap().distribution;
+        let replace = |name: &str, value: &str| AgentEnvEdit {
+            name: name.into(),
+            value: Some(value.into()),
+            action: AgentEnvAction::Replace,
+        };
+
+        let presence = harness
+            .manager
+            .apply_agent_env_edits("pkg", vec![replace("CODEX_API_KEY", "secret")])
+            .await
+            .unwrap();
+        assert_eq!(presence.len(), 1);
+        assert_eq!(presence[0].name, "CODEX_API_KEY");
+        let exposed = serde_json::to_string(&presence).unwrap();
+        assert!(!exposed.contains("secret"));
+
+        // A registry update keeps the snapshot kind and the separate overrides.
+        harness.http.set(REGISTRY_URL, document("2.0.0", None));
+        let outcome = harness.manager.update("pkg").await.unwrap();
+        assert!(outcome.updated);
+        let after = harness.store.installed_agent("pkg").unwrap().unwrap();
+        assert_eq!(after.registry.as_ref().unwrap().registry_version, "2.0.0");
+        assert_eq!(
+            after.registry.as_ref().unwrap().distribution.kind(),
+            snapshot_env.kind()
+        );
+        assert_eq!(
+            harness.store.agent_env("pkg").unwrap()["CODEX_API_KEY"],
+            "secret"
+        );
+
+        // Deleting the row cleans up the overrides; retiring keeps them.
+        harness
+            .manager
+            .create_custom(custom("other"))
+            .await
+            .unwrap();
+        harness
+            .manager
+            .apply_agent_env_edits("other", vec![replace("GH_TOKEN", "t")])
+            .await
+            .unwrap();
+        harness.manager.remove("other").await.unwrap();
+        assert!(harness.store.agent_env("other").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn env_overrides_reject_non_installed_and_unknown_ids() {
+        use crate::store::{AgentEnvAction, AgentEnvEdit};
+        let catalog = Arc::new(AgentCatalog::new([
+            AgentDefinition::new("from-file", "x").with_source(AgentSource::File)
+        ]));
+        let harness = harness_with(catalog, harness().http.clone());
+        let edit = AgentEnvEdit {
+            name: "CODEX_API_KEY".into(),
+            value: Some("x".into()),
+            action: AgentEnvAction::Replace,
+        };
+        assert!(matches!(
+            harness
+                .manager
+                .apply_agent_env_edits("absent", vec![edit.clone()])
+                .await
+                .unwrap_err(),
+            AgentError::NotFound(_)
+        ));
+        assert!(matches!(
+            harness
+                .manager
+                .apply_agent_env_edits("from-file", vec![edit])
+                .await
+                .unwrap_err(),
+            AgentError::Conflict(_)
+        ));
     }
 
     #[tokio::test]

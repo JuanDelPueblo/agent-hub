@@ -479,6 +479,39 @@ describe('fake backend seed history', () => {
     assert.throws(() => state.removeAgent('codex'), /read-only/);
   });
 
+  it('manages private per-agent environment with Keep/Replace/Remove redaction', () => {
+    const state = new FakeState();
+    assert.deepEqual(state.agentEnvPresence('my-custom'), []);
+    const afterCreate = state.applyAgentEnvEdits('my-custom', [
+      { name: 'CODEX_API_KEY', value: 'secret', action: 'replace' },
+      { name: 'NO_BROWSER', value: '1', action: 'replace' },
+    ]);
+    assert.deepEqual(afterCreate, [
+      { name: 'CODEX_API_KEY', present: true },
+      { name: 'NO_BROWSER', present: true },
+    ]);
+    assert.ok(!JSON.stringify(afterCreate).includes('secret'));
+
+    const afterEdit = state.applyAgentEnvEdits('my-custom', [
+      { name: 'CODEX_API_KEY', action: 'keep' },
+      { name: 'CODEX_API_KEY', value: 'second', action: 'replace' },
+    ]);
+    // The second edit wins sequentially; presence stays redacted.
+    assert.ok(afterEdit.some((entry) => entry.name === 'CODEX_API_KEY'));
+    assert.ok(!JSON.stringify(afterEdit).includes('second'));
+
+    state.applyAgentEnvEdits('my-custom', [{ name: 'NO_BROWSER', action: 'remove' }]);
+    assert.deepEqual(state.agentEnvPresence('my-custom').map((entry) => entry.name), ['CODEX_API_KEY']);
+
+    assert.throws(() => state.agentEnvPresence('codex'), /not an installed agent/);
+    assert.throws(() => state.applyAgentEnvEdits('my-custom', [{ name: 'HAS-DASH', value: 'x' }]), /unusable name/);
+    assert.throws(() => state.applyAgentEnvEdits('my-custom', [{ name: 'NEW', action: 'keep' }]), /unknown/);
+
+    // Uninstall cleans up overrides.
+    state.removeAgent('my-custom');
+    assert.equal(state.agent('my-custom'), undefined);
+  });
+
   it('reports provider-neutral authentication state', () => {
     const state = new FakeState();
     const codex = state.agentAuth('codex');

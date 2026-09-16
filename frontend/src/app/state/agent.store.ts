@@ -3,6 +3,8 @@ import { ApiService } from '../core/api/api.service';
 import type {
   AgentAuthFlow,
   AgentAuthState,
+  AgentEnvEdit,
+  AgentEnvPresence,
   AgentManagementDetail,
   AgentSummary,
   CustomAgentInput,
@@ -37,6 +39,9 @@ export class AgentStore {
   readonly registryError = signal<string | null>(null);
 
   readonly customDetails = signal<Record<string, AgentManagementDetail>>({});
+  readonly envByAgent = signal<Record<string, AgentEnvPresence[]>>({});
+  readonly envLoading = signal<ReadonlySet<string>>(new Set());
+  readonly envErrors = signal<ErrorMap>({});
   readonly authByAgent = signal<Record<string, AgentAuthState>>({});
   readonly authLoading = signal<ReadonlySet<string>>(new Set());
   readonly authErrors = signal<ErrorMap>({});
@@ -97,6 +102,54 @@ export class AgentStore {
     const detail = await this.api.fetchAgentDetail(id);
     this.customDetails.update((current) => ({ ...current, [id]: detail }));
     return detail;
+  }
+
+  async loadAgentEnv(id: string): Promise<AgentEnvPresence[]> {
+    this.setSetValue(this.envLoading, id, true);
+    try {
+      const presence = await this.api.fetchAgentEnv(id);
+      // Presence only: values never enter frontend state.
+      this.envByAgent.update((current) => ({ ...current, [id]: presence }));
+      this.envErrors.update((current) => {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      return presence;
+    } catch (error) {
+      this.envErrors.update((current) => ({
+        ...current,
+        [id]: this.message(error, 'Failed to load agent environment'),
+      }));
+      throw error;
+    } finally {
+      this.setSetValue(this.envLoading, id, false);
+    }
+  }
+
+  async updateAgentEnv(id: string, edits: AgentEnvEdit[]): Promise<AgentEnvPresence[]> {
+    this.setSetValue(this.envLoading, id, true);
+    try {
+      // The request carries values once; the stored response is presence only.
+      const presence = await this.api.updateAgentEnv(id, edits);
+      this.envByAgent.update((current) => ({ ...current, [id]: presence }));
+      this.envErrors.update((current) => {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      return presence;
+    } catch (error) {
+      this.envErrors.update((current) => ({
+        ...current,
+        [id]: this.message(error, 'Failed to save agent environment'),
+      }));
+      throw error;
+    } finally {
+      this.setSetValue(this.envLoading, id, false);
+    }
   }
 
   validateCustomAgent(input: CustomAgentInput): Promise<ValidationReport> {

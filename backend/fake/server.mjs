@@ -83,6 +83,8 @@ const routes = [
   ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgentRoute],
   ['GET', /^\/api\/agent-auth\/([^/]+)$/, getAgentAuthFlow],
   ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelAgentAuthFlow],
+  ['GET', /^\/api\/agents\/([^/]+)\/environment$/, getAgentEnv],
+  ['PATCH', /^\/api\/agents\/([^/]+)\/environment$/, updateAgentEnv],
   ['GET', /^\/api\/agents\/([^/]+)$/, getAgentDetail],
   ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
   ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
@@ -345,6 +347,13 @@ function editAgent({ params, body }) {
 function removeAgent({ params }) { return json(state.removeAgent(params[0])); }
 
 function getAgentDetail({ params }) { return json(state.agentDetail(params[0])); }
+
+function getAgentEnv({ params }) { return json(state.agentEnvPresence(params[0])); }
+
+function updateAgentEnv({ params, body }) {
+  const edits = Array.isArray(body) ? body : body?.edits ?? [];
+  return json(state.applyAgentEnvEdits(params[0], edits));
+}
 
 function registryAgents({ url }) {
   return json(state.registryView(url.searchParams.get('q') ?? ''));
