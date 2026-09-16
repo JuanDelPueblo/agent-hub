@@ -9,6 +9,8 @@ import type {
   AgentSummary,
   CustomAgentInput,
   InstallRegistryAgentInput,
+  ProtocolAuthElicitation,
+  ProtocolAuthFlow,
   RegistryCatalog,
   RemoveOutcome,
   UpdateOutcome,
@@ -45,6 +47,9 @@ export class AgentStore {
   readonly authByAgent = signal<Record<string, AgentAuthState>>({});
   readonly authLoading = signal<ReadonlySet<string>>(new Set());
   readonly authErrors = signal<ErrorMap>({});
+  readonly protocolFlowsByAgent = signal<Record<string, ProtocolAuthFlow>>({});
+  readonly protocolElicitationsByFlow = signal<Record<string, ProtocolAuthElicitation[]>>({});
+  readonly protocolLoading = signal<ReadonlySet<string>>(new Set());
 
   readonly available = computed(() =>
     this.installed().filter((agent) => agent.availability === 'available'),
@@ -191,8 +196,10 @@ export class AgentStore {
   async authenticate(id: string, methodId: string): Promise<AgentAuthState> {
     this.setLoading(id, true);
     try {
-      await this.api.authenticateAgent(id, methodId);
-      return await this.loadAuth(id);
+      const state = await this.api.authenticateAgent(id, methodId);
+      this.authByAgent.update((current) => ({ ...current, [id]: state }));
+      this.clearAuthError(id);
+      return state;
     } catch (error) {
       this.setAuthError(id, this.message(error, 'Authentication failed'));
       throw error;
@@ -223,8 +230,78 @@ export class AgentStore {
     return flow;
   }
 
+  /** Starts an async protocol flow so a long `authenticate` never blocks the card. */
+  async startProtocolAuth(id: string, methodId: string): Promise<ProtocolAuthFlow> {
+    this.setProtocolLoading(id, true);
+    try {
+      const flow = await this.api.startProtocolAuth(id, methodId);
+      this.protocolFlowsByAgent.update((current) => ({ ...current, [id]: flow }));
+      return flow;
+    } catch (error) {
+      this.setAuthError(id, this.message(error, 'Authentication failed to start'));
+      throw error;
+    } finally {
+      this.setProtocolLoading(id, false);
+    }
+  }
+
+  async refreshProtocolFlow(agentId: string, flowId: string): Promise<ProtocolAuthFlow> {
+    const flow = await this.api.fetchProtocolAuthFlow(flowId);
+    this.protocolFlowsByAgent.update((current) => ({ ...current, [agentId]: flow }));
+    try {
+      const elicitations = await this.api.fetchProtocolAuthElicitations(flowId);
+      this.protocolElicitationsByFlow.update((current) => ({
+        ...current,
+        [flowId]: elicitations ?? [],
+      }));
+    } catch {
+      // A missing elicitation list never hides the flow state.
+    }
+    if (flow.state === 'succeeded' || flow.state === 'failed' || flow.state === 'cancelled' || flow.state === 'timed_out') {
+      await this.loadAuth(agentId).catch(() => undefined);
+    }
+    return flow;
+  }
+
+  async cancelProtocolAuth(agentId: string, flowId: string): Promise<ProtocolAuthFlow> {
+    const flow = await this.api.cancelProtocolAuthFlow(flowId);
+    this.protocolFlowsByAgent.update((current) => ({ ...current, [agentId]: flow }));
+    return flow;
+  }
+
+  clearProtocolFlow(agentId: string): void {
+    this.protocolFlowsByAgent.update((current) => {
+      if (!(agentId in current)) return current;
+      const next = { ...current };
+      delete next[agentId];
+      return next;
+    });
+  }
+
+  async respondProtocolElicitation(
+    flowId: string,
+    elicitationId: string,
+    action: string,
+    content?: unknown,
+  ): Promise<void> {
+    await this.api.respondProtocolAuthElicitation(flowId, elicitationId, action, content);
+    try {
+      const elicitations = await this.api.fetchProtocolAuthElicitations(flowId);
+      this.protocolElicitationsByFlow.update((current) => ({
+        ...current,
+        [flowId]: elicitations ?? [],
+      }));
+    } catch {
+      // The flow poll refreshes the list on its next tick.
+    }
+  }
+
   private setLoading(id: string, loading: boolean): void {
     this.setSetValue(this.authLoading, id, loading);
+  }
+
+  private setProtocolLoading(id: string, loading: boolean): void {
+    this.setSetValue(this.protocolLoading, id, loading);
   }
 
   private setAuthError(id: string, message: string): void {

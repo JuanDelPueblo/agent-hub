@@ -152,11 +152,14 @@ export interface AgentAuthMethod {
   supported: boolean;
 }
 
+export type ObservedAuthState = 'unknown' | 'authentication_required' | 'authenticated';
+
 export interface AgentAuthState {
   agent_id: string;
   methods: AgentAuthMethod[];
   logout_supported: boolean;
   terminal_supported: boolean;
+  observed_state: ObservedAuthState;
 }
 
 export type AgentAuthFlowState =
@@ -165,6 +168,34 @@ export type AgentAuthFlowState =
   | 'failed'
   | 'cancelled'
   | 'timed_out';
+
+export type ProtocolAuthFlowState =
+  | 'running'
+  | 'waiting_for_user'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out';
+
+export interface ProtocolAuthFlow {
+  flow_id: string;
+  agent_id: string;
+  method_id: string;
+  state: ProtocolAuthFlowState;
+  reason?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+}
+
+export interface ProtocolAuthElicitation {
+  id: string;
+  mode: string;
+  message: string;
+  schema?: unknown;
+  url?: string | null;
+  elicitation_id?: string | null;
+  tool_call_id?: string | null;
+}
 
 export interface AgentAuthFlow {
   flow_id: string;

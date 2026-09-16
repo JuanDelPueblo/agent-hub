@@ -32,6 +32,9 @@ export class AppStateService {
   readonly authByAgent = this.agentStore.authByAgent;
   readonly authLoading = this.agentStore.authLoading;
   readonly authErrors = this.agentStore.authErrors;
+  readonly protocolFlowsByAgent = this.agentStore.protocolFlowsByAgent;
+  readonly protocolElicitationsByFlow = this.agentStore.protocolElicitationsByFlow;
+  readonly protocolLoading = this.agentStore.protocolLoading;
   readonly loadingProjects = this.projectStore.loading;
   readonly projectsError = this.projectStore.error;
   readonly chatsByProject = this.chatStore.chatsByProject;
@@ -109,6 +112,11 @@ export class AppStateService {
   authenticateAgent(id: string, methodId: string) { return this.agentStore.authenticate(id, methodId); }
   logoutAgent(id: string) { return this.agentStore.logout(id); }
   startTerminalAgentAuth(id: string, methodId: string) { return this.agentStore.startTerminalAuth(id, methodId); }
+  startProtocolAgentAuth(id: string, methodId: string) { return this.agentStore.startProtocolAuth(id, methodId); }
+  refreshProtocolAgentAuth(agentId: string, flowId: string) { return this.agentStore.refreshProtocolFlow(agentId, flowId); }
+  cancelProtocolAgentAuth(agentId: string, flowId: string) { return this.agentStore.cancelProtocolAuth(agentId, flowId); }
+  clearProtocolAgentAuth(agentId: string) { return this.agentStore.clearProtocolFlow(agentId); }
+  respondProtocolElicitation(flowId: string, id: string, action: string, content?: unknown) { return this.agentStore.respondProtocolElicitation(flowId, id, action, content); }
   clearAuthRequired(chatId: string): void { this.chatStore.clearAuthRequired(chatId); }
   loadChats(projectId: string): Promise<void> { return this.chatStore.loadChats(projectId); }
   findChat(chatId: string) { return this.chatStore.findChat(chatId); }

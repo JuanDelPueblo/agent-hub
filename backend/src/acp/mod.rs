@@ -381,7 +381,7 @@ impl AcpClient {
         // Advertise only stable v1 capabilities Batey actually implements:
         // filesystem read/write, terminal, boolean session config, and form
         // plus URL elicitation. Never advertise partial capabilities.
-        let caps = agent_client_protocol_schema::ClientCapabilities::new()
+        let mut caps = agent_client_protocol_schema::ClientCapabilities::new()
             .fs(agent_client_protocol_schema::FileSystemCapabilities::new()
                 .read_text_file(true)
                 .write_text_file(true))
@@ -406,6 +406,17 @@ impl AcpClient {
                 agent_client_protocol_schema::AuthCapabilities::new()
                     .terminal(crate::auth::TERMINAL_AUTH_SUPPORTED),
             );
+        // Legacy interoperability: advertise `_meta["terminal-auth"]` only
+        // when the PTY bridge actually exists. Deployed OpenCode/Copilot
+        // agents read this flag before sending their command descriptor.
+        if crate::auth::TERMINAL_AUTH_SUPPORTED {
+            let mut meta = agent_client_protocol_schema::Meta::new();
+            meta.insert(
+                self::auth::LEGACY_TERMINAL_AUTH_CLIENT_KEY.to_string(),
+                serde_json::Value::Bool(true),
+            );
+            caps = caps.meta(meta);
+        }
         let req = InitializeRequest::new(ProtocolVersion::LATEST)
             .client_info(agent_client_protocol_schema::Implementation::new(
                 "batey",
@@ -459,8 +470,9 @@ impl AcpClient {
     ///
     /// The method must come from the agent's own `authMethods`. A terminal
     /// method never reaches `authenticate`: the stable schema requires the
-    /// client to run the configured program instead. An unsupported method
-    /// kind is reported, never guessed.
+    /// client to run the configured program instead. A legacy bridge method
+    /// never reaches it either: it runs its advertised command in a
+    /// terminal. An unsupported method kind is reported, never guessed.
     pub async fn authenticate(&self, method_id: &str) -> anyhow::Result<serde_json::Value> {
         let state = self.auth_state.read().await.clone();
         let method = state.method(method_id).ok_or_else(|| {
@@ -470,6 +482,9 @@ impl AcpClient {
             self::auth::AuthMethodKind::Agent => {}
             self::auth::AuthMethodKind::Terminal(_) => anyhow::bail!(
                 "Authentication method '{method_id}' is a terminal method; run it in a terminal instead"
+            ),
+            self::auth::AuthMethodKind::LegacyTerminal(_) => anyhow::bail!(
+                "Authentication method '{method_id}' runs its advertised login command in a terminal; start a terminal authentication flow instead"
             ),
             self::auth::AuthMethodKind::Unsupported(kind) => anyhow::bail!(
                 "Authentication method '{method_id}' uses the unsupported type '{kind}'"

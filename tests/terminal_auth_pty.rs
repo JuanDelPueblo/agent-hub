@@ -38,6 +38,60 @@ fn agent(id: &str, history: &Path, pass_env: &[&str]) -> AgentDefinition {
         .with_pass_env(pass_env.iter().map(|name| name.to_string()).collect())
 }
 
+fn legacy_agent(id: &str, history: &Path, mode: &str) -> AgentDefinition {
+    AgentDefinition::new(id, "python3").with_args(vec![
+        format!("{}/tests/fake_acp.py", env!("CARGO_MANIFEST_DIR")),
+        history.display().to_string(),
+        mode.into(),
+    ])
+}
+
+/// Writes an executable stub that records its invocation and behaves like a
+/// login TUI: `ok` succeeds, `fail` fails, and a descendant proves tree kill.
+fn write_legacy_stub(path: &Path) {
+    let script = r#"#!/usr/bin/env python3
+import json, os, pathlib, signal, subprocess, sys
+out = pathlib.Path(sys.argv[0]).parent
+# The stub path is <history>/<name>; record beside it like the fake ACP does.
+history = out
+(history / "invocation.json").write_text(json.dumps({
+    "argv": [sys.argv[0]] + sys.argv[1:],
+    "cwd": os.getcwd(),
+    "env": dict(os.environ),
+    "isatty": sys.stdin.isatty(),
+}))
+def report_size(*_):
+    try:
+        size = os.get_terminal_size(sys.stdin.fileno())
+        print(f"size:{size.columns}x{size.lines}", flush=True)
+    except Exception:
+        pass
+signal.signal(signal.SIGWINCH, report_size)
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+(history / "child.pid").write_text(str(child.pid))
+print("ready", flush=True)
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(7)
+    command = line.strip()
+    if command == "ok":
+        print("login-complete", flush=True)
+        sys.exit(0)
+    if command == "fail":
+        sys.exit(3)
+    print(f"echo:{command}", flush=True)
+"#;
+    std::fs::write(path, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).unwrap();
+    }
+}
+
 struct Harness {
     app: axum::Router,
     hub: Arc<HubService>,
@@ -125,8 +179,15 @@ impl Harness {
     }
 
     async fn start_flow(&self, agent_id: &str) -> String {
+        self.start_flow_for(agent_id, "tui").await
+    }
+
+    async fn start_flow_for(&self, agent_id: &str, method_id: &str) -> String {
         let (status, body) = self
-            .request("POST", &format!("/api/agents/{agent_id}/auth/terminal/tui"))
+            .request(
+                "POST",
+                &format!("/api/agents/{agent_id}/auth/terminal/{method_id}"),
+            )
             .await;
         assert_eq!(status, 200, "{body}");
         assert_eq!(body["state"], "running");
@@ -828,6 +889,128 @@ async fn authentication_changes_never_interrupt_an_active_turn() {
         .await;
     assert_eq!(status, 200, "{view}");
 
+    harness.auth.shutdown();
+    harness.sessions.shutdown_all().await;
+}
+
+/// Legacy OpenCode: the `_meta["terminal-auth"]` descriptor becomes an
+/// interactive terminal that runs the advertised command, never `authenticate`.
+#[tokio::test]
+async fn legacy_opencode_runs_the_advertised_login_command() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let root = root_dir.path();
+    let history = root.join("legacy");
+    std::fs::create_dir_all(&history).unwrap();
+    write_legacy_stub(&history.join("opencode-stub"));
+    let harness = Harness::start(
+        root,
+        vec![legacy_agent("legacy", &history, "auth-legacy-opencode")],
+    )
+    .await;
+
+    let (status, view) = harness.request("GET", "/api/agents/legacy/auth").await;
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["methods"][0]["type"], "terminal");
+    assert_eq!(view["observed_state"], "unknown");
+
+    let flow_id = harness.start_flow_for("legacy", "opencode-login").await;
+    // The flow runs the stub from `_meta`, not the base ACP program.
+    let invocation = harness.invocation("legacy").await;
+    let argv: Vec<String> = invocation["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap().to_owned())
+        .collect();
+    assert!(argv[0].ends_with("opencode-stub"), "{argv:?}");
+    assert_eq!(argv[1..], vec!["auth".to_string(), "login".to_string()]);
+    assert_eq!(invocation["isatty"], true);
+
+    // No false success before login completes and no `authenticate` call.
+    let (status, view) = harness.request("GET", "/api/agents/legacy/auth").await;
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["observed_state"], "unknown");
+    assert!(
+        !history.join("authenticate.json").exists(),
+        "legacy terminal-auth sent `authenticate`"
+    );
+
+    let mut socket = harness.connect(&flow_id).await;
+    wait_for_output(&mut socket, "ready").await;
+    send(&mut socket, json!({"type": "input", "data": "ok\n"})).await;
+    wait_for_output(&mut socket, "login-complete").await;
+    let state = wait_for_state(&mut socket, "succeeded").await;
+    assert_eq!(state["exit_code"], 0);
+
+    // After success the observed state is authenticated and the probe ran again.
+    let mut observed = false;
+    for _ in 0..200 {
+        let (status, view) = harness.request("GET", "/api/agents/legacy/auth").await;
+        assert_eq!(status, 200, "{view}");
+        if view["observed_state"] == "authenticated" {
+            observed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(observed, "legacy success never recorded authenticated");
+    assert!(
+        !history.join("authenticate.json").exists(),
+        "legacy terminal-auth sent `authenticate`"
+    );
+    harness.auth.shutdown();
+    harness.sessions.shutdown_all().await;
+}
+
+/// Legacy Copilot: `copilot login` runs in a terminal and a fresh probe
+/// follows success.
+#[tokio::test]
+async fn legacy_copilot_runs_copilot_login() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let root = root_dir.path();
+    let history = root.join("legacy");
+    std::fs::create_dir_all(&history).unwrap();
+    write_legacy_stub(&history.join("copilot-stub"));
+    let harness = Harness::start(
+        root,
+        vec![legacy_agent("legacy", &history, "auth-legacy-copilot")],
+    )
+    .await;
+
+    let flow_id = harness.start_flow_for("legacy", "copilot-login").await;
+    let invocation = harness.invocation("legacy").await;
+    let argv: Vec<String> = invocation["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap().to_owned())
+        .collect();
+    assert!(argv[0].ends_with("copilot-stub"), "{argv:?}");
+    assert_eq!(argv[1..], vec!["login".to_string()]);
+
+    let mut socket = harness.connect(&flow_id).await;
+    wait_for_output(&mut socket, "ready").await;
+    send(&mut socket, json!({"type": "input", "data": "ok\n"})).await;
+    wait_for_state(&mut socket, "succeeded").await;
+
+    let mut observed = false;
+    for _ in 0..200 {
+        let (status, view) = harness.request("GET", "/api/agents/legacy/auth").await;
+        assert_eq!(status, 200, "{view}");
+        if view["observed_state"] == "authenticated" {
+            observed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        observed,
+        "copilot legacy success never recorded authenticated"
+    );
+    assert!(
+        !history.join("authenticate.json").exists(),
+        "copilot legacy sent `authenticate` instead of `copilot login`"
+    );
     harness.auth.shutdown();
     harness.sessions.shutdown_all().await;
 }

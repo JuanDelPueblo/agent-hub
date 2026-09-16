@@ -51,15 +51,24 @@ function makeState() {
         methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
         logout_supported: true,
         terminal_supported: true,
+        observed_state: 'unknown',
       },
     }),
     authLoading: signal<ReadonlySet<string>>(new Set()),
     authErrors: signal<Record<string, string>>({}),
+    protocolFlowsByAgent: signal<Record<string, import('../../core/api/types').ProtocolAuthFlow>>({}),
+    protocolElicitationsByFlow: signal<Record<string, import('../../core/api/types').ProtocolAuthElicitation[]>>({}),
+    protocolLoading: signal<ReadonlySet<string>>(new Set()),
     loadAgents: vi.fn(async () => undefined),
-    loadAgentAuth: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
-    authenticateAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
-    logoutAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true })),
+    loadAgentAuth: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true, observed_state: 'unknown' as const })),
+    authenticateAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true, observed_state: 'unknown' as const })),
+    logoutAgent: vi.fn(async () => ({ agent_id: 'codex', methods: [], logout_supported: true, terminal_supported: true, observed_state: 'authentication_required' as const })),
     startTerminalAgentAuth: vi.fn(async () => ({ flow_id: 'f', agent_id: 'codex', method_id: 'api-key', state: 'running' as const })),
+    startProtocolAgentAuth: vi.fn(async () => ({ flow_id: 'p', agent_id: 'codex', method_id: 'oauth', state: 'running' as const })),
+    refreshProtocolAgentAuth: vi.fn(async () => ({ flow_id: 'p', agent_id: 'codex', method_id: 'oauth', state: 'succeeded' as const })),
+    cancelProtocolAgentAuth: vi.fn(async () => ({ flow_id: 'p', agent_id: 'codex', method_id: 'oauth', state: 'cancelled' as const })),
+    clearProtocolAgentAuth: vi.fn(() => undefined),
+    respondProtocolElicitation: vi.fn(async () => undefined),
     fetchAgentDetail: vi.fn(async () => ({ id: 'my-custom', display_name: 'My Custom', command: 'my-agent', args: [], env: {}, idle_timeout: 900, usage_provider: null, metadata: null, default_permission_policy: 'ask', description: null })),
     createCustomAgent: vi.fn(async () => custom),
     editCustomAgent: vi.fn(async () => custom),
@@ -154,15 +163,23 @@ describe('AgentsPageComponent', () => {
     expect(dialog.open).toHaveBeenCalled();
   });
 
-  it('authenticates through the store and refreshes state', async () => {
+  it('starts an async protocol flow instead of claiming signed-in', async () => {
     await fixture.componentInstance.authenticate(builtin, 'oauth');
-    expect(state.authenticateAgent).toHaveBeenCalledWith('codex', 'oauth');
-    expect(fixture.componentInstance.notice()).toContain('Signed in to Codex');
+    expect(state.startProtocolAgentAuth).toHaveBeenCalledWith('codex', 'oauth');
+    expect(state.authenticateAgent).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.notice()).not.toContain('Signed in to Codex');
   });
 
-  it('logs out through the store', async () => {
+  it('logs out through the store with evidence-based notice', async () => {
     await fixture.componentInstance.logout(builtin);
     expect(state.logoutAgent).toHaveBeenCalledWith('codex');
+    expect(fixture.componentInstance.notice()).toContain('Signed out of Codex');
+  });
+
+  it('clears saved sign-in with distinct wording', async () => {
+    await fixture.componentInstance.clearCredentials(builtin);
+    expect(state.logoutAgent).toHaveBeenCalledWith('codex');
+    expect(fixture.componentInstance.notice()).toContain('Cleared saved sign-in');
   });
 
   it('starts a terminal flow and opens the terminal dialog with flow and method', async () => {

@@ -103,6 +103,7 @@ describe('AgentCardComponent', () => {
       agent_id: 'x',
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'unknown',
       methods: [
         { id: 'oauth', name: 'OAuth', type: 'agent', supported: true },
         { id: 'key', name: 'API key', type: 'terminal', supported: true },
@@ -124,22 +125,51 @@ describe('AgentCardComponent', () => {
     expect(disabledButtons[1]?.disabled).toBe(true);
   });
 
-  it('shows logout action when logout capability is supported without claiming an active session', () => {
+  it('shows logout only when authenticated and clear action when unknown', () => {
     const logout = vi.fn();
+    const clear = vi.fn();
     fixture.componentInstance.logout.subscribe(logout);
+    fixture.componentInstance.clearCredentials.subscribe(clear);
+    // Unknown state: capability alone never implies a login. Only the
+    // lower-emphasis clear action appears, not Log out alongside sign-in.
     render(summary('builtin'), {
       agent_id: 'x',
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'unknown',
       methods: [],
     });
-    const text = fixture.nativeElement.textContent as string;
+    let text = fixture.nativeElement.textContent as string;
     expect(text).not.toContain('Active session');
-    expect(text).toContain('Clear the saved sign-in for this agent');
-    const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
-      .find((item) => (item as HTMLButtonElement).textContent?.includes('Log out')) as HTMLButtonElement;
-    expect(button).toBeDefined();
-    button.click();
+    expect(text).toContain('Sign-in status unknown');
+    expect(
+      Array.from(fixture.nativeElement.querySelectorAll('button')).find((item) =>
+        (item as HTMLButtonElement).textContent?.includes('Log out'),
+      ),
+    ).toBeUndefined();
+    const clearButton = Array.from(fixture.nativeElement.querySelectorAll('button')).find((item) =>
+      (item as HTMLButtonElement).textContent?.includes('Clear saved sign-in'),
+    ) as HTMLButtonElement;
+    expect(clearButton).toBeDefined();
+    clearButton.click();
+    expect(clear).toHaveBeenCalled();
+    expect(logout).not.toHaveBeenCalled();
+
+    // Authenticated state: the normal Log out appears.
+    render(summary('builtin'), {
+      agent_id: 'x',
+      logout_supported: true,
+      terminal_supported: true,
+      observed_state: 'authenticated',
+      methods: [],
+    });
+    text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Authenticated');
+    const logoutButton = Array.from(fixture.nativeElement.querySelectorAll('button')).find((item) =>
+      (item as HTMLButtonElement).textContent?.includes('Log out'),
+    ) as HTMLButtonElement;
+    expect(logoutButton).toBeDefined();
+    logoutButton.click();
     expect(logout).toHaveBeenCalled();
   });
 
@@ -148,6 +178,7 @@ describe('AgentCardComponent', () => {
       agent_id: 'x',
       logout_supported: false,
       terminal_supported: false,
+      observed_state: 'unknown',
       methods: [],
     });
     const text = fixture.nativeElement.textContent as string;
@@ -173,6 +204,7 @@ describe('AgentCardComponent', () => {
       agent_id: 'x',
       logout_supported: false,
       terminal_supported: true,
+      observed_state: 'unknown',
       methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
     });
     const rows = fixture.nativeElement.querySelectorAll('.method') as NodeListOf<HTMLElement>;
@@ -198,6 +230,7 @@ describe('AgentCardComponent', () => {
       agent_id: 'x',
       logout_supported: false,
       terminal_supported: true,
+      observed_state: 'unknown',
       methods: [],
     });
     const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
@@ -219,5 +252,61 @@ describe('AgentCardComponent', () => {
     expect(hrefs).toContain('https://example.invalid/repo');
     expect(hrefs).toContain('https://example.invalid');
     expect(hrefs).toContain('https://example.invalid/license');
+  });
+
+  it('never presents sign-in and log out together from capability alone', () => {
+    render(summary('builtin'), {
+      agent_id: 'x',
+      logout_supported: true,
+      terminal_supported: true,
+      observed_state: 'unknown',
+      methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
+    });
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')).map(
+      (button) => (button as HTMLButtonElement).textContent?.trim() ?? '',
+    );
+    expect(buttons.some((label) => label.includes('Sign in'))).toBe(true);
+    expect(buttons.some((label) => label === 'Log out')).toBe(false);
+  });
+
+  it('shows a cancellable waiting flow with the full URL and host', () => {
+    const cancel = vi.fn();
+    const respond = vi.fn();
+    fixture.componentInstance.cancelProtocol.subscribe(cancel);
+    fixture.componentInstance.respondElicitation.subscribe(respond);
+    fixture.componentRef.setInput('agent', summary('builtin'));
+    fixture.componentRef.setInput('auth', {
+      agent_id: 'x',
+      logout_supported: false,
+      terminal_supported: true,
+      observed_state: 'unknown',
+      methods: [{ id: 'oauth', name: 'OAuth', type: 'agent', supported: true }],
+    });
+    fixture.componentRef.setInput('protocolFlow', {
+      flow_id: 'f',
+      agent_id: 'x',
+      method_id: 'oauth',
+      state: 'waiting_for_user',
+      reason: null,
+    });
+    fixture.componentRef.setInput('protocolElicitations', [
+      {
+        id: 'e1',
+        mode: 'url',
+        message: 'Open the device page.',
+        url: 'https://example.invalid/device?code=ABCD-1234',
+        elicitation_id: 'device-1',
+        tool_call_id: null,
+      },
+    ]);
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Waiting for your action');
+    expect(text).toContain('https://example.invalid/device?code=ABCD-1234');
+    expect(text).toContain('example.invalid');
+    expect(text).toContain('Batey never opens or fetches it automatically');
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
+    buttons.find((button) => button.textContent?.includes('Cancel'))?.click();
+    expect(cancel).toHaveBeenCalled();
   });
 });

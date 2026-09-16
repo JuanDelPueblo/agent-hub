@@ -9,6 +9,9 @@ import type {
   AgentAuthState,
   AgentMutability,
   AgentSummary,
+  ObservedAuthState,
+  ProtocolAuthElicitation,
+  ProtocolAuthFlow,
 } from '../../core/api/types';
 
 @Component({
@@ -28,10 +31,17 @@ export class AgentCardComponent {
   readonly auth = input<AgentAuthState | null>(null);
   readonly authLoading = input(false);
   readonly authError = input<string | null>(null);
+  readonly protocolFlow = input<ProtocolAuthFlow | null>(null);
+  readonly protocolElicitations = input<ProtocolAuthElicitation[]>([]);
+  readonly protocolLoading = input(false);
 
   readonly authenticate = output<string>();
   readonly terminal = output<string>();
   readonly logout = output<void>();
+  readonly clearCredentials = output<void>();
+  readonly cancelProtocol = output<void>();
+  readonly dismissProtocol = output<void>();
+  readonly respondElicitation = output<{ id: string; action: string }>();
   readonly edit = output<void>();
   readonly remove = output<void>();
   readonly update = output<void>();
@@ -49,11 +59,37 @@ export class AgentCardComponent {
 
   readonly targeted = input(false);
   readonly available = computed(() => this.agent().availability === 'available');
+  readonly observed = computed<ObservedAuthState>(() => this.auth()?.observed_state ?? 'unknown');
+  readonly isAuthenticated = computed(() => this.observed() === 'authenticated');
   readonly logoutSupported = computed(() => this.auth()?.logout_supported === true);
   readonly canManageEnv = computed(() => {
     const mutability = this.mutability();
     return mutability === 'editable' || mutability === 'registry_managed';
   });
+  /** Normal Log out only when Batey observed authenticated state. */
+  readonly showLogout = computed(() => this.logoutSupported() && this.isAuthenticated());
+  /** Lower-emphasis credential clear when capability exists but state is not authenticated. */
+  readonly showClear = computed(() => this.logoutSupported() && !this.isAuthenticated());
+
+  observedLabel(): string {
+    switch (this.observed()) {
+      case 'authenticated':
+        return 'Authenticated';
+      case 'authentication_required':
+        return 'Authentication required';
+      default:
+        return 'Sign-in status unknown';
+    }
+  }
+
+  elicitationHost(url: string | null | undefined): string {
+    if (!url) return '';
+    try {
+      return new URL(url).host;
+    } catch {
+      return '';
+    }
+  }
 
   sourceLabel(source: string): string {
     switch (source) {

@@ -10,6 +10,7 @@ describe('fake agent authentication', () => {
     assert.equal(view.agent_id, 'claude');
     assert.equal(view.logout_supported, true);
     assert.equal(view.terminal_supported, true);
+    assert.equal(view.observed_state, 'unknown');
     for (const method of view.methods) {
       assert.equal(typeof method.id, 'string');
       assert.equal(typeof method.name, 'string');

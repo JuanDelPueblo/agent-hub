@@ -72,7 +72,12 @@ transient_config = mode == "transient-config"
 # Authentication modes. `auth` advertises one agent method, one terminal
 # method, and one method type this client cannot know. `auth-no-logout` drops
 # the logout capability. `auth-required` answers session/new with the stable
-# `auth_required` error code.
+# `auth_required` error code. `auth-legacy-opencode` and
+# `auth-legacy-copilot` advertise the deployed `_meta["terminal-auth"]`
+# bridge instead of a stable terminal type. `auth-codex-url` runs an
+# `agent` method that emits a URL elicitation while `authenticate` runs.
+# `auth-antigravity` runs an `agent` method that waits for an elicitation
+# answer, so a client without a cancellable flow would hang.
 auth_mode = mode.startswith("auth")
 supports_logout = mode in ("auth", "auth-required")
 requires_auth = mode == "auth-required"
@@ -107,6 +112,32 @@ def update(update_kind, **fields):
 
 
 def auth_methods():
+    if mode == "auth-legacy-opencode":
+        return [
+            {"id": "opencode-login", "name": "Log in with OpenCode",
+             "description": "Run `opencode auth login` in the terminal",
+             "_meta": {"terminal-auth": {"command": str(root / "opencode-stub"),
+                                        "args": ["auth", "login"],
+                                        "label": "OpenCode Login"}}},
+        ]
+    if mode == "auth-legacy-copilot":
+        return [
+            {"id": "copilot-login", "name": "Log in with Copilot CLI",
+             "description": "Run `copilot login` in the terminal",
+             "_meta": {"terminal-auth": {"command": str(root / "copilot-stub"),
+                                        "args": ["login"],
+                                        "label": "Copilot Login"}}},
+        ]
+    if mode == "auth-codex-url":
+        return [
+            {"id": "codex-oauth", "name": "Sign in with Codex",
+             "description": "Device-code flow through a URL step"},
+        ]
+    if mode == "auth-antigravity":
+        return [
+            {"id": "antigravity-interactive", "name": "Interactive sign-in",
+             "description": "Complete the interactive step"},
+        ]
     methods = [
         {"id": "api-key", "name": "API key", "description": "Paste an API key"},
         {"id": "api-key-broken", "name": "Broken API key", "type": "agent"},
@@ -169,6 +200,80 @@ for line in sys.stdin:
         record("authenticate.json", p)
         if p.get("methodId") == "api-key-broken":
             send({"id": id, "error": {"code": -32603, "message": "Key rejected"}})
+        elif mode == "auth-codex-url" and p.get("methodId") == "codex-oauth":
+            # Request-scoped URL elicitation during `authenticate`. The client
+            # must surface the URL, never pre-fetch it, and answer
+            # accept/decline/cancel. The fake waits for that answer.
+            elic_req_id = 9001
+            send({"id": elic_req_id, "method": "elicitation/create", "params": {
+                "mode": "url",
+                "message": "Open the device page and enter the code.",
+                "url": "https://example.invalid/device?code=ABCD-1234",
+                "elicitationId": "device-1",
+                "requestId": id}})
+            action = None
+            while True:
+                line2 = sys.stdin.readline()
+                if not line2:
+                    sys.exit(0)
+                try:
+                    msg2 = json.loads(line2)
+                except Exception:
+                    continue
+                if msg2.get("id") == elic_req_id and ("result" in msg2 or "error" in msg2):
+                    result = msg2.get("result", {})
+                    action = result.get("action", "cancel")
+                    if isinstance(action, dict):
+                        action = action.get("action", "cancel")
+                    break
+                # A protocol cancel for the authenticate request aborts the flow.
+                if msg2.get("method") == "$/cancel_request":
+                    send({"id": id, "error": {"code": -32800, "message": "Request cancelled"}})
+                    action = "cancelled"
+                    break
+            if action == "accept":
+                send({"method": "elicitation/complete", "params": {"elicitationId": "device-1"}})
+                reply(id, {})
+            elif action == "cancelled":
+                pass
+            elif action == "decline":
+                send({"id": id, "error": {"code": -32603, "message": "User declined"}})
+            else:
+                send({"id": id, "error": {"code": -32800, "message": "Request cancelled"}})
+        elif mode == "auth-antigravity" and p.get("methodId") == "antigravity-interactive":
+            elic_req_id = 9002
+            send({"id": elic_req_id, "method": "elicitation/create", "params": {
+                "mode": "form",
+                "message": "Complete the interactive sign-in step.",
+                "requestedSchema": {"type": "object", "properties": {}, "required": []},
+                "requestId": id}})
+            action = None
+            while True:
+                line2 = sys.stdin.readline()
+                if not line2:
+                    sys.exit(0)
+                try:
+                    msg2 = json.loads(line2)
+                except Exception:
+                    continue
+                if msg2.get("id") == elic_req_id and ("result" in msg2 or "error" in msg2):
+                    result = msg2.get("result", {})
+                    action = result.get("action", "cancel")
+                    if isinstance(action, dict):
+                        action = action.get("action", "cancel")
+                    break
+                if msg2.get("method") == "$/cancel_request":
+                    send({"id": id, "error": {"code": -32800, "message": "Request cancelled"}})
+                    action = "cancelled"
+                    break
+            if action == "accept":
+                reply(id, {})
+            elif action == "cancelled":
+                pass
+            elif action == "decline":
+                send({"id": id, "error": {"code": -32603, "message": "User declined"}})
+            else:
+                send({"id": id, "error": {"code": -32800, "message": "Request cancelled"}})
         else:
             reply(id, {})
     elif method == "logout":

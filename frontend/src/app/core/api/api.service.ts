@@ -388,6 +388,46 @@ export class ApiService {
     });
   }
 
+  startProtocolAuth(id: string, methodId: string): Promise<import('./types').ProtocolAuthFlow> {
+    return this.request<import('./types').ProtocolAuthFlow>(
+      `/api/agents/${encodeURIComponent(id)}/auth/protocol/${encodeURIComponent(methodId)}`,
+      { method: 'POST' },
+    );
+  }
+
+  fetchProtocolAuthFlow(flowId: string): Promise<import('./types').ProtocolAuthFlow> {
+    return this.request<import('./types').ProtocolAuthFlow>(
+      `/api/protocol-auth/${encodeURIComponent(flowId)}`,
+    );
+  }
+
+  cancelProtocolAuthFlow(flowId: string): Promise<import('./types').ProtocolAuthFlow> {
+    return this.request<import('./types').ProtocolAuthFlow>(
+      `/api/protocol-auth/${encodeURIComponent(flowId)}/cancel`,
+      { method: 'POST' },
+    );
+  }
+
+  fetchProtocolAuthElicitations(
+    flowId: string,
+  ): Promise<import('./types').ProtocolAuthElicitation[]> {
+    return this.request<import('./types').ProtocolAuthElicitation[]>(
+      `/api/protocol-auth/${encodeURIComponent(flowId)}/elicitations`,
+    );
+  }
+
+  async respondProtocolAuthElicitation(
+    flowId: string,
+    id: string,
+    action: string,
+    content?: unknown,
+  ): Promise<void> {
+    await this.request(
+      `/api/protocol-auth/${encodeURIComponent(flowId)}/elicitations/${encodeURIComponent(id)}/respond`,
+      { method: 'POST', body: content !== undefined ? { action, content } : { action } },
+    );
+  }
+
   /** The opaque flow id is the only value the browser sends to open the PTY. */
   agentAuthSocketUrl(flowId: string): string {
     const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';

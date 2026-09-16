@@ -90,17 +90,29 @@ impl Harness {
     }
 
     async fn request(&self, method: &str, uri: &str) -> (u16, Value) {
+        self.request_with_body(method, uri, None).await
+    }
+
+    async fn request_with_body(
+        &self,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "127.0.0.1:8765");
+        let builder = if body.is_some() {
+            builder.header("content-type", "application/json")
+        } else {
+            builder
+        };
+        let bytes = body.map(|v| v.to_string()).unwrap_or_default();
         let response = self
             .app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .header("host", "127.0.0.1:8765")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(builder.body(Body::from(bytes)).unwrap())
             .await
             .unwrap();
         let status = response.status().as_u16();
@@ -439,11 +451,19 @@ async fn web_authentication_middleware_protects_every_auth_route() {
     let routes = [
         ("GET", "/api/agents/full/auth"),
         ("POST", "/api/agents/full/auth/api-key"),
+        ("POST", "/api/agents/full/auth/protocol/api-key"),
         ("POST", "/api/agents/full/logout"),
         ("POST", "/api/agents/full/auth/terminal/tui"),
         ("GET", "/api/agent-auth/any-flow"),
         ("POST", "/api/agent-auth/any-flow/cancel"),
         ("GET", "/api/agent-auth/any-flow/ws"),
+        ("GET", "/api/protocol-auth/any-flow"),
+        ("POST", "/api/protocol-auth/any-flow/cancel"),
+        ("GET", "/api/protocol-auth/any-flow/elicitations"),
+        (
+            "POST",
+            "/api/protocol-auth/any-flow/elicitations/e1/respond",
+        ),
     ];
     for (method, uri) in routes {
         let response = app
@@ -481,4 +501,204 @@ async fn web_authentication_middleware_protects_every_auth_route() {
         .unwrap();
     assert_eq!(response.status(), 403);
     sessions.shutdown_all().await;
+}
+
+/// Observed state starts unknown and never derives from the logout capability.
+#[tokio::test]
+async fn observed_state_is_unknown_until_evidence() {
+    let harness = Harness::new(&[("full", "auth")]);
+    let (status, body) = harness.request("GET", "/api/agents/full/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "unknown");
+    // Capability alone never implies a login.
+    assert_eq!(body["logout_supported"], true);
+    harness.sessions.shutdown_all().await;
+}
+
+/// A successful `agent` method records observed authenticated; a logout
+/// records authentication_required. The view carries both halves.
+#[tokio::test]
+async fn observed_state_follows_authenticate_and_logout() {
+    let harness = Harness::new(&[("full", "auth")]);
+    let (status, body) = harness
+        .request("POST", "/api/agents/full/auth/api-key")
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "authenticated");
+
+    let (status, body) = harness.request("POST", "/api/agents/full/logout").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "authentication_required");
+    harness.sessions.shutdown_all().await;
+}
+
+/// Stable `auth_required` records observed authentication_required while the
+/// chat stays intact.
+#[tokio::test]
+async fn auth_required_records_observed_state() {
+    let harness = Harness::new(&[("gated", "auth-required")]);
+    let (status, body) = harness.request("GET", "/api/agents/gated/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "unknown");
+
+    let project = harness
+        .hub
+        .create_project("demo".into(), harness.root.path().display().to_string())
+        .unwrap();
+    let chat = harness
+        .hub
+        .create_chat(&project.id, "gated", None)
+        .await
+        .unwrap();
+    let (status, _) = harness
+        .request("POST", &format!("/api/chats/{}/resume", chat.chat.id))
+        .await;
+    assert_eq!(status, 409);
+
+    let (status, body) = harness.request("GET", "/api/agents/gated/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "authentication_required");
+    harness.sessions.shutdown_all().await;
+}
+
+/// A legacy OpenCode descriptor becomes a terminal flow, never `authenticate`.
+#[tokio::test]
+async fn legacy_opencode_bridge_runs_in_a_terminal() {
+    let harness = Harness::new(&[("legacy", "auth-legacy-opencode")]);
+    let (status, body) = harness.request("GET", "/api/agents/legacy/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["methods"][0]["type"], "terminal");
+    assert_eq!(body["methods"][0]["supported"], TERMINAL_AUTH_SUPPORTED);
+    assert_eq!(body["observed_state"], "unknown");
+
+    // The legacy method must not fall through to ordinary authenticate.
+    let (status, body) = harness
+        .request("POST", "/api/agents/legacy/auth/opencode-login")
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(harness.recorded("legacy", "authenticate.json").is_none());
+
+    // The client advertised the legacy bridge capability.
+    let recorded = harness.recorded("legacy", "initialize.json").unwrap();
+    assert_eq!(recorded[0]["_meta"]["terminal-auth"], Value::Bool(true));
+    harness.sessions.shutdown_all().await;
+}
+
+/// A legacy Copilot descriptor becomes a terminal flow with its own command.
+#[tokio::test]
+async fn legacy_copilot_bridge_runs_in_a_terminal() {
+    let harness = Harness::new(&[("legacy", "auth-legacy-copilot")]);
+    let (status, body) = harness.request("GET", "/api/agents/legacy/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["methods"][0]["type"], "terminal");
+
+    let (status, body) = harness
+        .request("POST", "/api/agents/legacy/auth/copilot-login")
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(harness.recorded("legacy", "authenticate.json").is_none());
+    harness.sessions.shutdown_all().await;
+}
+
+/// A protocol flow surfaces a request-scoped URL elicitation and completes
+/// on accept without leaking secrets to durable chat history.
+#[tokio::test]
+async fn protocol_flow_serves_a_url_elicitation() {
+    let harness = Harness::new(&[("codex", "auth-codex-url")]);
+    let (status, flow) = harness
+        .request("POST", "/api/agents/codex/auth/protocol/codex-oauth")
+        .await;
+    assert_eq!(status, 200, "{flow}");
+    let flow_id = flow["flow_id"].as_str().unwrap().to_owned();
+    assert_eq!(flow_id.len(), 64);
+
+    // The flow waits for explicit user action instead of hanging in running.
+    let mut saw_waiting = false;
+    for _ in 0..100 {
+        let (status, view) = harness
+            .request("GET", &format!("/api/protocol-auth/{flow_id}"))
+            .await;
+        assert_eq!(status, 200, "{view}");
+        if view["state"] == "waiting_for_user" {
+            saw_waiting = true;
+            break;
+        }
+        if view["state"] == "succeeded" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        saw_waiting,
+        "the URL step never surfaced as waiting_for_user"
+    );
+
+    let (status, elicitations) = harness
+        .request("GET", &format!("/api/protocol-auth/{flow_id}/elicitations"))
+        .await;
+    assert_eq!(status, 200, "{elicitations}");
+    let list = elicitations.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["mode"], "url");
+    let url = list[0]["url"].as_str().unwrap();
+    assert!(url.contains("example.invalid"), "{url}");
+    assert!(url.contains("ABCD-1234"), "the complete URL must be shown");
+
+    // The elicitation id is flow-scoped; resolve it from the list.
+    let eid = list[0]["id"].as_str().unwrap().to_owned();
+    let (status, body) = harness
+        .request_with_body(
+            "POST",
+            &format!("/api/protocol-auth/{flow_id}/elicitations/{eid}/respond"),
+            Some(serde_json::json!({"action": "accept"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+
+    let mut succeeded = false;
+    for _ in 0..100 {
+        let (status, view) = harness
+            .request("GET", &format!("/api/protocol-auth/{flow_id}"))
+            .await;
+        assert_eq!(status, 200, "{view}");
+        if view["state"] == "succeeded" {
+            succeeded = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(succeeded, "the URL flow never succeeded after accept");
+
+    let (status, body) = harness.request("GET", "/api/agents/codex/auth").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["observed_state"], "authenticated");
+    let _ = (status, body);
+    harness.sessions.shutdown_all().await;
+}
+
+/// Cancelling a protocol flow ends it promptly; it never sticks in running.
+#[tokio::test]
+async fn protocol_flow_cancel_ends_promptly() {
+    let harness = Harness::new(&[("anti", "auth-antigravity")]);
+    let (status, flow) = harness
+        .request(
+            "POST",
+            "/api/agents/anti/auth/protocol/antigravity-interactive",
+        )
+        .await;
+    assert_eq!(status, 200, "{flow}");
+    let flow_id = flow["flow_id"].as_str().unwrap().to_owned();
+
+    let (status, view) = harness
+        .request("POST", &format!("/api/protocol-auth/{flow_id}/cancel"))
+        .await;
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["state"], "cancelled");
+
+    let (status, view) = harness
+        .request("GET", &format!("/api/protocol-auth/{flow_id}"))
+        .await;
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["state"], "cancelled");
+    harness.sessions.shutdown_all().await;
 }

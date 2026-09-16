@@ -1,10 +1,15 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import type { AgentAuthState, AgentSummary } from '../../core/api/types';
+import type {
+  AgentAuthState,
+  AgentSummary,
+  ProtocolAuthElicitation,
+  ProtocolAuthFlow,
+} from '../../core/api/types';
 import { AgentCardComponent } from '../../agents/agent-card/agent-card';
 import { AuthTerminalDialogComponent } from '../../agents/auth-terminal-dialog/auth-terminal-dialog';
 import { ConfirmDialogComponent } from '../../agents/confirm-dialog/confirm-dialog';
@@ -23,7 +28,7 @@ import { AppStateService } from '../../state/app-state.service';
   templateUrl: './agents-page.html',
   styleUrl: './agents-page.scss',
 })
-export class AgentsPageComponent implements OnInit {
+export class AgentsPageComponent implements OnInit, OnDestroy {
   readonly state = inject(AppStateService);
   private readonly dialog = inject(MatDialog);
   private readonly route = inject(ActivatedRoute);
@@ -31,6 +36,14 @@ export class AgentsPageComponent implements OnInit {
   readonly actionError = signal('');
   readonly notice = signal('');
   readonly targetAgentId = signal<string | null>(null);
+  private polling = new Map<string, { cancelled: boolean }>();
+  private readonly pollIntervalMs = 1000;
+  private readonly pollTimeoutMs = 10 * 60 * 1000;
+
+  ngOnDestroy(): void {
+    for (const entry of this.polling.values()) entry.cancelled = true;
+    this.polling.clear();
+  }
 
   ngOnInit(): void {
     const initialTarget = this.route.snapshot.queryParamMap.get('agent');
@@ -68,6 +81,18 @@ export class AgentsPageComponent implements OnInit {
     return this.state.authErrors()[id] ?? null;
   }
 
+  protocolFlowFor(id: string): ProtocolAuthFlow | null {
+    return this.state.protocolFlowsByAgent()[id] ?? null;
+  }
+
+  protocolElicitationsFor(flowId: string): ProtocolAuthElicitation[] {
+    return this.state.protocolElicitationsByFlow()[flowId] ?? [];
+  }
+
+  protocolLoadingFor(id: string): boolean {
+    return this.state.protocolLoading().has(id);
+  }
+
   async reloadAuth(agent: AgentSummary): Promise<void> {
     try {
       await this.state.loadAgentAuth(agent.id);
@@ -76,23 +101,123 @@ export class AgentsPageComponent implements OnInit {
     }
   }
 
+  /** Starts an async protocol flow so the card never sticks in Checking sign-in. */
   async authenticate(agent: AgentSummary, methodId: string): Promise<void> {
     this.actionError.set('');
     this.notice.set('');
+    this.stopPolling(agent.id);
     try {
-      await this.state.authenticateAgent(agent.id, methodId);
-      this.notice.set(`Signed in to ${agent.display_name}.`);
+      const flow = await this.state.startProtocolAgentAuth(agent.id, methodId);
+      this.pollProtocolFlow(agent, flow.flow_id);
     } catch {
       // The store records the method-level error.
     }
+  }
+
+  async cancelProtocol(agent: AgentSummary): Promise<void> {
+    const flow = this.protocolFlowFor(agent.id);
+    if (!flow) return;
+    try {
+      await this.state.cancelProtocolAgentAuth(agent.id, flow.flow_id);
+      await this.state.loadAgentAuth(agent.id).catch(() => undefined);
+    } catch {
+      // The card shows the flow state.
+    } finally {
+      this.stopPolling(agent.id);
+    }
+  }
+
+  dismissProtocol(agent: AgentSummary): void {
+    this.stopPolling(agent.id);
+    this.state.clearProtocolAgentAuth(agent.id);
+  }
+
+  async respondProtocolElicitation(
+    agent: AgentSummary,
+    event: { id: string; action: string },
+  ): Promise<void> {
+    const flow = this.protocolFlowFor(agent.id);
+    if (!flow) return;
+    try {
+      await this.state.respondProtocolElicitation(flow.flow_id, event.id, event.action);
+      await this.state.refreshProtocolAgentAuth(agent.id, flow.flow_id).catch(() => undefined);
+    } catch (error: unknown) {
+      this.actionError.set(this.message(error, 'Failed to answer the authentication step'));
+    }
+  }
+
+  private pollProtocolFlow(agent: AgentSummary, flowId: string): void {
+    const handle = { cancelled: false };
+    this.polling.set(agent.id, handle);
+    const started = Date.now();
+    const tick = async (): Promise<void> => {
+      if (handle.cancelled) return;
+      if (Date.now() - started > this.pollTimeoutMs) {
+        try {
+          await this.state.cancelProtocolAgentAuth(agent.id, flowId);
+        } catch {
+          // Timeout still ends polling.
+        }
+        this.actionError.set(`Authentication for ${agent.display_name} timed out. Retry or Cancel.`);
+        this.stopPolling(agent.id);
+        return;
+      }
+      try {
+        const flow = await this.state.refreshProtocolAgentAuth(agent.id, flowId);
+        if (flow.state === 'succeeded') {
+          const observed = this.authFor(agent.id)?.observed_state;
+          if (observed === 'authenticated') {
+            this.notice.set(`Authentication completed for ${agent.display_name}.`);
+          } else {
+            this.notice.set(
+              `Authentication finished for ${agent.display_name}. Status is ${observed ?? 'unknown'}.`,
+            );
+          }
+          this.stopPolling(agent.id);
+          return;
+        }
+        if (flow.state === 'failed' || flow.state === 'timed_out' || flow.state === 'cancelled') {
+          this.stopPolling(agent.id);
+          return;
+        }
+      } catch {
+        this.stopPolling(agent.id);
+        return;
+      }
+      if (!handle.cancelled) {
+        setTimeout(() => void tick(), this.pollIntervalMs);
+      }
+    };
+    void tick();
+  }
+
+  private stopPolling(agentId: string): void {
+    const handle = this.polling.get(agentId);
+    if (handle) handle.cancelled = true;
+    this.polling.delete(agentId);
   }
 
   async logout(agent: AgentSummary): Promise<void> {
     this.actionError.set('');
     this.notice.set('');
     try {
+      const view = await this.state.logoutAgent(agent.id);
+      if (view.observed_state === 'authentication_required') {
+        this.notice.set(`Signed out of ${agent.display_name}.`);
+      } else {
+        this.notice.set(`Logout finished for ${agent.display_name}. Status is ${view.observed_state}.`);
+      }
+    } catch {
+      // The store records the error.
+    }
+  }
+
+  async clearCredentials(agent: AgentSummary): Promise<void> {
+    this.actionError.set('');
+    this.notice.set('');
+    try {
       await this.state.logoutAgent(agent.id);
-      this.notice.set(`Signed out of ${agent.display_name}.`);
+      this.notice.set(`Cleared saved sign-in for ${agent.display_name}.`);
     } catch {
       // The store records the error.
     }

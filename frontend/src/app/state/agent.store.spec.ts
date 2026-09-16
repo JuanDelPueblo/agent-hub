@@ -23,18 +23,21 @@ function makeApi() {
       methods: [],
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'unknown',
     })),
     authenticateAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({
       agent_id: id,
       methods: [],
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'authenticated',
     })),
     logoutAgent: vi.fn(async (id: string): Promise<AgentAuthState> => ({
       agent_id: id,
       methods: [],
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'authentication_required',
     })),
     startTerminalAuth: vi.fn(async () => ({
       flow_id: 'f',
@@ -44,6 +47,26 @@ function makeApi() {
     })),
     fetchAgentEnv: vi.fn(async () => [{ name: 'CODEX_API_KEY', present: true }]),
     updateAgentEnv: vi.fn(async () => [{ name: 'CODEX_API_KEY', present: true }]),
+    startProtocolAuth: vi.fn(async () => ({
+      flow_id: 'p',
+      agent_id: 'a',
+      method_id: 'm',
+      state: 'running' as const,
+    })),
+    fetchProtocolAuthFlow: vi.fn(async (flowId: string) => ({
+      flow_id: flowId,
+      agent_id: 'a',
+      method_id: 'm',
+      state: 'succeeded' as const,
+    })),
+    fetchProtocolAuthElicitations: vi.fn(async () => []),
+    cancelProtocolAuthFlow: vi.fn(async (flowId: string) => ({
+      flow_id: flowId,
+      agent_id: 'a',
+      method_id: 'm',
+      state: 'cancelled' as const,
+    })),
+    respondProtocolAuthElicitation: vi.fn(async () => undefined),
   };
 }
 
@@ -129,15 +152,17 @@ describe('AgentStore', () => {
     await store.loadAuth('codex');
     expect(store.authByAgent()['codex'].logout_supported).toBe(true);
 
-    api.fetchAgentAuth.mockResolvedValueOnce({
+    api.authenticateAgent.mockResolvedValueOnce({
       agent_id: 'codex',
       methods: [{ id: 'm1', name: 'M1', type: 'agent', supported: true }],
       logout_supported: true,
       terminal_supported: true,
+      observed_state: 'authenticated',
     });
     await store.authenticate('codex', 'openai');
     expect(api.authenticateAgent).toHaveBeenCalledWith('codex', 'openai');
     expect(store.authByAgent()['codex'].methods.length).toBe(1);
+    expect(store.authByAgent()['codex'].observed_state).toBe('authenticated');
 
     await store.logout('codex');
     expect(api.logoutAgent).toHaveBeenCalledWith('codex');

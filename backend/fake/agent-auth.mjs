@@ -36,6 +36,11 @@ export class FakeAgentAuth {
     /** @type {Map<string, object>} */
     this.flows = new Map();
     this.authenticated = new Set();
+    this.observed = new Map();
+  }
+
+  observedState(agentId) {
+    return this.observed.get(agentId) ?? 'unknown';
   }
 
   agentView(agentId) {
@@ -46,6 +51,7 @@ export class FakeAgentAuth {
       methods: state.methods.map((method) => ({ ...method })),
       logout_supported: state.logout_supported,
       terminal_supported: true,
+      observed_state: this.observedState(agentId),
     };
   }
 
@@ -98,7 +104,10 @@ export class FakeAgentAuth {
     flow.exit_code = exitCode;
     flow.reason = reason;
     flow.completed_at = new Date().toISOString();
-    if (state === 'succeeded') this.authenticated.add(flow.agent_id);
+    if (state === 'succeeded') {
+      this.authenticated.add(flow.agent_id);
+      this.observed.set(flow.agent_id, 'authenticated');
+    }
     for (const listener of flow.listeners) {
       listener({ type: 'state', ...this.flowView(flow) });
     }

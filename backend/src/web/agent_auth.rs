@@ -9,7 +9,10 @@
 //! method id, and a flow id, so these routes cannot become a remote shell.
 use super::hub::{hub, Result};
 use super::AppState;
-use crate::auth::{AgentAuthView, PtyWindow, TerminalAuthFlow, TerminalAuthFlowView};
+use crate::auth::{
+    AgentAuthView, ProtocolAuthFlowView, ProtocolElicitationView, PtyWindow, TerminalAuthFlow,
+    TerminalAuthFlowView,
+};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -121,6 +124,57 @@ pub async fn cancel_terminal_auth(
     Path(flow_id): Path<String>,
 ) -> Result<Json<TerminalAuthFlowView>> {
     Ok(Json(hub(&s)?.cancel_terminal_auth(&flow_id)?))
+}
+
+/// Starts an asynchronous protocol flow for one `agent` method.
+///
+/// The response carries the opaque flow id at once. The browser polls the
+/// flow and its request-scoped elicitations instead of blocking on one
+/// long `authenticate` RPC.
+pub async fn start_protocol_auth(
+    State(s): State<AppState>,
+    Path((id, method_id)): Path<(String, String)>,
+) -> Result<Json<ProtocolAuthFlowView>> {
+    Ok(Json(hub(&s)?.start_protocol_auth(&id, &method_id).await?))
+}
+
+pub async fn protocol_auth_flow(
+    State(s): State<AppState>,
+    Path(flow_id): Path<String>,
+) -> Result<Json<ProtocolAuthFlowView>> {
+    Ok(Json(hub(&s)?.protocol_auth_flow(&flow_id).await?))
+}
+
+pub async fn cancel_protocol_auth(
+    State(s): State<AppState>,
+    Path(flow_id): Path<String>,
+) -> Result<Json<ProtocolAuthFlowView>> {
+    Ok(Json(hub(&s)?.cancel_protocol_auth(&flow_id).await?))
+}
+
+pub async fn protocol_auth_elicitations(
+    State(s): State<AppState>,
+    Path(flow_id): Path<String>,
+) -> Result<Json<Vec<ProtocolElicitationView>>> {
+    Ok(Json(hub(&s)?.protocol_auth_elicitations(&flow_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolElicitationInput {
+    pub action: String,
+    pub content: Option<serde_json::Value>,
+}
+
+pub async fn respond_protocol_auth_elicitation(
+    State(s): State<AppState>,
+    Path((flow_id, eid)): Path<(String, String)>,
+    Json(input): Json<ProtocolElicitationInput>,
+) -> Result<Json<serde_json::Value>> {
+    let ok = hub(&s)?
+        .respond_protocol_auth_elicitation(&flow_id, &eid, &input.action, input.content)
+        .await?;
+    Ok(Json(serde_json::json!({ "success": ok })))
 }
 
 /// The live terminal socket of one flow.

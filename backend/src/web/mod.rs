@@ -210,13 +210,17 @@ pub fn router(state: AppState) -> Router {
             "/api/agents/:id/environment",
             get(agents::agent_env).patch(agents::update_agent_env),
         )
-        // Agent-level authentication. The static `terminal` segment comes
-        // before the method id, so a terminal start never matches the
-        // `authenticate` route.
+        // Agent-level authentication. The static `terminal` and `protocol`
+        // segments come before the method id, so a flow start never matches
+        // the legacy synchronous `authenticate` route.
         .route("/api/agents/:id/auth", get(agent_auth::agent_auth))
         .route(
             "/api/agents/:id/auth/terminal/:method_id",
             post(agent_auth::start_terminal_auth),
+        )
+        .route(
+            "/api/agents/:id/auth/protocol/:method_id",
+            post(agent_auth::start_protocol_auth),
         )
         .route(
             "/api/agents/:id/auth/:method_id",
@@ -234,6 +238,22 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/agent-auth/:flow_id/ws",
             get(agent_auth::terminal_auth_socket),
+        )
+        .route(
+            "/api/protocol-auth/:flow_id",
+            get(agent_auth::protocol_auth_flow),
+        )
+        .route(
+            "/api/protocol-auth/:flow_id/cancel",
+            post(agent_auth::cancel_protocol_auth),
+        )
+        .route(
+            "/api/protocol-auth/:flow_id/elicitations",
+            get(agent_auth::protocol_auth_elicitations),
+        )
+        .route(
+            "/api/protocol-auth/:flow_id/elicitations/:eid/respond",
+            post(agent_auth::respond_protocol_auth_elicitation),
         )
         .route("/api/status", get(api_get_status))
         .route("/ws", get(ws_handler))
