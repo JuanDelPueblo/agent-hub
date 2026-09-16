@@ -15,6 +15,7 @@
 //! - Terminal input and output stay in memory. They never enter the store,
 //!   a durable event, or the tracing log.
 mod flow;
+mod protocol;
 mod pty;
 mod service;
 
@@ -23,7 +24,12 @@ pub use flow::{
     IDLE_TIMEOUT, MAX_ACTIVE_FLOWS, MAX_ACTIVE_FLOWS_PER_AGENT, MAX_FLOW_LIFETIME,
     MAX_SCROLLBACK_BYTES,
 };
+pub use protocol::{
+    ProtocolAuthFlow, ProtocolAuthFlowView, ProtocolAuthFlows, ProtocolFlowState,
+    MAX_ACTIVE_PROTOCOL_FLOWS, MAX_ACTIVE_PROTOCOL_FLOWS_PER_AGENT, MAX_PROTOCOL_FLOW_LIFETIME,
+};
 pub use pty::{PtyCommand, PtyWindow, TERMINAL_AUTH_SUPPORTED};
 pub use service::{
-    terminal_command, AgentAuthError, AgentAuthService, AgentAuthView, AuthMethodView,
+    legacy_terminal_command, terminal_command, AgentAuthError, AgentAuthService, AgentAuthView,
+    AuthMethodView, ProtocolElicitationView,
 };

@@ -485,6 +485,7 @@ describe('fake backend seed history', () => {
     assert.equal(codex.agent_id, 'codex');
     assert.equal(codex.logout_supported, true);
     assert.equal(codex.terminal_supported, true);
+    assert.equal(codex.observed_state, 'unknown');
     assert.equal(codex.methods.length, 2);
     assert.equal(codex.methods[0].id, 'openai-oauth');
     assert.equal(codex.methods[0].type, 'agent');
@@ -495,19 +496,47 @@ describe('fake backend seed history', () => {
 
     const opencode = state.agentAuth('opencode');
     assert.equal(opencode.logout_supported, false);
+    assert.equal(opencode.observed_state, 'unknown');
     assert.equal(opencode.methods[1].type, 'device_code');
     assert.equal(opencode.methods[1].supported, false);
 
     const afterLogin = state.authenticateAgent('codex', 'openai-oauth');
     assert.equal(afterLogin.agent_id, 'codex');
+    assert.equal(afterLogin.observed_state, 'authenticated');
 
     const afterLogout = state.logoutAgent('codex');
     assert.equal(afterLogout.agent_id, 'codex');
+    assert.equal(afterLogout.observed_state, 'authentication_required');
 
     assert.throws(() => state.authenticateAgent('codex', 'missing'), /Unknown authentication method/);
     assert.throws(() => state.authenticateAgent('opencode', 'device-code'), /unsupported/i);
     assert.throws(() => state.authenticateAgent('codex', 'api-key'), /terminal/i);
     assert.throws(() => state.logoutAgent('opencode'), /does not support logout/);
+  });
+
+  it('runs an async protocol flow with a URL elicitation', () => {
+    const state = new FakeState();
+    const flow = state.startProtocolFlow('codex', 'openai-oauth');
+    assert.equal(flow.state, 'waiting_for_user');
+    assert.equal(flow.flow_id.length, 64);
+    const elicitations = state.listProtocolElicitations(flow.flow_id);
+    assert.equal(elicitations.length, 1);
+    assert.equal(elicitations[0].mode, 'url');
+    assert.ok(elicitations[0].url.includes('example.invalid'));
+    assert.ok(elicitations[0].url.includes('ABCD-1234'));
+
+    state.respondProtocolElicitation(flow.flow_id, elicitations[0].id, 'accept', null);
+    const view = state.protocolFlowView(flow.flow_id);
+    assert.equal(view.state, 'succeeded');
+    assert.equal(state.agentAuth('codex').observed_state, 'authenticated');
+  });
+
+  it('cancels a protocol flow without sticking in running', () => {
+    const state = new FakeState();
+    const flow = state.startProtocolFlow('codex', 'openai-oauth');
+    const cancelled = state.cancelProtocolFlow(flow.flow_id);
+    assert.equal(cancelled.state, 'cancelled');
+    assert.equal(state.protocolFlowView(flow.flow_id).state, 'cancelled');
   });
 
   function attach(state, flowId) {

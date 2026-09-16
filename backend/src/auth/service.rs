@@ -11,8 +11,13 @@
 use super::flow::{
     SuccessHook, TerminalAuthFlow, TerminalAuthFlowView, TerminalAuthFlows, TerminalFlowState,
 };
+use super::protocol::{
+    ProtocolAuthFlow, ProtocolAuthFlowView, ProtocolAuthFlows, ProtocolFlowState,
+};
 use super::pty::{PtyCommand, TERMINAL_AUTH_SUPPORTED};
-use crate::acp::auth::{AgentAuthState, AuthMethodKind, TerminalAuthMethod};
+use crate::acp::auth::{
+    AgentAuthState, AuthMethodKind, LegacyTerminalAuth, ObservedAuthState, TerminalAuthMethod,
+};
 use crate::acp::callbacks::CallbackPolicy;
 use crate::acp::{AcpClient, StderrPolicy};
 use crate::agents::{AgentCatalog, AgentRuntime};
@@ -73,6 +78,13 @@ pub struct AuthMethodView {
 }
 
 /// The authentication state of one installed agent.
+///
+/// `logout_supported` is a capability only. `observed_state` is the
+/// provider-neutral evidence Batey actually saw: `unknown` on a fresh
+/// process, `authentication_required` after a stable `auth_required` or a
+/// successful logout, and `authenticated` after a successful supported flow.
+/// Batey never persists `authenticated` as durable truth; it lives in
+/// memory and resets to `unknown` on restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentAuthView {
     pub agent_id: String,
@@ -81,10 +93,11 @@ pub struct AgentAuthView {
     pub logout_supported: bool,
     /// Whether this build runs terminal authentication at all.
     pub terminal_supported: bool,
+    pub observed_state: ObservedAuthState,
 }
 
 impl AgentAuthView {
-    fn new(agent_id: &str, state: &AgentAuthState) -> Self {
+    fn new(agent_id: &str, state: &AgentAuthState, observed: ObservedAuthState) -> Self {
         Self {
             agent_id: agent_id.to_owned(),
             methods: state
@@ -100,6 +113,37 @@ impl AgentAuthView {
                 .collect(),
             logout_supported: state.logout_supported,
             terminal_supported: TERMINAL_AUTH_SUPPORTED,
+            observed_state: observed,
+        }
+    }
+}
+
+/// One request-scoped elicitation pending on a protocol flow.
+///
+/// Only the display fields travel to the browser. Form values and URL
+/// secrets never enter durable storage; the browser answers through the
+/// flow-scoped respond endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtocolElicitationView {
+    pub id: String,
+    pub mode: String,
+    pub message: String,
+    pub schema: Option<serde_json::Value>,
+    pub url: Option<String>,
+    pub elicitation_id: Option<String>,
+    pub tool_call_id: Option<String>,
+}
+
+impl From<crate::acp::callbacks::PendingElicitationInfo> for ProtocolElicitationView {
+    fn from(info: crate::acp::callbacks::PendingElicitationInfo) -> Self {
+        Self {
+            id: info.id,
+            mode: info.mode,
+            message: info.message,
+            schema: info.schema,
+            url: info.url,
+            elicitation_id: info.elicitation_id,
+            tool_call_id: info.tool_call_id,
         }
     }
 }
@@ -116,10 +160,14 @@ pub struct AgentAuthService {
     /// to Batey, so no browser path and no project workspace is involved.
     work_dir: PathBuf,
     flows: Arc<TerminalAuthFlows>,
+    protocol_flows: Arc<ProtocolAuthFlows>,
     /// Probe results per agent. A plain `RwLock` keeps invalidation
     /// synchronous, so a terminal success can drop its entry inside the
     /// transition to `succeeded`.
     cache: RwLock<HashMap<String, CachedState>>,
+    /// Observed authentication evidence per agent. In-memory only; a fresh
+    /// process starts at `Unknown`. Never persisted as durable truth.
+    observed: RwLock<HashMap<String, ObservedAuthState>>,
     /// When the cache of an agent was last dropped because authentication
     /// may have changed. A probe that finished before that instant may carry
     /// the pre-change state, so it must not re-cache.
@@ -153,7 +201,9 @@ impl AgentAuthService {
             sessions,
             work_dir,
             flows: Arc::new(TerminalAuthFlows::new()),
+            protocol_flows: Arc::new(ProtocolAuthFlows::new()),
             cache: RwLock::new(HashMap::new()),
+            observed: RwLock::new(HashMap::new()),
             invalidated_at: RwLock::new(HashMap::new()),
             probe_lock: tokio::sync::Mutex::new(()),
             events: Arc::new(EventLog::new(PROBE_EVENT_CAPACITY)),
@@ -162,14 +212,65 @@ impl AgentAuthService {
     }
 
     /// The authentication state of one agent. A recent probe answers without
-    /// starting another process.
+    /// starting another process. The observed state travels alongside the
+    /// capability-only `logout_supported`, never derived from it.
     pub async fn auth_view(&self, agent_id: &str) -> AuthResult<AgentAuthView> {
         let state = self.state(agent_id, false).await?;
-        Ok(AgentAuthView::new(agent_id, &state))
+        Ok(AgentAuthView::new(
+            agent_id,
+            &state,
+            self.observed_state(agent_id),
+        ))
+    }
+
+    /// The in-memory observed state. `Unknown` on a fresh process.
+    pub fn observed_state(&self, agent_id: &str) -> ObservedAuthState {
+        self.observed
+            .read()
+            .expect("agent auth observed lock poisoned")
+            .get(agent_id)
+            .copied()
+            .unwrap_or(ObservedAuthState::Unknown)
+    }
+
+    fn set_observed(&self, agent_id: &str, state: ObservedAuthState) {
+        self.observed
+            .write()
+            .expect("agent auth observed lock poisoned")
+            .insert(agent_id.to_owned(), state);
+    }
+
+    /// Records that Batey saw a stable `auth_required` for this agent.
+    pub fn note_auth_required(&self, agent_id: &str) {
+        self.set_observed(agent_id, ObservedAuthState::AuthenticationRequired);
+    }
+
+    /// Records a successful supported authentication flow.
+    pub fn note_authenticated(&self, agent_id: &str) {
+        self.set_observed(agent_id, ObservedAuthState::Authenticated);
+    }
+
+    /// Reinforces `authenticated` after a session setup succeeded.
+    ///
+    /// Only moves `AuthenticationRequired` forward. `Unknown` stays
+    /// `Unknown`: a session that never needed auth is not evidence of a
+    /// login. `Authenticated` stays as it is.
+    pub fn note_session_success(&self, agent_id: &str) {
+        let mut observed = self
+            .observed
+            .write()
+            .expect("agent auth observed lock poisoned");
+        if observed.get(agent_id) == Some(&ObservedAuthState::AuthenticationRequired) {
+            observed.insert(agent_id.to_owned(), ObservedAuthState::Authenticated);
+        }
     }
 
     /// Runs the stable `authenticate` method for one advertised `agent`
     /// method, then reads the authoritative state again.
+    ///
+    /// A success records observed `authenticated`. It never claims success
+    /// it did not get: an agent rejection stays an error and the observed
+    /// state is unchanged.
     pub async fn authenticate(&self, agent_id: &str, method_id: &str) -> AuthResult<AgentAuthView> {
         let client = self.connect(agent_id).await?;
         let state = client.auth_state().await;
@@ -192,6 +293,9 @@ impl AgentAuthService {
                 AuthMethodKind::Terminal(_) => Err(AgentAuthError::Invalid(format!(
                     "Authentication method '{method_id}' runs in a terminal. Start a terminal authentication flow instead."
                 ))),
+                AuthMethodKind::LegacyTerminal(_) => Err(AgentAuthError::Invalid(format!(
+                    "Authentication method '{method_id}' runs its advertised login command in a terminal. Start a terminal authentication flow instead."
+                ))),
                 AuthMethodKind::Unsupported(kind) => Err(AgentAuthError::Invalid(format!(
                     "Authentication method '{method_id}' uses the unsupported type '{kind}'"
                 ))),
@@ -199,6 +303,7 @@ impl AgentAuthService {
         };
         client.shutdown().await;
         outcome?;
+        self.note_authenticated(agent_id);
         self.refresh_after_change(agent_id).await
     }
 
@@ -206,7 +311,9 @@ impl AgentAuthService {
     /// authoritative state again.
     ///
     /// Batey chats, sessions, and history are untouched. Logout only
-    /// removes the credentials the agent itself holds.
+    /// removes the credentials the agent itself holds. A success records
+    /// observed `authentication_required`; the capability alone never
+    /// implied `authenticated`.
     pub async fn logout(&self, agent_id: &str) -> AuthResult<AgentAuthView> {
         let client = self.connect(agent_id).await?;
         let supported = client.auth_state().await.logout_supported;
@@ -223,14 +330,18 @@ impl AgentAuthService {
         };
         client.shutdown().await;
         outcome?;
+        self.note_auth_required(agent_id);
         self.refresh_after_change(agent_id).await
     }
 
     /// Starts a terminal authentication flow for one advertised `terminal`
-    /// method.
+    /// method or one legacy bridge method.
     ///
-    /// The command comes from the installed runtime and from the method the
-    /// agent advertised. Nothing in it comes from the request.
+    /// A stable method reuses the installed runtime plus the advertised
+    /// args/env. A legacy bridge runs the advertised command/args from the
+    /// agent's `initialize` response. Nothing in either comes from the
+    /// request. Both run in the same PTY lifecycle, never through a shell,
+    /// and never reach `authenticate`.
     pub async fn start_terminal(
         self: &Arc<Self>,
         agent_id: &str,
@@ -243,13 +354,28 @@ impl AgentAuthService {
         }
         let runtime = self.runtime(agent_id)?;
         let state = self.state(agent_id, true).await?;
-        let method = state.method(method_id).ok_or_else(|| {
-            AgentAuthError::NotFound(format!(
-                "Agent '{agent_id}' does not advertise the authentication method '{method_id}'"
-            ))
-        })?;
-        let terminal = match &method.kind {
-            AuthMethodKind::Terminal(terminal) => terminal,
+        let method = state
+            .method(method_id)
+            .ok_or_else(|| {
+                AgentAuthError::NotFound(format!(
+                    "Agent '{agent_id}' does not advertise the authentication method '{method_id}'"
+                ))
+            })
+            .cloned()?;
+
+        let cwd = self.work_dir()?;
+        let base_env = self.agent_env(&runtime);
+        let command = match &method.kind {
+            AuthMethodKind::Terminal(terminal) => {
+                terminal_command(&runtime, terminal, &base_env, &cwd)
+            }
+            AuthMethodKind::LegacyTerminal(legacy) => {
+                legacy_terminal_command(legacy, &base_env, &cwd).map_err(|error| {
+                    AgentAuthError::Invalid(format!(
+                        "Authentication method '{method_id}' carries an invalid legacy login command: {error}"
+                    ))
+                })?
+            }
             AuthMethodKind::Agent => {
                 return Err(AgentAuthError::Invalid(format!(
                     "Authentication method '{method_id}' is not a terminal method"
@@ -261,19 +387,18 @@ impl AgentAuthService {
                 )))
             }
         };
-
-        let cwd = self.work_dir()?;
-        let command = terminal_command(&runtime, terminal, &self.agent_env(&runtime), &cwd);
         // A successful terminal command changes the agent's stored
-        // credentials. The hook drops the cached pre-login state inside the
-        // transition to `succeeded`, so a client that reacts to the success
-        // always reads fresh state and never the stale 15-second entry.
+        // credentials. The hook drops the cached pre-login state and records
+        // observed `authenticated` inside the transition to `succeeded`, so
+        // a client that reacts to the success always reads fresh state and
+        // never the stale 15-second entry.
         let on_success: SuccessHook = {
             let service = Arc::downgrade(self);
             let agent_id = agent_id.to_owned();
             Arc::new(move || {
                 if let Some(service) = service.upgrade() {
                     service.invalidate_auth_cache(&agent_id);
+                    service.note_authenticated(&agent_id);
                 }
             })
         };
@@ -301,9 +426,271 @@ impl AgentAuthService {
         Ok(flow.view())
     }
 
+    /// Starts an asynchronous protocol authentication flow for one
+    /// advertised `agent` method.
+    ///
+    /// The browser request returns at once with a running flow id. The ACP
+    /// `authenticate` RPC runs in the background so a long device-code or
+    /// URL step never ties up the request. Elicitations stay request-scoped
+    /// on the flow and never reach durable chat events.
+    pub async fn start_protocol(
+        self: &Arc<Self>,
+        agent_id: &str,
+        method_id: &str,
+    ) -> AuthResult<ProtocolAuthFlowView> {
+        let state = self.state(agent_id, true).await?;
+        let method = state
+            .method(method_id)
+            .ok_or_else(|| {
+                AgentAuthError::NotFound(format!(
+                    "Agent '{agent_id}' does not advertise the authentication method '{method_id}'"
+                ))
+            })
+            .cloned()?;
+        match &method.kind {
+            AuthMethodKind::Agent => {}
+            AuthMethodKind::Terminal(_) | AuthMethodKind::LegacyTerminal(_) => {
+                return Err(AgentAuthError::Invalid(format!(
+                    "Authentication method '{method_id}' runs in a terminal. Start a terminal authentication flow instead."
+                )))
+            }
+            AuthMethodKind::Unsupported(kind) => {
+                return Err(AgentAuthError::Invalid(format!(
+                    "Authentication method '{method_id}' uses the unsupported type '{kind}'"
+                )))
+            }
+        }
+        let flow = self
+            .protocol_flows
+            .create(agent_id, method_id)
+            .map_err(|error| AgentAuthError::Conflict(error.to_string()))?;
+        self.drive_protocol_flow(flow.clone());
+        Ok(flow.view())
+    }
+
+    pub fn protocol_flow(&self, flow_id: &str) -> AuthResult<Arc<ProtocolAuthFlow>> {
+        self.protocol_flows
+            .get(flow_id)
+            .ok_or_else(|| AgentAuthError::NotFound("Authentication flow not found".into()))
+    }
+
+    pub async fn protocol_flow_view(&self, flow_id: &str) -> AuthResult<ProtocolAuthFlowView> {
+        let flow = self.protocol_flow(flow_id)?;
+        let mut view = flow.view();
+        // Derive `waiting_for_user` while elicitations are pending so the
+        // card never sits in a bare `running` with no way to act, even if
+        // the driver poll has not ticked yet.
+        if view.state == ProtocolFlowState::Running {
+            if let Some(client) = flow.client().await {
+                if !client
+                    .callback_handler()
+                    .list_pending_elicitations()
+                    .await
+                    .is_empty()
+                {
+                    view.state = ProtocolFlowState::WaitingForUser;
+                }
+            }
+        }
+        Ok(view)
+    }
+
+    pub async fn cancel_protocol_flow(&self, flow_id: &str) -> AuthResult<ProtocolAuthFlowView> {
+        let flow = self.protocol_flow(flow_id)?;
+        flow.cancel();
+        if let Some(client) = flow.client().await {
+            client
+                .callback_handler()
+                .cancel_pending_elicitations()
+                .await;
+            client.shutdown().await;
+        }
+        Ok(flow.view())
+    }
+
+    pub async fn protocol_elicitations(
+        &self,
+        flow_id: &str,
+    ) -> AuthResult<Vec<ProtocolElicitationView>> {
+        let flow = self.protocol_flow(flow_id)?;
+        let Some(client) = flow.client().await else {
+            return Ok(Vec::new());
+        };
+        Ok(client
+            .callback_handler()
+            .list_pending_elicitations()
+            .await
+            .into_iter()
+            .map(ProtocolElicitationView::from)
+            .collect())
+    }
+
+    pub async fn respond_protocol_elicitation(
+        &self,
+        flow_id: &str,
+        elicitation_id: &str,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> AuthResult<bool> {
+        if !matches!(action, "accept" | "decline" | "cancel") {
+            return Err(AgentAuthError::Invalid(
+                "Elicitation action must be accept, decline, or cancel".into(),
+            ));
+        }
+        let flow = self.protocol_flow(flow_id)?;
+        let Some(client) = flow.client().await else {
+            return Err(AgentAuthError::NotFound(
+                "Authentication flow has no live authentication process".into(),
+            ));
+        };
+        client
+            .callback_handler()
+            .respond_elicitation(elicitation_id, action, content)
+            .await
+            .map_err(|error| AgentAuthError::Invalid(error.to_string()))
+            .map(|_| true)
+    }
+
+    /// Runs the background `authenticate` for one protocol flow.
+    fn drive_protocol_flow(self: &Arc<Self>, flow: Arc<ProtocolAuthFlow>) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let agent_id = flow.agent_id.clone();
+            let method_id = flow.method_id.clone();
+            let deadline = tokio::time::Instant::now() + service.protocol_flows.max_lifetime();
+            // Connect first; a connect failure ends the flow as failed.
+            let client = match service.connect_for_protocol(&agent_id, &flow.id).await {
+                Ok(client) => {
+                    let client = Arc::new(client);
+                    flow.set_client(client.clone()).await;
+                    client
+                }
+                Err(error) => {
+                    flow.finish(ProtocolFlowState::Failed, Some(error.to_string()));
+                    return;
+                }
+            };
+            // The authenticate future owns its client clone so shutdown below
+            // cannot drop it mid-request.
+            let auth_client = client.clone();
+            let auth_method = method_id.clone();
+            let mut auth_fut = Box::pin(auth_client.authenticate(&auth_method));
+            let poll = super::protocol::ProtocolAuthFlows::poll_interval();
+            loop {
+                tokio::select! {
+                    outcome = &mut auth_fut => {
+                        match outcome {
+                            Ok(_) => {
+                                service.note_authenticated(&agent_id);
+                                service.invalidate_auth_cache(&agent_id);
+                                flow.finish(ProtocolFlowState::Succeeded, None);
+                                client.shutdown().await;
+                                // Refresh stopped sessions and probe fresh
+                                // state, like a terminal success does.
+                                if let Err(error) = service.refresh_after_change(&agent_id).await {
+                                    tracing::warn!(
+                                        agent = %agent_id,
+                                        %error,
+                                        "Could not read the agent authentication state after protocol authentication"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                // A cancel that raced success never overwrites:
+                                // `finish` keeps the first outcome.
+                                if flow.state().is_finished() {
+                                    client.shutdown().await;
+                                } else {
+                                    let message = error.to_string();
+                                    flow.finish(ProtocolFlowState::Failed, Some(message));
+                                    client.shutdown().await;
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        flow.finish(
+                            ProtocolFlowState::TimedOut,
+                            Some("The authentication flow reached its time limit".into()),
+                        );
+                        client.callback_handler().cancel_pending_elicitations().await;
+                        client.shutdown().await;
+                        return;
+                    }
+                    _ = tokio::time::sleep(poll) => {
+                        if flow.state().is_finished() {
+                            return;
+                        }
+                        // Surface request-scoped elicitations as an explicit
+                        // waiting state so the UI can offer accept/decline/
+                        // cancel instead of spinning forever.
+                        let pending = client.callback_handler().list_pending_elicitations().await;
+                        // Use the internal hook: waiting only while running.
+                        // The view also derives this, so a missed poll still shows.
+                        if pending.is_empty() {
+                            // Back to running when the user answered.
+                            // `note_waiting(false)` only moves Waiting->Running.
+                            flow.note_waiting(false);
+                        } else {
+                            flow.note_waiting(true);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Starts one agent process for a protocol flow, with a flow-scoped
+    /// session id so its elicitations never mix with chat elicitations.
+    async fn connect_for_protocol(&self, agent_id: &str, flow_id: &str) -> AuthResult<AcpClient> {
+        let runtime = self.runtime(agent_id)?;
+        let cwd = self.work_dir()?;
+        let env = self.agent_env(&runtime);
+        let client = tokio::time::timeout(
+            PROBE_TIMEOUT,
+            AcpClient::spawn(
+                &runtime.launch.command,
+                &runtime.launch.args,
+                &env,
+                &cwd,
+                CallbackPolicy::DenyAll,
+                format!("protocol-auth:{flow_id}"),
+                agent_id.to_owned(),
+                self.events.clone(),
+                None,
+                self.tasks.clone(),
+                vec![cwd.clone()],
+                StderrPolicy::Discard,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            AgentAuthError::Unavailable(format!("Agent '{agent_id}' did not start in time"))
+        })?
+        .map_err(|error| AgentAuthError::Unavailable(error.to_string()))?;
+
+        match tokio::time::timeout(PROBE_TIMEOUT, client.initialize(&cwd)).await {
+            Ok(Ok(_)) => Ok(client),
+            Ok(Err(error)) => {
+                client.shutdown().await;
+                Err(AgentAuthError::Unavailable(format!(
+                    "Agent '{agent_id}' could not report its authentication methods: {error}"
+                )))
+            }
+            Err(_) => {
+                client.shutdown().await;
+                Err(AgentAuthError::Unavailable(format!(
+                    "Agent '{agent_id}' did not answer initialize in time"
+                )))
+            }
+        }
+    }
+
     /// Ends every flow and kills every process tree.
     pub fn shutdown(&self) {
         self.flows.shutdown_all();
+        self.protocol_flows.shutdown_all();
     }
 
     /// Reads the authoritative state again after an authentication change,
@@ -317,7 +704,11 @@ impl AgentAuthService {
             .invalidate_stopped_sessions_for_agent(agent_id)
             .await;
         let state = self.state(agent_id, true).await?;
-        Ok(AgentAuthView::new(agent_id, &state))
+        Ok(AgentAuthView::new(
+            agent_id,
+            &state,
+            self.observed_state(agent_id),
+        ))
     }
 
     /// Refreshes the agent state once a terminal flow succeeds.
@@ -325,6 +716,7 @@ impl AgentAuthService {
     /// A successful terminal command means the agent stored its own
     /// credentials. The stable protocol forbids `authenticate` for that
     /// method, so Batey starts the agent again and reads `initialize`.
+    /// The observed state was already set inside the success transition.
     fn watch_terminal_flow(self: &Arc<Self>, flow: Arc<TerminalAuthFlow>) {
         let service = self.clone();
         tokio::spawn(async move {
@@ -540,6 +932,52 @@ pub fn terminal_command(
     }
 }
 
+/// Builds the legacy bridge invocation from the advertised descriptor.
+///
+/// The program and args come from the agent's `initialize` response, never
+/// from a browser field. The environment is the same sanitized per-agent
+/// base and the cwd is the Batey-owned auth directory. The caller runs the
+/// result directly, never through a shell, under the same PTY lifecycle as
+/// a stable terminal method.
+pub fn legacy_terminal_command(
+    legacy: &LegacyTerminalAuth,
+    base_env: &HashMap<String, String>,
+    cwd: &Path,
+) -> anyhow::Result<PtyCommand> {
+    crate::acp::auth::validate_legacy_terminal_auth(legacy)?;
+    validate_legacy_program(&legacy.command)?;
+    let env: BTreeMap<String, String> = base_env
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    Ok(PtyCommand {
+        program: legacy.command.clone(),
+        args: legacy.args.clone(),
+        env,
+        cwd: cwd.to_path_buf(),
+    })
+}
+
+fn validate_legacy_program(program: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!program.is_empty(), "Legacy login command is empty");
+    anyhow::ensure!(program.len() <= 1024, "Legacy login command is too long");
+    anyhow::ensure!(!program.contains('\0'), "Legacy login command is invalid");
+    if program.contains('/') {
+        // A path must be absolute and must not escape via `..`. A bare name
+        // resolves through `PATH`; a relative path with a slash would depend
+        // on the cwd and is rejected.
+        anyhow::ensure!(
+            program.starts_with('/'),
+            "Legacy login command path must be absolute"
+        );
+        anyhow::ensure!(
+            !program.contains(".."),
+            "Legacy login command path is invalid"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,5 +1048,51 @@ mod tests {
         assert_eq!(command.program, "demo-acp");
         assert_eq!(command.args, vec!["acp", "--stdio"]);
         assert_eq!(command.env.len(), 1);
+    }
+
+    #[test]
+    fn legacy_command_uses_the_advertised_program_and_args() {
+        let legacy = LegacyTerminalAuth {
+            command: "/opt/copilot".into(),
+            args: vec!["login".into()],
+            label: Some("Copilot Login".into()),
+        };
+        let base = HashMap::from([("BASE_ONLY".to_string(), "kept".to_string())]);
+        let command = legacy_terminal_command(&legacy, &base, Path::new("/var/lib/batey")).unwrap();
+        assert_eq!(command.program, "/opt/copilot");
+        assert_eq!(command.args, vec!["login"]);
+        assert_eq!(command.cwd, Path::new("/var/lib/batey"));
+        assert_eq!(
+            command.env.get("BASE_ONLY").map(String::as_str),
+            Some("kept")
+        );
+    }
+
+    #[test]
+    fn legacy_command_rejects_shell_lines_and_relative_paths() {
+        let base = HashMap::new();
+        for command in [
+            "",
+            "opencode; rm -rf /",
+            "a/b/copilot",
+            "/tmp/../etc/passwd",
+        ] {
+            let legacy = LegacyTerminalAuth {
+                command: command.into(),
+                args: Vec::new(),
+                label: None,
+            };
+            assert!(
+                legacy_terminal_command(&legacy, &base, Path::new("/tmp")).is_err(),
+                "accepted {command:?}"
+            );
+        }
+        // Bare names resolve through PATH and stay allowed.
+        let legacy = LegacyTerminalAuth {
+            command: "opencode".into(),
+            args: vec!["auth".into(), "login".into()],
+            label: None,
+        };
+        assert!(legacy_terminal_command(&legacy, &base, Path::new("/tmp")).is_ok());
     }
 }

@@ -5,7 +5,10 @@
 //! error. An HTTP handler calls these methods and maps the error; it never
 //! decides which authentication method to run.
 use super::{HubService, ServiceError, ServiceResult};
-use crate::auth::{AgentAuthError, AgentAuthView, TerminalAuthFlow, TerminalAuthFlowView};
+use crate::auth::{
+    AgentAuthError, AgentAuthView, ProtocolAuthFlowView, ProtocolElicitationView, TerminalAuthFlow,
+    TerminalAuthFlowView,
+};
 use std::sync::Arc;
 
 impl From<AgentAuthError> for ServiceError {
@@ -63,5 +66,54 @@ impl HubService {
     /// The live flow one socket attaches to.
     pub fn terminal_auth_socket(&self, flow_id: &str) -> ServiceResult<Arc<TerminalAuthFlow>> {
         Ok(self.agent_auth.terminal_flow(flow_id)?)
+    }
+
+    /// Starts an asynchronous protocol flow for one advertised `agent`
+    /// method. The browser polls the flow instead of blocking on one long
+    /// `authenticate` RPC.
+    pub async fn start_protocol_auth(
+        &self,
+        agent_id: &str,
+        method_id: &str,
+    ) -> ServiceResult<ProtocolAuthFlowView> {
+        Ok(self.agent_auth.start_protocol(agent_id, method_id).await?)
+    }
+
+    pub async fn protocol_auth_flow(&self, flow_id: &str) -> ServiceResult<ProtocolAuthFlowView> {
+        Ok(self.agent_auth.protocol_flow_view(flow_id).await?)
+    }
+
+    pub async fn cancel_protocol_auth(&self, flow_id: &str) -> ServiceResult<ProtocolAuthFlowView> {
+        Ok(self.agent_auth.cancel_protocol_flow(flow_id).await?)
+    }
+
+    pub async fn protocol_auth_elicitations(
+        &self,
+        flow_id: &str,
+    ) -> ServiceResult<Vec<ProtocolElicitationView>> {
+        Ok(self.agent_auth.protocol_elicitations(flow_id).await?)
+    }
+
+    pub async fn respond_protocol_auth_elicitation(
+        &self,
+        flow_id: &str,
+        elicitation_id: &str,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> ServiceResult<bool> {
+        Ok(self
+            .agent_auth
+            .respond_protocol_elicitation(flow_id, elicitation_id, action, content)
+            .await?)
+    }
+
+    /// Records stable `auth_required` evidence seen by another surface.
+    pub fn note_agent_auth_required(&self, agent_id: &str) {
+        self.agent_auth.note_auth_required(agent_id);
+    }
+
+    /// Reinforces `authenticated` after a session setup succeeded.
+    pub fn note_agent_session_success(&self, agent_id: &str) {
+        self.agent_auth.note_session_success(agent_id);
     }
 }

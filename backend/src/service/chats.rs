@@ -683,6 +683,12 @@ impl HubService {
     }
 
     pub async fn resume_chat(&self, chat_id: &str) -> ServiceResult<ChatView> {
+        // The agent id is needed to record observed auth evidence.
+        let agent_id = self
+            .store
+            .chat(chat_id)
+            .map(|chat| chat.agent)
+            .unwrap_or_default();
         if let Err(error) = self.live(chat_id).await?.resume().await {
             if let Some(rejected) = error.downcast_ref::<crate::acp::SavedConfigRejected>() {
                 return Err(ServiceError::SavedConfigRejected {
@@ -702,7 +708,16 @@ impl HubService {
                     message: message.clone(),
                 });
             }
+            if error.downcast_ref::<crate::acp::AuthRequired>().is_some() && !agent_id.is_empty() {
+                // Stable `auth_required` is observed evidence, never a guess.
+                self.note_agent_auth_required(&agent_id);
+            }
             return Err(error.into());
+        }
+        if !agent_id.is_empty() {
+            // A successful setup reinforces `authenticated` only when Batey
+            // already saw `authentication_required`. `Unknown` stays unknown.
+            self.note_agent_session_success(&agent_id);
         }
         let chat = self.store.chat(chat_id)?;
         Ok(self.view(chat).await)

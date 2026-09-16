@@ -77,12 +77,18 @@ const routes = [
   ['POST', /^\/api\/agents\/([^/]+)\/update$/, updateRegistryAgent],
   // T111 authentication routes. The dedicated agent-auth surface is separate
   // from the per-agent routes, and the flow id stays opaque to the browser.
+  // Protocol flows carry request-scoped elicitations, never durable chat events.
   ['GET', /^\/api\/agents\/([^/]+)\/auth$/, getAgentAuth],
   ['POST', /^\/api\/agents\/([^/]+)\/auth\/terminal\/([^/]+)$/, startTerminalAuth],
+  ['POST', /^\/api\/agents\/([^/]+)\/auth\/protocol\/([^/]+)$/, startProtocolAuth],
   ['POST', /^\/api\/agents\/([^/]+)\/auth\/([^/]+)$/, authenticateAgentRoute],
   ['POST', /^\/api\/agents\/([^/]+)\/logout$/, logoutAgentRoute],
   ['GET', /^\/api\/agent-auth\/([^/]+)$/, getAgentAuthFlow],
   ['POST', /^\/api\/agent-auth\/([^/]+)\/cancel$/, cancelAgentAuthFlow],
+  ['GET', /^\/api\/protocol-auth\/([^/]+)$/, getProtocolAuthFlow],
+  ['POST', /^\/api\/protocol-auth\/([^/]+)\/cancel$/, cancelProtocolAuthFlow],
+  ['GET', /^\/api\/protocol-auth\/([^/]+)\/elicitations$/, listProtocolElicitations],
+  ['POST', /^\/api\/protocol-auth\/([^/]+)\/elicitations\/([^/]+)\/respond$/, respondProtocolElicitation],
   ['GET', /^\/api\/agents\/([^/]+)$/, getAgentDetail],
   ['PATCH', /^\/api\/agents\/([^/]+)$/, editAgent],
   ['DELETE', /^\/api\/agents\/([^/]+)$/, removeAgent],
@@ -378,6 +384,31 @@ function getAgentAuthFlow({ params }) {
 }
 
 function cancelAgentAuthFlow({ params }) { return json(state.cancelFlow(params[0])); }
+
+function startProtocolAuth({ params }) {
+  return json(state.startProtocolFlow(params[0], params[1]), 200);
+}
+
+function getProtocolAuthFlow({ params }) {
+  const flow = state.protocolFlowView(params[0]);
+  if (!flow) throw httpError(404, 'Authentication flow not found');
+  return json(flow);
+}
+
+function cancelProtocolAuthFlow({ params }) { return json(state.cancelProtocolFlow(params[0])); }
+
+function listProtocolElicitations({ params }) {
+  return json(state.listProtocolElicitations(params[0]));
+}
+
+function respondProtocolElicitation({ params, body }) {
+  const action = typeof body.action === 'string' ? body.action : '';
+  if (!['accept', 'decline', 'cancel'].includes(action)) {
+    throw httpError(400, 'Elicitation action must be accept, decline, or cancel');
+  }
+  state.respondProtocolElicitation(params[0], params[1], action, body.content ?? null);
+  return json({ success: true });
+}
 
 function getChat({ params }) {
   return json(state.chatView(requireChat(params[0])));

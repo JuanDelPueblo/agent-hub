@@ -126,6 +126,24 @@ export const AUTH_METHODS = {
       { id: 'example-token', name: 'Example token', type: 'terminal', description: null, supported: true },
     ],
   },
+  antigravity: {
+    logout_supported: false,
+    methods: [
+      { id: 'antigravity-interactive', name: 'Interactive sign-in', type: 'agent', description: 'Complete the interactive step.', supported: true },
+    ],
+  },
+  'opencode-legacy': {
+    logout_supported: false,
+    methods: [
+      { id: 'opencode-login', name: 'Log in with OpenCode', type: 'terminal', description: 'Run `opencode auth login` in the terminal', supported: true },
+    ],
+  },
+  copilot: {
+    logout_supported: true,
+    methods: [
+      { id: 'copilot-login', name: 'Log in with Copilot CLI', type: 'terminal', description: 'Run `copilot login` in the terminal', supported: true },
+    ],
+  },
 };
 
 export const PERMISSION_POLICIES = ['ask', 'read-only', 'auto-approve', 'deny-all'];
@@ -278,8 +296,13 @@ export class FakeState {
     this.listeners = new Set();
 
     // Authentication state and opaque terminal flows (T111 contract).
+    // `observedByAgent` is in-memory observed evidence: unknown on a fresh
+    // process, never a durable authenticated boolean.
     this.authByAgent = new Map();
+    this.observedByAgent = new Map();
     this.flows = new Map();
+    this.protocolFlows = new Map();
+    this.protocolElicitations = new Map();
     // Editable Batey-managed definitions, including their launch environment.
     this.customDetails = new Map();
     this.registryFetched = false;
@@ -712,6 +735,15 @@ export class FakeState {
 
   // ------------------------------------------------------- authentication
 
+  observedAuth(id) {
+    return this.observedByAgent?.get(id) ?? 'unknown';
+  }
+
+  setObservedAuth(id, state) {
+    if (!this.observedByAgent) this.observedByAgent = new Map();
+    this.observedByAgent.set(id, state);
+  }
+
   agentAuth(id) {
     if (!this.agent(id)) throw Object.assign(new Error('Agent not found'), { status: 404 });
     const config = AUTH_METHODS[id] ?? { logout_supported: false, methods: [] };
@@ -720,6 +752,7 @@ export class FakeState {
       methods: config.methods.map((method) => ({ ...method })),
       logout_supported: config.logout_supported,
       terminal_supported: true,
+      observed_state: this.observedAuth(id),
     };
   }
 
@@ -733,7 +766,8 @@ export class FakeState {
     if (method.type !== 'agent') {
       throw Object.assign(new Error(`Authentication method '${methodId}' uses the unsupported type '${method.type}'`), { status: 400 });
     }
-    return auth;
+    this.setObservedAuth(id, 'authenticated');
+    return this.agentAuth(id);
   }
 
   logoutAgent(id) {
@@ -741,7 +775,8 @@ export class FakeState {
     if (!auth.logout_supported) {
       throw Object.assign(new Error(`Agent '${id}' does not support logout`), { status: 409 });
     }
-    return auth;
+    this.setObservedAuth(id, 'authentication_required');
+    return this.agentAuth(id);
   }
 
   startTerminalFlow(id, methodId) {
@@ -843,6 +878,7 @@ export class FakeState {
     flow.exit_code = exitCode;
     flow.reason = reason;
     flow.completed_at = new Date().toISOString();
+    if (flowState === 'succeeded') this.setObservedAuth(flow.agent_id, 'authenticated');
     this.sendFlow(flow, {
       type: 'state',
       flow_id: flow.flow_id,
@@ -856,6 +892,130 @@ export class FakeState {
 
   sendFlow(flow, message) {
     if (flow.socket?.open) flow.socket.send(JSON.stringify(message));
+  }
+
+  // ------------------------------------------ async protocol auth flows
+
+  startProtocolFlow(id, methodId) {
+    const auth = this.agentAuth(id);
+    const method = auth.methods.find((candidate) => candidate.id === methodId);
+    if (!method) throw Object.assign(new Error(`Unknown authentication method '${methodId}'`), { status: 404 });
+    if (method.type === 'terminal') {
+      throw Object.assign(new Error(`Authentication method '${methodId}' runs in a terminal. Start a terminal authentication flow instead.`), { status: 400 });
+    }
+    if (method.type !== 'agent') {
+      throw Object.assign(new Error(`Authentication method '${methodId}' uses the unsupported type '${method.type}'`), { status: 400 });
+    }
+    const active = [...this.protocolFlows.values()].filter(
+      (flow) => flow.agent_id === id && (flow.state === 'running' || flow.state === 'waiting_for_user'),
+    );
+    if (active.length >= 1) {
+      throw Object.assign(new Error(`Agent '${id}' already has an authentication flow running. Finish or cancel it first.`), { status: 409 });
+    }
+    const flow = {
+      flow_id: randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, ''),
+      agent_id: id,
+      method_id: methodId,
+      state: 'running',
+      reason: null,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    };
+    this.protocolFlows.set(flow.flow_id, flow);
+    // Request-scoped elicitations, never durable chat events. Codex uses a
+    // URL device-code step; Antigravity uses an interactive form step.
+    if (id === 'codex' && methodId === 'openai-oauth') {
+      this.protocolElicitations.set(flow.flow_id, [
+        {
+          id: `${flow.flow_id}:device`,
+          mode: 'url',
+          message: 'Open the device page and enter the code.',
+          schema: null,
+          url: 'https://example.invalid/device?code=ABCD-1234',
+          elicitation_id: `${flow.flow_id}:device`,
+          tool_call_id: null,
+        },
+      ]);
+      flow.state = 'waiting_for_user';
+    } else if (id === 'antigravity') {
+      this.protocolElicitations.set(flow.flow_id, [
+        {
+          id: `${flow.flow_id}:interactive`,
+          mode: 'form',
+          message: 'Complete the interactive sign-in step.',
+          schema: { properties: {}, required: [] },
+          url: null,
+          elicitation_id: null,
+          tool_call_id: null,
+        },
+      ]);
+      flow.state = 'waiting_for_user';
+    } else {
+      this.protocolElicitations.set(flow.flow_id, []);
+      // A plain agent method with no elicitation succeeds at once in the
+      // fake, so polling never sticks in running.
+      flow.state = 'succeeded';
+      flow.completed_at = new Date().toISOString();
+      this.setObservedAuth(id, 'authenticated');
+    }
+    return { ...flow };
+  }
+
+  protocolFlowView(flowId) {
+    const flow = this.protocolFlows.get(flowId);
+    if (!flow) return null;
+    return { ...flow };
+  }
+
+  cancelProtocolFlow(flowId) {
+    const flow = this.protocolFlows.get(flowId);
+    if (!flow) throw Object.assign(new Error('Authentication flow not found'), { status: 404 });
+    if (flow.state === 'running' || flow.state === 'waiting_for_user') {
+      flow.state = 'cancelled';
+      flow.reason = 'Cancelled by the client';
+      flow.completed_at = new Date().toISOString();
+      this.protocolElicitations.delete(flowId);
+    }
+    return { ...flow };
+  }
+
+  listProtocolElicitations(flowId) {
+    if (!this.protocolFlows.get(flowId)) {
+      throw Object.assign(new Error('Authentication flow not found'), { status: 404 });
+    }
+    return (this.protocolElicitations.get(flowId) ?? []).map((entry) => ({ ...entry }));
+  }
+
+  respondProtocolElicitation(flowId, eid, action, content) {
+    const flow = this.protocolFlows.get(flowId);
+    if (!flow) throw Object.assign(new Error('Authentication flow not found'), { status: 404 });
+    const list = this.protocolElicitations.get(flowId) ?? [];
+    const index = list.findIndex((entry) => entry.id === eid);
+    if (index < 0) throw Object.assign(new Error('Elicitation not found'), { status: 404 });
+    if (!['accept', 'decline', 'cancel'].includes(action)) {
+      throw Object.assign(new Error('Elicitation action must be accept, decline, or cancel'), { status: 400 });
+    }
+    list.splice(index, 1);
+    this.protocolElicitations.set(flowId, list);
+    if (action === 'accept') {
+      if (list.length === 0) {
+        flow.state = 'succeeded';
+        flow.reason = null;
+        flow.completed_at = new Date().toISOString();
+        this.setObservedAuth(flow.agent_id, 'authenticated');
+      } else {
+        flow.state = 'waiting_for_user';
+      }
+    } else if (action === 'decline') {
+      flow.state = 'failed';
+      flow.reason = 'The authentication step was declined.';
+      flow.completed_at = new Date().toISOString();
+    } else {
+      flow.state = 'cancelled';
+      flow.reason = 'Cancelled by the client';
+      flow.completed_at = new Date().toISOString();
+    }
+    return true;
   }
 
   // ------------------------------------------------------------------ seed
